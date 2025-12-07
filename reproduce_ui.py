@@ -9,14 +9,18 @@ warnings.filterwarnings("ignore", category=DeprecationWarning) # Suppress sipPyT
 # Add parent directory to path to import modules from there
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from PyQt5.QtCore import QPropertyAnimation, QEasingCurve, Qt, QTimer, QObject, QEvent, QModelIndex, QRect, pyqtSignal, QItemSelectionModel
+from PyQt5.QtCore import QPropertyAnimation, QEasingCurve, Qt, QTimer, QObject, QEvent, QModelIndex, QRect, pyqtSignal, QItemSelectionModel, QPointF, QLineF, QFileSystemWatcher
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QLabel, QComboBox, QPushButton, QCompleter,
                              QTreeView, QLineEdit, QHeaderView, QStyleFactory,
                              QGraphicsDropShadowEffect, QGraphicsOpacityEffect,
                              QSizePolicy, QMenu, QStyledItemDelegate, QStyle, QStyleOptionViewItem, QAbstractItemView, QStyleOptionComboBox,
-                             QMenuBar, QAction)
-from PyQt5.QtGui import QStandardItemModel, QStandardItem, QColor, QBrush, QFont, QFontDatabase, QTextCursor, QPen
+                             QMenuBar, QAction, QDialog, QGraphicsScene, QGraphicsView,
+                             QGraphicsEllipseItem, QGraphicsTextItem, QGraphicsLineItem,
+                             QGraphicsPolygonItem, QFileDialog)
+from PyQt5.QtGui import (QStandardItemModel, QStandardItem, QColor, QBrush, QFont, 
+                         QFontDatabase, QTextCursor, QPen, QPainter, QPolygonF)
+import math
 
 
 
@@ -308,6 +312,250 @@ class ClickableLabel(QLabel):
         self.doubleClicked.emit()
         super().mouseDoubleClickEvent(event)
 
+
+class DependencyGraphDialog(QDialog):
+    """Dialog for displaying dependency graph visualization."""
+    
+    def __init__(self, graph_data, status_colors, parent=None):
+        """
+        Args:
+            graph_data: dict with 'nodes' (list of (name, status)) and 'edges' (list of (source, target))
+            status_colors: dict mapping status to color hex codes
+        """
+        super().__init__(parent)
+        self.setWindowTitle("Dependency Graph")
+        self.resize(1100, 750)
+        self.graph_data = graph_data
+        self.status_colors = status_colors
+        self.node_items = {}  # Store node positions for edge drawing
+        
+        # Setup UI
+        self.setup_ui()
+        
+        # Draw the graph
+        self.draw_graph()
+    
+    def setup_ui(self):
+        """Setup the dialog UI components."""
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        
+        # Graphics View
+        self.scene = QGraphicsScene()
+        self.view = QGraphicsView(self.scene)
+        self.view.setRenderHint(QPainter.Antialiasing)
+        self.view.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.view.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
+        self.view.setStyleSheet("""
+            QGraphicsView {
+                background-color: #f5f5f5;
+                border: 1px solid #cccccc;
+                border-radius: 8px;
+            }
+        """)
+        layout.addWidget(self.view)
+        
+        # Toolbar
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(10)
+        
+        btn_style = """
+            QPushButton {
+                background-color: #ffffff;
+                border: 1px solid #cccccc;
+                border-radius: 6px;
+                padding: 6px 16px;
+                font-weight: 600;
+                color: #333333;
+            }
+            QPushButton:hover {
+                background-color: #e6f7ff;
+            }
+        """
+        
+        zoom_in_btn = QPushButton("Zoom In (+)")
+        zoom_in_btn.setStyleSheet(btn_style)
+        zoom_in_btn.clicked.connect(self.zoom_in)
+        toolbar.addWidget(zoom_in_btn)
+        
+        zoom_out_btn = QPushButton("Zoom Out (-)")
+        zoom_out_btn.setStyleSheet(btn_style)
+        zoom_out_btn.clicked.connect(self.zoom_out)
+        toolbar.addWidget(zoom_out_btn)
+        
+        fit_btn = QPushButton("Fit View")
+        fit_btn.setStyleSheet(btn_style)
+        fit_btn.clicked.connect(self.fit_view)
+        toolbar.addWidget(fit_btn)
+        
+        export_btn = QPushButton("Export PNG")
+        export_btn.setStyleSheet(btn_style)
+        export_btn.clicked.connect(self.export_png)
+        toolbar.addWidget(export_btn)
+        
+        toolbar.addStretch()
+        
+        # Legend
+        legend_label = QLabel("Legend: ")
+        legend_label.setStyleSheet("font-weight: bold; color: #333;")
+        toolbar.addWidget(legend_label)
+        
+        for status, color in [("finish", "#98FB98"), ("running", "#FFFF00"), 
+                               ("failed", "#FF9999"), ("skip", "#FFDAB9"), ("waiting", "#87CEEB")]:
+            legend_item = QLabel(f"  {status}  ")
+            legend_item.setStyleSheet(f"background-color: {color}; border: 1px solid #999; border-radius: 3px; padding: 2px 6px;")
+            toolbar.addWidget(legend_item)
+        
+        layout.addLayout(toolbar)
+    
+    def draw_graph(self):
+        """Draw the dependency graph using hierarchical layout."""
+        nodes = self.graph_data.get('nodes', [])
+        edges = self.graph_data.get('edges', [])
+        levels = self.graph_data.get('levels', {})  # level -> [targets]
+        
+        if not nodes:
+            # No data, show message
+            text = QGraphicsTextItem("No dependency data found")
+            text.setFont(QFont("Arial", 14))
+            self.scene.addItem(text)
+            return
+        
+        # Calculate positions using level-based layout
+        # Each level gets a row, nodes in each level are spread horizontally
+        node_positions = {}
+        
+        # Vertical spacing between levels
+        level_height = 100
+        # Horizontal spacing between nodes
+        node_width = 180
+        
+        y_offset = 50
+        max_x = 0
+        
+        # Sort levels
+        sorted_levels = sorted(levels.keys())
+        
+        for level in sorted_levels:
+            level_targets = levels[level]
+            num_nodes = len(level_targets)
+            
+            # Calculate starting x to center the level
+            total_width = num_nodes * node_width
+            start_x = -total_width / 2 + node_width / 2
+            
+            for i, target in enumerate(level_targets):
+                x = start_x + i * node_width
+                y = y_offset
+                node_positions[target] = (x, y)
+                max_x = max(max_x, abs(x) + node_width)
+            
+            y_offset += level_height
+        
+        # Draw edges first (so they appear behind nodes)
+        for source, target in edges:
+            if source in node_positions and target in node_positions:
+                x1, y1 = node_positions[source]
+                x2, y2 = node_positions[target]
+                self.draw_arrow(x1, y1 + 20, x2, y2 - 20)
+        
+        # Draw nodes
+        for node_name, status in nodes:
+            if node_name not in node_positions:
+                continue
+            x, y = node_positions[node_name]
+            self.draw_node(node_name, status, x, y)
+        
+        # Fit view after drawing
+        self.view.setSceneRect(self.scene.itemsBoundingRect().adjusted(-50, -50, 50, 50))
+    
+    def draw_node(self, name, status, x, y):
+        """Draw a single node at the specified position."""
+        # Node dimensions
+        width = 150
+        height = 40
+        
+        # Get color based on status
+        color_hex = self.status_colors.get(status.lower(), "#87CEEB")
+        color = QColor(color_hex)
+        
+        # Draw rounded rectangle for node
+        rect = self.scene.addRect(x - width/2, y - height/2, width, height,
+                                   QPen(QColor("#333333"), 2),
+                                   QBrush(color))
+        rect.setToolTip(f"Target: {name}\nStatus: {status or 'pending'}")
+        
+        # Add text label
+        text = QGraphicsTextItem(name)
+        text.setFont(QFont("Arial", 9, QFont.Bold))
+        text.setDefaultTextColor(QColor("#000000"))
+        
+        # Center text in node
+        text_rect = text.boundingRect()
+        text.setPos(x - text_rect.width()/2, y - text_rect.height()/2)
+        self.scene.addItem(text)
+        
+        # Store position
+        self.node_items[name] = (x, y)
+    
+    def draw_arrow(self, x1, y1, x2, y2):
+        """Draw an arrow from (x1,y1) to (x2,y2)."""
+        # Draw line
+        line = QGraphicsLineItem(x1, y1, x2, y2)
+        line.setPen(QPen(QColor("#666666"), 1.5))
+        self.scene.addItem(line)
+        
+        # Calculate arrow head
+        angle = math.atan2(y2 - y1, x2 - x1)
+        arrow_size = 10
+        
+        # Arrow head points
+        p1 = QPointF(x2 - arrow_size * math.cos(angle - math.pi/6),
+                     y2 - arrow_size * math.sin(angle - math.pi/6))
+        p2 = QPointF(x2 - arrow_size * math.cos(angle + math.pi/6),
+                     y2 - arrow_size * math.sin(angle + math.pi/6))
+        p3 = QPointF(x2, y2)
+        
+        # Draw arrow head
+        arrow_head = QPolygonF([p1, p2, p3])
+        arrow_item = QGraphicsPolygonItem(arrow_head)
+        arrow_item.setBrush(QBrush(QColor("#666666")))
+        arrow_item.setPen(QPen(QColor("#666666"), 1))
+        self.scene.addItem(arrow_item)
+    
+    def zoom_in(self):
+        """Zoom in the view."""
+        self.view.scale(1.2, 1.2)
+    
+    def zoom_out(self):
+        """Zoom out the view."""
+        self.view.scale(0.8, 0.8)
+    
+    def fit_view(self):
+        """Fit the entire graph in the view."""
+        self.view.fitInView(self.scene.itemsBoundingRect(), Qt.KeepAspectRatio)
+    
+    def export_png(self):
+        """Export the graph to a PNG file."""
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Export Graph", "dependency_graph.png", "PNG Files (*.png)"
+        )
+        if file_path:
+            # Create image from scene
+            from PyQt5.QtGui import QImage
+            rect = self.scene.itemsBoundingRect()
+            image = QImage(int(rect.width()) + 100, int(rect.height()) + 100, QImage.Format_ARGB32)
+            image.fill(Qt.white)
+            
+            painter = QPainter(image)
+            painter.setRenderHint(QPainter.Antialiasing)
+            self.scene.render(painter)
+            painter.end()
+            
+            image.save(file_path)
+            print(f"Graph exported to: {file_path}")
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         # Initialize core variables FIRST
@@ -397,6 +645,14 @@ class MainWindow(QMainWindow):
         show_all_status_action = QAction("Show All Status", self)
         show_all_status_action.triggered.connect(self.show_all_status)
         status_menu.addAction(show_all_status_action)
+        
+        # View Menu
+        view_menu = self.menu_bar.addMenu("View")
+        
+        # Show Dependency Graph Action
+        show_graph_action = QAction("Show Dependency Graph", self)
+        show_graph_action.triggered.connect(self.show_dependency_graph)
+        view_menu.addAction(show_graph_action)
         
         # Track if we are in "All Status" view mode
         self.is_all_status_view = False
@@ -762,10 +1018,27 @@ class MainWindow(QMainWindow):
         # Initial UI Update
         self.on_run_changed()
         
-        # Start refresh timer (update status every 1 second)
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.change_run)
-        self.timer.start(1000)
+        # Setup file system watcher for efficient status monitoring (replaces polling timer)
+        self.status_watcher = QFileSystemWatcher(self)
+        self.status_watcher.directoryChanged.connect(self.on_status_directory_changed)
+        self.status_watcher.fileChanged.connect(self.on_status_file_changed)
+        
+        # Track watched directories to avoid duplicates
+        self.watched_status_dirs = set()
+        
+        # Setup initial watch on current run's status directory
+        self.setup_status_watcher()
+        
+        # Backup timer with longer interval (10 seconds) as fallback
+        # This handles cases where file watcher might miss events
+        self.backup_timer = QTimer()
+        self.backup_timer.timeout.connect(self.change_run)
+        self.backup_timer.start(10000)  # 10 seconds
+        
+        # Debounce timer to batch rapid file changes
+        self.debounce_timer = QTimer()
+        self.debounce_timer.setSingleShot(True)
+        self.debounce_timer.timeout.connect(self.change_run)
         
         # Expand all
         self.tree.expandAll()
@@ -1164,6 +1437,74 @@ class MainWindow(QMainWindow):
             # Trigger a refresh of the normal view
             self.on_run_changed()
 
+    def build_dependency_graph(self, run_name):
+        """
+        Build dependency graph data from .target_dependency.csh file.
+        
+        Returns:
+            dict with 'nodes', 'edges', and 'levels' for DependencyGraphDialog
+        """
+        graph_data = {
+            'nodes': [],      # List of (target_name, status)
+            'edges': [],      # List of (source, target)
+            'levels': {}      # level_num -> [targets]
+        }
+        
+        dep_file = os.path.join(self.run_base_dir, run_name, '.target_dependency.csh')
+        if not os.path.exists(dep_file):
+            print(f"Warning: Dependency file not found for {run_name}")
+            return graph_data
+        
+        try:
+            # Parse targets by level
+            targets_by_level = self.parse_dependency_file(run_name)
+            graph_data['levels'] = targets_by_level
+            
+            # Collect all targets with their status
+            all_targets = []
+            for level, targets in targets_by_level.items():
+                for target in targets:
+                    all_targets.append(target)
+            
+            # Get status for each target and add to nodes
+            for target in all_targets:
+                status = self.get_target_status(run_name, target)
+                graph_data['nodes'].append((target, status))
+            
+            # Parse dependency edges from DEPENDENCY_OUT_xxx variables
+            with open(dep_file, 'r') as f:
+                content = f.read()
+            
+            for target in all_targets:
+                # Look for DEPENDENCY_OUT_<target> = "downstream1 downstream2 ..."
+                pattern = rf'set\s+DEPENDENCY_OUT_{re.escape(target)}\s*=\s*["\']([^"\']*)["\']'
+                match = re.search(pattern, content)
+                if match:
+                    downstream_targets = match.group(1).strip().split()
+                    for downstream in downstream_targets:
+                        if downstream in all_targets:
+                            graph_data['edges'].append((target, downstream))
+            
+            print(f"DEBUG: Built graph with {len(graph_data['nodes'])} nodes and {len(graph_data['edges'])} edges")
+            
+        except Exception as e:
+            print(f"Error building dependency graph: {e}")
+        
+        return graph_data
+
+    def show_dependency_graph(self):
+        """Show the dependency graph dialog for the current run."""
+        current_run = self.combo.currentText()
+        if not current_run or current_run == "No runs found":
+            print("No run selected")
+            return
+        
+        # Build graph data
+        graph_data = self.build_dependency_graph(current_run)
+        
+        # Show dialog
+        dialog = DependencyGraphDialog(graph_data, self.colors, self)
+        dialog.exec_()
 
     def populate_run_combo(self):
         """Populate the combo box with available run directories."""
@@ -1252,6 +1593,10 @@ class MainWindow(QMainWindow):
             self.model.clear()
             # Repopulate tree data with targets from the selected run
             self.populate_data()
+            
+            # Update file system watcher to monitor new run's status directory
+            if hasattr(self, 'status_watcher'):
+                self.setup_status_watcher()
 
 
         
@@ -1702,6 +2047,41 @@ class MainWindow(QMainWindow):
                     self.tar_name = re.sub(r"^['\"]|['\"]$", "", target_name).split()
                     return
         self.tar_name = []
+
+    def setup_status_watcher(self):
+        """Setup file system watcher for the current run's status directory."""
+        if not self.combo_sel:
+            return
+        
+        status_dir = os.path.join(self.combo_sel, "status")
+        
+        # Remove old watched directories
+        if self.watched_status_dirs:
+            old_dirs = list(self.watched_status_dirs)
+            self.status_watcher.removePaths(old_dirs)
+            self.watched_status_dirs.clear()
+        
+        # Add new status directory if it exists
+        if os.path.exists(status_dir):
+            self.status_watcher.addPath(status_dir)
+            self.watched_status_dirs.add(status_dir)
+            print(f"DEBUG: Now watching status directory: {status_dir}")
+    
+    def on_status_directory_changed(self, path):
+        """Called when the status directory contents change (file added/removed)."""
+        print(f"DEBUG: Status directory changed: {path}")
+        
+        # Use debounce timer to batch rapid changes (300ms delay)
+        if not self.debounce_timer.isActive():
+            self.debounce_timer.start(300)
+    
+    def on_status_file_changed(self, path):
+        """Called when a watched file is modified."""
+        print(f"DEBUG: Status file changed: {path}")
+        
+        # Use debounce timer to batch rapid changes
+        if not self.debounce_timer.isActive():
+            self.debounce_timer.start(300)
 
     def change_run(self):
         """Refresh status timer callback - updates status/time for all visible targets"""
