@@ -4,10 +4,40 @@ import re
 import subprocess
 import time
 import warnings
+import logging
+from concurrent.futures import ThreadPoolExecutor
+
 warnings.filterwarnings("ignore", category=DeprecationWarning) # Suppress sipPyTypeDict warning
 
 # Add parent directory to path to import modules from there
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# ========== Logging Setup ==========
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
+
+# ========== Pre-compiled Regex Patterns ==========
+RE_LEVEL_LINE = re.compile(r'^set\s+LEVEL_(\d+)\s*=\s*"([^"]*)"')
+RE_ACTIVE_TARGETS = re.compile(r'set\s*ACTIVE_TARGETS\s*=\s*"([^"]*)"')
+RE_TARGET_LEVEL = re.compile(r'set\s*(TARGET_LEVEL_\w+)\s*=\s*(.*)')
+RE_QUOTED_STRING = re.compile(r"^['\"](.*)['\"]\s*$")
+RE_DEPENDENCY_OUT = re.compile(r'set\s+DEPENDENCY_OUT_(\w+)\s*=\s*"([^"]*)"')
+RE_ALL_RELATED = re.compile(r'set\s+ALL_RELATED_(\w+)\s*=\s*"([^"]*)"')
+
+# ========== Status Colors Constant ==========
+STATUS_COLORS = {
+    "finish": "#98FB98",    # PaleGreen
+    "skip": "#FFDAB9",      # PeachPuff
+    "running": "#FFFF00",   # Yellow
+    "failed": "#FF9999",    # Light Red
+    "scheduled": "#4A90D9", # Deeper Blue
+    "pending": "#87CEEB",   # SkyBlue
+    "": "#87CEEB"           # Default/No status
+}
 
 from PyQt5.QtCore import QPropertyAnimation, QEasingCurve, Qt, QTimer, QObject, QEvent, QModelIndex, QRect, pyqtSignal, QItemSelectionModel, QPointF, QLineF, QFileSystemWatcher
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
@@ -264,17 +294,45 @@ class BoundedComboBox(QComboBox):
 
     def disable_search_mode(self):
         """Disable editing and restore search button"""
-        self.setEditable(False)
+        # Only disable if currently editable (in search mode)
+        if self.isEditable():
+            self.setEditable(False)
         self.search_btn.show()
 
     def showPopup(self):
+        # Reorder items: put current selection at the top
+        current_idx = self.currentIndex()
+        current_text = self.currentText()
+
+        if current_idx > 0 and self.count() > 1:
+            # Block signals to prevent triggering currentIndexChanged
+            self.blockSignals(True)
+
+            # Collect all items
+            items = [self.itemText(i) for i in range(self.count())]
+
+            # Remove current item and insert at beginning
+            if current_text in items:
+                items.remove(current_text)
+                items.insert(0, current_text)
+
+            # Clear and re-add items
+            self.clear()
+            self.addItems(items)
+
+            # Set current index back to 0 (now the first item)
+            self.setCurrentIndex(0)
+
+            self.blockSignals(False)
+
         super().showPopup()
+
         # Get the popup (the list view that drops down)
         popup = self.view().parentWidget()
         if popup:
             # Get popup's current geometry
             popup_geo = popup.geometry()
-            
+
             # Get main window
             main_window = self.window()
             if main_window:
@@ -283,7 +341,7 @@ class BoundedComboBox(QComboBox):
                 # Add title bar height (approximately 30-40 pixels)
                 title_bar_height = 40
                 min_y = window_top + title_bar_height
-                
+
                 # If popup extends above the limit, reposition it
                 if popup_geo.top() < min_y:
                     popup_geo.moveTop(min_y)
@@ -553,7 +611,7 @@ class DependencyGraphDialog(QDialog):
             painter.end()
             
             image.save(file_path)
-            print(f"Graph exported to: {file_path}")
+            logger.info(f"Graph exported to: {file_path}")
 
 
 class MainWindow(QMainWindow):
@@ -564,6 +622,9 @@ class MainWindow(QMainWindow):
         self.combo_sel = None
         self.cached_targets_by_level = {} # Cache for search optimization
         self.is_tree_expanded = True  # Track expansion state
+
+        # Thread pool for background file operations
+        self._executor = ThreadPoolExecutor(max_workers=4)
         
         # Status colors
         self.colors = {
@@ -571,8 +632,8 @@ class MainWindow(QMainWindow):
             'skip': '#FFDAB9',      # PeachPuff
             'running': '#FFFF00',   # Yellow
             'failed': '#FF9999',    # Light Red
-            'scheduled': '#87CEEB', # SkyBlue
-            'waiting': '#87CEEB',   # SkyBlue
+            'scheduled': '#4A90D9', # Deeper Blue
+            'pending': '#87CEEB',   # SkyBlue
             '': '#FFFFFF'           # White/No status
         }
         
@@ -582,7 +643,7 @@ class MainWindow(QMainWindow):
         elif os.path.exists(".target_dependency.csh"):
             # We are inside a run directory, so scan the parent directory
             self.run_base_dir = ".."
-            print(f"Detected run in current directory. Setting base to parent: {os.path.abspath(self.run_base_dir)}")
+            logger.info(f"Detected run in current directory. Setting base to parent: {os.path.abspath(self.run_base_dir)}")
         else:
             self.run_base_dir = "."
         super().__init__()
@@ -1010,10 +1071,13 @@ class MainWindow(QMainWindow):
         self.tree.viewport().installEventFilter(self.tree_view_event_filter)
         
         main_layout.addWidget(self.tree)
-        
+
         # Set right-click context menu
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self.show_context_menu)
+
+        # Connect double-click signal for copy functionality in All Status view
+        self.tree.doubleClicked.connect(self.on_tree_double_clicked)
         
         # Initial UI Update
         self.on_run_changed()
@@ -1108,46 +1172,73 @@ class MainWindow(QMainWindow):
         return targets
 
     def start(self, action):
-        """Execute flow action and refresh view."""
-        import subprocess
-        
+        """Execute flow action and refresh view (runs command in background thread)."""
         # Get selected targets
         selected_targets = self.get_selected_targets()
         if not selected_targets:
-            print(f"No targets selected for action: {action}")
+            logger.warning(f"No targets selected for action: {action}")
             return
-        
+
         # Get current run name
         current_run = self.combo.currentText()
         run_dir = os.path.join(self.run_base_dir, current_run)
-        
+
         # Build command
         if action == 'XMeta_run all':
             cmd = f"cd {run_dir} && {action}"
-            print(f"{current_run}, {action}.")
+            logger.info(f"{current_run}, {action}.")
         else:
             cmd = f"cd {run_dir} && {action} " + " ".join(selected_targets)
-            print(f"{current_run}, {action} {' '.join(selected_targets)}.")
-        
-        # Execute command
-        try:
-            process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            stdout, stderr = process.communicate()
-            if stdout:
-                print(stdout.decode())
-            if stderr:
-                print(stderr.decode())
-        except Exception as e:
-            print(f"Error executing command: {e}")
-        
-        # Refresh UI - reload tree to show updated status
+            logger.info(f"{current_run}, {action} {' '.join(selected_targets)}.")
+
+        # For skip/unskip, execute synchronously to ensure status files are updated before refresh
         if action in ['XMeta_unskip', 'XMeta_skip']:
-            # For skip/unskip, need to reload tree structure (now optimized in populate_data)
-            print(f"DEBUG: Calling populate_data for action {action}")
+            try:
+                process = subprocess.Popen(
+                    cmd,
+                    shell=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                stdout, stderr = process.communicate(timeout=30)
+                if stdout:
+                    logger.info(stdout.decode())
+                if stderr:
+                    logger.error(stderr.decode())
+            except subprocess.TimeoutExpired:
+                process.kill()
+                logger.error(f"Command timed out: {cmd}")
+            except Exception as e:
+                logger.error(f"Error executing command: {e}")
+
+            # Rebuild cache and refresh UI after command completes
+            self._build_status_cache(current_run)
             self.populate_data()
         else:
-            pass
-            
+            # Execute other commands in background thread
+            def run_command():
+                try:
+                    process = subprocess.Popen(
+                        cmd,
+                        shell=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE
+                    )
+                    stdout, stderr = process.communicate(timeout=300)  # 5 minute timeout
+                    if stdout:
+                        logger.info(stdout.decode())
+                    if stderr:
+                        logger.error(stderr.decode())
+                    if process.returncode != 0:
+                        logger.error(f"Command exited with code {process.returncode}")
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    logger.error(f"Command timed out: {cmd}")
+                except Exception as e:
+                    logger.error(f"Error executing command: {e}")
+
+            self._executor.submit(run_command)
+
         # Clear selection after operation
         self.tree.clearSelection()
 
@@ -1156,7 +1247,7 @@ class MainWindow(QMainWindow):
         If text is empty, restore full hierarchy.
         If text is present, show FLAT list of matching items (no parents).
         """
-        print(f"DEBUG: filter_tree called with text='{text}'")
+        logger.debug(f"filter_tree called with text='{text}'")
         
         if not text:
             # Restore full hierarchy
@@ -1221,15 +1312,6 @@ class MainWindow(QMainWindow):
             row_items.append(et_item)
             
             # Apply background color
-            STATUS_COLORS = {
-                "finish": "#98FB98",    # PaleGreen
-                "skip": "#FFDAB9",      # PeachPuff
-                "running": "#FFFF00",   # Yellow
-                "failed": "#FF9999",    # Light Red
-                "scheduled": "#87CEEB", # SkyBlue
-                "waiting": "#87CEEB",   # SkyBlue
-                "": "#87CEEB"           # Default/No status
-            }
             color_code = STATUS_COLORS.get(status.lower(), "#87CEEB")
             color = QColor(color_code)
             
@@ -1302,7 +1384,7 @@ class MainWindow(QMainWindow):
         if not os.path.exists(self.run_base_dir):
             return runs
         
-        print(f"Scanning for runs in: {os.path.abspath(self.run_base_dir)}")
+        logger.info(f"Scanning for runs in: {os.path.abspath(self.run_base_dir)}")
         try:
             for item in os.listdir(self.run_base_dir):
                 item_path = os.path.join(self.run_base_dir, item)
@@ -1311,18 +1393,18 @@ class MainWindow(QMainWindow):
                     dependency_file = os.path.join(item_path, ".target_dependency.csh")
                     if os.path.exists(dependency_file):
                         runs.append(item)
-                        print(f"Found run: {item}")
+                        logger.info(f"Found run: {item}")
         except Exception as e:
-            print(f"Error scanning runs: {e}")
+            logger.error(f"Error scanning runs: {e}")
         
-        print(f"Total runs found: {len(runs)}")
+        logger.info(f"Total runs found: {len(runs)}")
         return sorted(runs)
 
     def show_all_status(self):
         """Show status summary of all run directories in the TreeView.
         Displays: Run Directory, Latest Target, Status, Time Stamp
         """
-        print("DEBUG: show_all_status called")
+        logger.debug("show_all_status called")
         
         # Set flag to indicate we are in "All Status" view
         self.is_all_status_view = True
@@ -1343,16 +1425,8 @@ class MainWindow(QMainWindow):
         self.tree.setColumnWidth(2, 100)  # Status
         self.tree.setColumnWidth(3, 180)  # Time Stamp
         
-        # Status to Color Mapping
-        STATUS_COLORS = {
-            "finish": "#98FB98",    # PaleGreen
-            "skip": "#FFDAB9",      # PeachPuff
-            "running": "#FFFF00",   # Yellow
-            "failed": "#FF9999",    # Light Red
-            "scheduled": "#87CEEB", # SkyBlue
-            "waiting": "#87CEEB",   # SkyBlue
-            "": "#FFFFFF"           # White/No status
-        }
+        # Status to Color Mapping (use global constant)
+        color_map = STATUS_COLORS
         
         # Scan all runs
         runs = self.scan_runs()
@@ -1389,7 +1463,7 @@ class MainWindow(QMainWindow):
                                 # Format timestamp
                                 latest_timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mtime))
                 except Exception as e:
-                    print(f"Error scanning status for {run_name}: {e}")
+                    logger.error(f"Error scanning status for {run_name}: {e}")
             
             # Create row items
             row_items = []
@@ -1428,7 +1502,7 @@ class MainWindow(QMainWindow):
             self.model.appendRow(row_items)
         
         self.tree.setUpdatesEnabled(True)
-        print(f"DEBUG: show_all_status completed, showing {len(runs)} runs")
+        logger.debug(f"show_all_status completed, showing {len(runs)} runs")
 
     def restore_normal_view(self):
         """Restore the normal single-run TreeView from All Status view."""
@@ -1437,10 +1511,25 @@ class MainWindow(QMainWindow):
             # Trigger a refresh of the normal view
             self.on_run_changed()
 
+    def on_tree_double_clicked(self, index):
+        """Handle double-click on tree view - copy run name in All Status view"""
+        if not self.is_all_status_view:
+            return
+
+        # Get the run name from column 0 (Run Directory)
+        run_name_index = self.model.index(index.row(), 0)
+        run_name = self.model.data(run_name_index)
+
+        if run_name:
+            # Copy to clipboard
+            clipboard = QApplication.clipboard()
+            clipboard.setText(run_name)
+            logger.info(f"Copied run name to clipboard: {run_name}")
+
     def build_dependency_graph(self, run_name):
         """
         Build dependency graph data from .target_dependency.csh file.
-        
+
         Returns:
             dict with 'nodes', 'edges', and 'levels' for DependencyGraphDialog
         """
@@ -1449,54 +1538,53 @@ class MainWindow(QMainWindow):
             'edges': [],      # List of (source, target)
             'levels': {}      # level_num -> [targets]
         }
-        
+
         dep_file = os.path.join(self.run_base_dir, run_name, '.target_dependency.csh')
         if not os.path.exists(dep_file):
-            print(f"Warning: Dependency file not found for {run_name}")
+            logger.warning(f"Dependency file not found for {run_name}")
             return graph_data
-        
+
         try:
             # Parse targets by level
             targets_by_level = self.parse_dependency_file(run_name)
             graph_data['levels'] = targets_by_level
-            
+
             # Collect all targets with their status
             all_targets = []
             for level, targets in targets_by_level.items():
                 for target in targets:
                     all_targets.append(target)
-            
+
             # Get status for each target and add to nodes
             for target in all_targets:
                 status = self.get_target_status(run_name, target)
                 graph_data['nodes'].append((target, status))
-            
-            # Parse dependency edges from DEPENDENCY_OUT_xxx variables
+
+            # Parse dependency edges using pre-compiled regex
             with open(dep_file, 'r') as f:
                 content = f.read()
-            
-            for target in all_targets:
-                # Look for DEPENDENCY_OUT_<target> = "downstream1 downstream2 ..."
-                pattern = rf'set\s+DEPENDENCY_OUT_{re.escape(target)}\s*=\s*["\']([^"\']*)["\']'
-                match = re.search(pattern, content)
-                if match:
-                    downstream_targets = match.group(1).strip().split()
+
+            all_targets_set = set(all_targets)
+            for match in RE_DEPENDENCY_OUT.finditer(content):
+                source = match.group(1)
+                if source in all_targets_set:
+                    downstream_targets = match.group(2).strip().split()
                     for downstream in downstream_targets:
-                        if downstream in all_targets:
-                            graph_data['edges'].append((target, downstream))
-            
-            print(f"DEBUG: Built graph with {len(graph_data['nodes'])} nodes and {len(graph_data['edges'])} edges")
-            
+                        if downstream in all_targets_set:
+                            graph_data['edges'].append((source, downstream))
+
+            logger.debug(f"Built graph with {len(graph_data['nodes'])} nodes and {len(graph_data['edges'])} edges")
+
         except Exception as e:
-            print(f"Error building dependency graph: {e}")
-        
+            logger.error(f"Error building dependency graph: {e}")
+
         return graph_data
 
     def show_dependency_graph(self):
         """Show the dependency graph dialog for the current run."""
         current_run = self.combo.currentText()
         if not current_run or current_run == "No runs found":
-            print("No run selected")
+            logger.warning("No run selected")
             return
         
         # Build graph data
@@ -1516,18 +1604,18 @@ class MainWindow(QMainWindow):
             # If we are inside a run directory, the basename of cwd should match a run name
             current_cwd_name = os.path.basename(os.getcwd())
             
-            print(f"Current working directory basename: {current_cwd_name}")
-            print(f"Available runs: {runs}")
+            logger.info(f"Current working directory basename: {current_cwd_name}")
+            logger.info(f"Available runs: {runs}")
             
             if current_cwd_name in runs:
                 index = self.combo.findText(current_cwd_name)
                 if index >= 0:
                     self.combo.setCurrentIndex(index)
-                    print(f"Selected run: {current_cwd_name}")
+                    logger.info(f"Selected run: {current_cwd_name}")
             else:
                 # Default to the first item if current cwd is not a valid run
                 self.combo.setCurrentIndex(0)
-                print(f"Selected first run: {runs[0]}")
+                logger.info(f"Selected first run: {runs[0]}")
         else:
             # Fallback if no runs found
             self.combo.addItem("No runs found")
@@ -1535,36 +1623,31 @@ class MainWindow(QMainWindow):
 
     def parse_dependency_file(self, run_name):
         """Parse .target_dependency.csh file to extract target-level mappings.
-        
+
         Returns:
             dict: Mapping of level number to list of target names
         """
         dependency_file = os.path.join(self.run_base_dir, run_name, ".target_dependency.csh")
         targets_by_level = {}
-        
+
         if not os.path.exists(dependency_file):
-            print(f"Warning: Dependency file not found for {run_name}")
+            logger.warning(f"Dependency file not found for {run_name}")
             return targets_by_level
-        
+
         try:
             with open(dependency_file, 'r') as f:
                 for line in f:
                     line = line.strip()
                     # Parse lines like: set LEVEL_1 = "UpdateTunable ShGetData"
-                    if line.startswith('set LEVEL_'):
-                        parts = line.split('=', 1)
-                        if len(parts) == 2:
-                            # Extract level number
-                            level_part = parts[0].strip()
-                            level_num = int(level_part.split('_')[1])
-                            
-                            # Extract target names
-                            targets_str = parts[1].strip().strip('"')
-                            targets = targets_str.split()
-                            
-                            targets_by_level[level_num] = targets
+                    match = RE_LEVEL_LINE.match(line)
+                    if match:
+                        level_num = int(match.group(1))
+                        targets = match.group(2).split()
+                        targets_by_level[level_num] = targets
         except Exception as e:
-            print(f"Error parsing dependency file for {run_name}: {e}")
+            logger.error(f"Error parsing dependency file for {run_name}: {e}")
+
+        return targets_by_level
         
         return targets_by_level
 
@@ -1573,27 +1656,27 @@ class MainWindow(QMainWindow):
         current_run = self.combo.currentText()
         if current_run == "No runs found":
             return
-        
+
         # Reset All Status view flag when switching runs
         self.is_all_status_view = False
-        
+
         # Set combo_sel to current run directory
         self.combo_sel = os.path.join(self.run_base_dir, current_run)
-        print(f"Run changed to: {self.combo_sel}")
-        
-        # Rebuild tree from .target_dependency.csh
-        # self.get_tree(self.combo_sel) # Removed to prevent incorrect UI generation
-        
+        logger.info(f"Run changed to: {self.combo_sel}")
+
         if current_run:
             # Update tab label to reflect selected run
             if hasattr(self, 'tab_label'):
                 self.tab_label.setText(current_run)
-            
+
+            # Build status cache BEFORE populating data (batch I/O optimization)
+            self._build_status_cache(current_run)
+
             # Force clear to trigger full rebuild in populate_data with correct UI
             self.model.clear()
             # Repopulate tree data with targets from the selected run
             self.populate_data()
-            
+
             # Update file system watcher to monitor new run's status directory
             if hasattr(self, 'status_watcher'):
                 self.setup_status_watcher()
@@ -1602,57 +1685,145 @@ class MainWindow(QMainWindow):
         
     def get_target_status(self, run_name, target_name):
         """Get status of a target by checking status files in run_dir/status/"""
+        # Use cached status if available
+        if hasattr(self, '_status_cache') and self._status_cache.get('run') == run_name:
+            return self._status_cache.get('statuses', {}).get(target_name, "")
+
         run_dir = os.path.join(self.run_base_dir, run_name)
         status_dir = os.path.join(run_dir, "status")
-        
+
         if not os.path.exists(status_dir):
             return "" # Default if no status dir
-            
+
         # Check for status files: target_name.status
-        # Priority: finish > failed > running > skip > scheduled
-        # Or simply check what exists.
-        # Based on user input, we might have multiple files (e.g. .finish and .skip).
-        # We should probably check modification time, but for now let's check existence with priority.
-        
-        possible_statuses = ["finish", "failed", "running", "skip"]
-        
+        possible_statuses = ["finish", "failed", "running", "skip", "scheduled", "pending"]
+
         # Check if any status file exists
         found_statuses = []
         for status in possible_statuses:
             status_file = os.path.join(status_dir, f"{target_name}.{status}")
             if os.path.exists(status_file):
                 found_statuses.append(status)
-        
+
         if not found_statuses:
             return ""
-            
-        # If multiple statuses found, we need a strategy.
-        # For now, let's assume 'finish' overrides others, then 'failed', etc.
-        # Or better: check modification time to see which is latest.
+
+        # If multiple statuses found, check modification time to see which is latest.
         latest_status = None
         latest_time = 0
-        
+
         for status in found_statuses:
             status_file = os.path.join(status_dir, f"{target_name}.{status}")
             mtime = os.path.getmtime(status_file)
             if mtime > latest_time:
                 latest_time = mtime
                 latest_status = status
-                
+
         return latest_status if latest_status else ""
 
-    def populate_data(self):
-        # Status to Color Mapping
-        STATUS_COLORS = {
-            "finish": "#98FB98",    # PaleGreen
-            "skip": "#FFDAB9",      # PeachPuff
-            "running": "#FFFF00",   # Yellow
-            "failed": "#FF9999",    # Light Red
-            "scheduled": "#87CEEB", # SkyBlue
-            "waiting": "#87CEEB",   # SkyBlue
-            "": "#87CEEB"           # Default/No status
-        }
+    def _build_status_cache(self, run_name):
+        """Build a cache of all target statuses for a run (batch I/O optimization)"""
+        run_dir = os.path.join(self.run_base_dir, run_name)
+        status_dir = os.path.join(run_dir, "status")
+        tracker_dir = os.path.join(run_dir, "logs", "targettracker")
 
+        statuses = {}
+        times = {}  # target_name -> (start_time, end_time)
+
+        # Build status cache
+        if os.path.exists(status_dir):
+            try:
+                # Read all files in status directory at once
+                status_files = os.listdir(status_dir)
+
+                # Group by target name
+                target_status_files = {}  # target_name -> [(status, mtime), ...]
+
+                for filename in status_files:
+                    filepath = os.path.join(status_dir, filename)
+                    if not os.path.isfile(filepath):
+                        continue
+
+                    # Parse filename: target_name.status
+                    parts = filename.rsplit('.', 1)
+                    if len(parts) == 2:
+                        target_name, status = parts
+                        if target_name not in target_status_files:
+                            target_status_files[target_name] = []
+                        try:
+                            mtime = os.path.getmtime(filepath)
+                            target_status_files[target_name].append((status, mtime))
+                        except OSError:
+                            pass
+
+                # For each target, find the latest status
+                for target_name, status_list in target_status_files.items():
+                    if status_list:
+                        # Sort by mtime descending, get the latest
+                        latest = max(status_list, key=lambda x: x[1])
+                        statuses[target_name] = latest[0]
+
+            except Exception as e:
+                logger.error(f"Error building status cache: {e}")
+
+        # Build time cache
+        if os.path.exists(tracker_dir):
+            try:
+                tracker_files = os.listdir(tracker_dir)
+
+                # Group by target name
+                target_times = {}  # target_name -> {'start': mtime, 'finished': mtime}
+
+                for filename in tracker_files:
+                    filepath = os.path.join(tracker_dir, filename)
+                    if not os.path.isfile(filepath):
+                        continue
+
+                    # Parse filename: target_name.start or target_name.finished
+                    if filename.endswith('.start'):
+                        target_name = filename[:-6]  # Remove '.start'
+                        if target_name not in target_times:
+                            target_times[target_name] = {}
+                        try:
+                            mtime = os.path.getmtime(filepath)
+                            target_times[target_name]['start'] = mtime
+                        except OSError:
+                            pass
+                    elif filename.endswith('.finished'):
+                        target_name = filename[:-9]  # Remove '.finished'
+                        if target_name not in target_times:
+                            target_times[target_name] = {}
+                        try:
+                            mtime = os.path.getmtime(filepath)
+                            target_times[target_name]['finished'] = mtime
+                        except OSError:
+                            pass
+
+                # Format times
+                for target_name, time_data in target_times.items():
+                    start_time = ""
+                    end_time = ""
+                    if 'start' in time_data:
+                        st_mtime = time_data['start'] + 28800
+                        start_time = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(st_mtime))
+                    if 'finished' in time_data:
+                        ft_mtime = time_data['finished'] + 28800
+                        end_time = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(ft_mtime))
+                    times[target_name] = (start_time, end_time)
+
+            except Exception as e:
+                logger.error(f"Error building time cache: {e}")
+
+        self._status_cache = {'run': run_name, 'statuses': statuses, 'times': times}
+
+    def get_target_times(self, run_name, target_name):
+        """Get start and end time from cache"""
+        if hasattr(self, '_status_cache') and self._status_cache.get('run') == run_name:
+            return self._status_cache.get('times', {}).get(target_name, ("", ""))
+        return ("", "")
+
+    def populate_data(self):
+        # Use global STATUS_COLORS constant
         def get_color(status):
             return STATUS_COLORS.get(status.lower(), "#87CEEB") # Default to SkyBlue if unknown
 
@@ -1718,7 +1889,7 @@ class MainWindow(QMainWindow):
         self.cached_targets_by_level = targets_by_level # Cache for search
         
         if not targets_by_level:
-            print(f"No targets found for {current_run}")
+            logger.warning(f"No targets found for {current_run}")
             return
 
         # Populate tree with real status
@@ -1751,16 +1922,15 @@ class MainWindow(QMainWindow):
             s_item.setEditable(False)
             s_item.setForeground(QBrush(Qt.black))
             parent_row.append(s_item)
-            
-            # Time (mock for now, or could read from file mtime)
-            start_time = ""
-            end_time = ""
-            
+
+            # Time - get from cache
+            start_time, end_time = self.get_target_times(current_run, parent_target)
+
             st_item = QStandardItem(start_time)
             st_item.setEditable(False)
             st_item.setForeground(QBrush(Qt.black))
             parent_row.append(st_item)
-            
+
             et_item = QStandardItem(end_time)
             et_item.setEditable(False)
             et_item.setForeground(QBrush(Qt.black))
@@ -1795,10 +1965,19 @@ class MainWindow(QMainWindow):
                 c_s_item.setEditable(False)
                 c_s_item.setForeground(QBrush(Qt.black))
                 child_row.append(c_s_item)
-                
-                # Time
-                child_row.append(QStandardItem(""))
-                child_row.append(QStandardItem(""))
+
+                # Time - get from cache
+                c_start_time, c_end_time = self.get_target_times(current_run, child_target)
+
+                c_st_item = QStandardItem(c_start_time)
+                c_st_item.setEditable(False)
+                c_st_item.setForeground(QBrush(Qt.black))
+                child_row.append(c_st_item)
+
+                c_et_item = QStandardItem(c_end_time)
+                c_et_item.setEditable(False)
+                c_et_item.setForeground(QBrush(Qt.black))
+                child_row.append(c_et_item)
                 
                 # Apply background color to child
                 c_color = QColor(get_color(c_status))
@@ -1856,53 +2035,12 @@ class MainWindow(QMainWindow):
             
         self.tree.setUpdatesEnabled(True)
 
-    def get_target_status(self, run_name, target_name):
-        """Get status of a target by checking status files in run_dir/status/"""
-        run_dir = os.path.join(self.run_base_dir, run_name)
-        status_dir = os.path.join(run_dir, "status")
-        
-        if not os.path.exists(status_dir):
-            return "" # Default if no status dir
-            
-        # Check for status files: target_name.status
-        # Priority: finish > failed > running > skip > scheduled
-        # Or simply check what exists.
-        # Based on user input, we might have multiple files (e.g. .finish and .skip).
-        # We should probably check modification time, but for now let's check existence with priority.
-        
-        possible_statuses = ["finish", "failed", "running", "skip"]
-        
-        # Check if any status file exists
-        found_statuses = []
-        for status in possible_statuses:
-            status_file = os.path.join(status_dir, f"{target_name}.{status}")
-            if os.path.exists(status_file):
-                found_statuses.append(status)
-        
-        if not found_statuses:
-            return ""
-            
-        # If multiple statuses found, we need a strategy.
-        # For now, let's assume 'finish' overrides others, then 'failed', etc.
-        # Or better: check modification time to see which is latest.
-        latest_status = None
-        latest_time = 0
-        
-        for status in found_statuses:
-            status_file = os.path.join(status_dir, f"{target_name}.{status}")
-            mtime = os.path.getmtime(status_file)
-            if mtime > latest_time:
-                latest_time = mtime
-                latest_status = status
-                
-        return latest_status if latest_status else ""
-
     # ========== Core Monitor.py Methods ==========
     
     def get_tree(self, run_dir):
         """Build tree from .target_dependency.csh file (from monitor.py/tree_handlers.py)"""
         if not os.path.exists(os.path.join(run_dir, '.target_dependency.csh')):
-            print(f"Warning: .target_dependency.csh not found in {run_dir}")
+            logger.warning(f".target_dependency.csh not found in {run_dir}")
             return
         
         # Clear existing model
@@ -2025,7 +2163,7 @@ class MainWindow(QMainWindow):
             self.tree.expandAll()
         else:
             # Re-apply filter if exists
-            print(f"Re-applying filter: {self.filter_input.text()}")
+            logger.debug(f"Re-applying filter: {self.filter_input.text()}")
             # Use a delay to ensure model is fully loaded and view is ready
             QTimer.singleShot(100, lambda: self.filter_tree(self.filter_input.text()))
 
@@ -2037,15 +2175,16 @@ class MainWindow(QMainWindow):
         if not os.path.exists(deps_file):
             self.tar_name = []
             return
-            
-        with open(deps_file, 'r') as f:
-            a_file = f.read()
-            m = re.search(r'set\s*ACTIVE_TARGETS\s*\=(\s.*)', a_file)
-            if m:
-                target_name = m.group(1).strip()
-                if re.match(r"^(['\"]).*\"$", target_name):
-                    self.tar_name = re.sub(r"^['\"]|['\"]$", "", target_name).split()
+
+        try:
+            with open(deps_file, 'r') as f:
+                content = f.read()
+                match = RE_ACTIVE_TARGETS.search(content)
+                if match:
+                    self.tar_name = match.group(1).split()
                     return
+        except Exception as e:
+            logger.error(f"Error reading ACTIVE_TARGETS: {e}")
         self.tar_name = []
 
     def setup_status_watcher(self):
@@ -2065,11 +2204,11 @@ class MainWindow(QMainWindow):
         if os.path.exists(status_dir):
             self.status_watcher.addPath(status_dir)
             self.watched_status_dirs.add(status_dir)
-            print(f"DEBUG: Now watching status directory: {status_dir}")
+            logger.debug(f"Now watching status directory: {status_dir}")
     
     def on_status_directory_changed(self, path):
         """Called when the status directory contents change (file added/removed)."""
-        print(f"DEBUG: Status directory changed: {path}")
+        logger.debug(f"Status directory changed: {path}")
         
         # Use debounce timer to batch rapid changes (300ms delay)
         if not self.debounce_timer.isActive():
@@ -2077,7 +2216,7 @@ class MainWindow(QMainWindow):
     
     def on_status_file_changed(self, path):
         """Called when a watched file is modified."""
-        print(f"DEBUG: Status file changed: {path}")
+        logger.debug(f"Status file changed: {path}")
         
         # Use debounce timer to batch rapid changes
         if not self.debounce_timer.isActive():
@@ -2087,45 +2226,75 @@ class MainWindow(QMainWindow):
         """Refresh status timer callback - updates status/time for all visible targets"""
         if not hasattr(self, 'model') or not self.model or not self.combo_sel:
             return
-        
+
         # Skip updates when in All Status view
         if self.is_all_status_view:
             return
-            
+
+        # Get current run name
+        current_run = os.path.basename(self.combo_sel)
+
+        # Rebuild status cache for efficient batch lookup
+        self._build_status_cache(current_run)
+
+        def update_row_status(row_idx, parent_item=None):
+            """Update status and colors for a single row"""
+            if parent_item:
+                # Child row
+                level_item = parent_item.child(row_idx, 0)
+                target_item = parent_item.child(row_idx, 1)
+                status_item = parent_item.child(row_idx, 2)
+                start_time_item = parent_item.child(row_idx, 3)
+                end_time_item = parent_item.child(row_idx, 4)
+            else:
+                # Top-level row
+                level_item = self.model.item(row_idx, 0)
+                target_item = self.model.item(row_idx, 1)
+                status_item = self.model.item(row_idx, 2)
+                start_time_item = self.model.item(row_idx, 3)
+                end_time_item = self.model.item(row_idx, 4)
+
+            if not all([target_item, status_item]):
+                return
+
+            target = target_item.text()
+            if not target:
+                return
+
+            # Get status and time from cache
+            status = self.get_target_status(current_run, target)
+            start_time, end_time = self.get_target_times(current_run, target)
+
+            # Update status text
+            if status != status_item.text():
+                status_item.setText(status)
+
+                # Update background color for ALL columns in this row
+                color = QColor(self.colors.get(status, '#87CEEB'))
+                row_items = [level_item, target_item, status_item, start_time_item, end_time_item]
+                for item in row_items:
+                    if item:
+                        item.setBackground(QBrush(color))
+
+            # Update time
+            if start_time_item and start_time != start_time_item.text():
+                start_time_item.setText(start_time)
+            if end_time_item and end_time != end_time_item.text():
+                end_time_item.setText(end_time)
+
+        # Update all top-level rows and their children
         for i in range(self.model.rowCount()):
             level_item = self.model.item(i, 0)
             if not level_item:
                 continue
-                
-            target_item = self.model.item(i, 1)
-            status_item = self.model.item(i, 2)
-            start_time_item = self.model.item(i, 3)
-            end_time_item = self.model.item(i, 4)
-            
-            if not all([target_item, status_item, start_time_item, end_time_item]):
-                continue
-                
-            target = target_item.text()
-            tgt_track_file = os.path.join(self.combo_sel, 'logs/targettracker', target)
-            
-            # Get current run name
-            current_run = os.path.basename(self.combo_sel)
-            
-            # Get status and time
-            status = self.get_target_status(current_run, target)
-            start_time, end_time = self.get_start_end_time(tgt_track_file)
-            
-            # Update status and time
-            if status and status != status_item.text():
-                status_item.setText(status)
-                if status in self.colors:
-                    color = QColor(self.colors[status])
-                    status_item.setBackground(QBrush(color))
-                
-            if start_time != start_time_item.text():
-                start_time_item.setText(start_time)
-            if end_time != end_time_item.text():
-                end_time_item.setText(end_time)
+
+            # Update top-level row
+            update_row_status(i, None)
+
+            # Update children if any
+            if level_item.hasChildren():
+                for child_row in range(level_item.rowCount()):
+                    update_row_status(child_row, level_item)
     
     def get_start_end_time(self, tgt_track_file):
         """Get start and end time from target tracker file"""
@@ -2142,56 +2311,98 @@ class MainWindow(QMainWindow):
     # ========== File Viewers ==========
     
     def handle_csh(self):
-        """Open shell file for selected target"""
+        """Open shell file for selected target (runs in background thread)"""
         selected_targets = self.get_selected_targets()
         if not selected_targets or not self.combo_sel:
             return
         target = selected_targets[0]
         shell_file = os.path.join(self.combo_sel, 'make_targets', f"{target}.csh")
-        
+
         if os.path.exists(shell_file):
-            try:
-                subprocess.run(['gvim', shell_file], check=False)
-            except Exception as e:
-                print(f"Error opening csh: {e}")
+            def open_file():
+                try:
+                    subprocess.run(['gvim', shell_file], check=True, timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass  # gvim runs in background, timeout is expected
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"gvim returned error code {e.returncode}")
+                except FileNotFoundError:
+                    logger.error("gvim not found in PATH")
+                except Exception as e:
+                    logger.error(f"Error opening csh: {e}")
+
+            self._executor.submit(open_file)
+        else:
+            logger.warning(f"Shell file not found: {shell_file}")
 
     def handle_log(self):
-        """Open log file for selected target"""
+        """Open log file for selected target (runs in background thread)"""
         selected_targets = self.get_selected_targets()
         if not selected_targets or not self.combo_sel:
             return
         target = selected_targets[0]
         log_file = os.path.join(self.combo_sel, 'logs', f"{target}.log")
         log_file_gz = f"{log_file}.gz"
-        
-        try:
-            if os.path.exists(log_file):
-                subprocess.Popen(['gvim', log_file])
-            elif os.path.exists(log_file_gz):
-                subprocess.Popen(['gvim', log_file_gz])
-        except Exception as e:
-            print(f"Error opening log: {e}")
+
+        def open_file():
+            try:
+                if os.path.exists(log_file):
+                    subprocess.Popen(['gvim', log_file])
+                elif os.path.exists(log_file_gz):
+                    subprocess.Popen(['gvim', log_file_gz])
+                else:
+                    logger.warning(f"Log file not found: {log_file}")
+            except FileNotFoundError:
+                logger.error("gvim not found in PATH")
+            except Exception as e:
+                logger.error(f"Error opening log: {e}")
+
+        self._executor.submit(open_file)
 
     def handle_cmd(self):
-        """Open command file for selected target"""
+        """Open command file for selected target (runs in background thread)"""
         selected_targets = self.get_selected_targets()
         if not selected_targets or not self.combo_sel:
             return
         target = selected_targets[0]
         cmd_file = os.path.join(self.combo_sel, 'cmds', f"{target}.cmd")
-        
+
         if os.path.exists(cmd_file):
-            try:
-                subprocess.run(['gvim', cmd_file], check=False)
-            except Exception as e:
-                print(f"Error opening cmd: {e}")
+            def open_file():
+                try:
+                    subprocess.run(['gvim', cmd_file], check=True, timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass  # gvim runs in background, timeout is expected
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"gvim returned error code {e.returncode}")
+                except FileNotFoundError:
+                    logger.error("gvim not found in PATH")
+                except Exception as e:
+                    logger.error(f"Error opening cmd: {e}")
+
+            self._executor.submit(open_file)
+        else:
+            logger.warning(f"Command file not found: {cmd_file}")
 
     def Xterm(self):
-        """Open terminal in current run directory"""
+        """Open terminal in current run directory (runs in background thread)"""
         if not self.combo_sel:
             return
-        os.chdir(self.combo_sel)
-        os.system('XMeta_term')
+
+        def open_terminal():
+            try:
+                original_dir = os.getcwd()
+                os.chdir(self.combo_sel)
+                subprocess.run(['XMeta_term'], check=False, timeout=5)
+                os.chdir(original_dir)
+            except subprocess.TimeoutExpired:
+                pass  # Terminal runs in background
+            except FileNotFoundError:
+                logger.error("XMeta_term not found in PATH")
+            except Exception as e:
+                logger.error(f"Error opening terminal: {e}")
+
+        self._executor.submit(open_terminal)
 
     # ========== Right-click Menu ==========
     
@@ -2238,7 +2449,7 @@ class MainWindow(QMainWindow):
         retrace_targets = []
         if not self.combo_sel:
             return retrace_targets
-            
+
         dep_file = os.path.join(self.combo_sel, '.target_dependency.csh')
         if not os.path.exists(dep_file):
             return retrace_targets
@@ -2246,32 +2457,26 @@ class MainWindow(QMainWindow):
         try:
             with open(dep_file, 'r') as f:
                 content = f.read()
-                
-                # Determine which variable to look for
-                # in (Trace Up) -> ALL_RELATED_<target>
-                # out (Trace Down) -> DEPENDENCY_OUT_<target>
+
+                # Use pre-compiled regex patterns
                 if inout == 'in':
-                    search_key = f'ALL_RELATED_{target}'
+                    pattern = re.compile(rf'set\s+ALL_RELATED_{re.escape(target)}\s*=\s*"([^"]*)"')
                 else:
-                    search_key = f'DEPENDENCY_OUT_{target}'
-                
-                # Search for: set <search_key> = "target1 target2 ..."
-                match = re.search(r'set\s*(%s)\s*\=(\s.*)' % search_key, content)
+                    pattern = re.compile(rf'set\s+DEPENDENCY_OUT_{re.escape(target)}\s*=\s*"([^"]*)"')
+
+                match = pattern.search(content)
                 if match:
-                    targets_str = match.group(2).strip()
-                    # Remove quotes if present
-                    if re.match(r"^(['\"]).*\"$", targets_str):
-                        targets_str = re.sub(r"^['\"]|['\"]$", '', targets_str)
-                    
-                    retrace_targets = targets_str.split()
+                    retrace_targets = match.group(1).split()
         except Exception as e:
-            print(f"Error parsing dependencies: {e}")
+            logger.error(f"Error parsing dependencies: {e}")
+
+        return retrace_targets
             
         return retrace_targets
 
     def filter_tree_by_targets(self, targets_to_show):
         """Filter tree to show only specific targets"""
-        print(f"DEBUG: Filtering tree for {len(targets_to_show)} targets")
+        logger.debug(f"Filtering tree for {len(targets_to_show)} targets")
         
         # Helper to check visibility
         def check_visibility(item):
@@ -2335,11 +2540,11 @@ class MainWindow(QMainWindow):
         """Execute trace and filter view (In-Place)"""
         selected_targets = self.get_selected_targets()
         if not selected_targets or not self.combo_sel:
-            print("No target selected for trace")
+            logger.warning("No target selected for trace")
             return
         
         tar_sel = selected_targets[0]
-        print(f"Trace {inout} for target: {tar_sel}")
+        logger.info(f"Trace {inout} for target: {tar_sel}")
         
         # 1. Get related targets
         related_targets = self.get_retrace_target(tar_sel, inout)
@@ -2352,7 +2557,7 @@ class MainWindow(QMainWindow):
                 related_targets.insert(0, tar_sel) # Add to start
         
         if not related_targets:
-            print("No dependencies found.")
+            logger.info("No dependencies found.")
             return
 
         # 2. Filter the tree
