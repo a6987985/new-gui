@@ -5,6 +5,7 @@ import subprocess
 import time
 import warnings
 import logging
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 
 warnings.filterwarnings("ignore", category=DeprecationWarning) # Suppress sipPyTypeDict warning
@@ -47,7 +48,8 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QSizePolicy, QMenu, QStyledItemDelegate, QStyle, QStyleOptionViewItem, QAbstractItemView, QStyleOptionComboBox,
                              QMenuBar, QAction, QDialog, QGraphicsScene, QGraphicsView,
                              QGraphicsEllipseItem, QGraphicsTextItem, QGraphicsLineItem,
-                             QGraphicsPolygonItem, QFileDialog)
+                             QGraphicsPolygonItem, QFileDialog, QCheckBox, QScrollArea,
+                             QGroupBox, QMessageBox, QFrame)
 from PyQt5.QtGui import (QStandardItemModel, QStandardItem, QColor, QBrush, QFont, 
                          QFontDatabase, QTextCursor, QPen, QPainter, QPolygonF)
 import math
@@ -120,8 +122,162 @@ class BorderItemDelegate(QStyledItemDelegate):
             
         painter.restore()
 
+
+class TuneComboBoxDelegate(QStyledItemDelegate):
+    """ComboBox delegate for tune column - displays tune files as dropdown"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.tree_view = parent
+        self._popup_combo = None
+
+    def createEditor(self, parent, option, index):
+        """Create ComboBox editor"""
+        combo = QComboBox(parent)
+        combo.setStyleSheet("""
+            QComboBox {
+                border: 1px solid #ccc;
+                border-radius: 3px;
+                padding: 2px 5px;
+                background: white;
+            }
+            QComboBox:hover {
+                border: 1px solid #4A90D9;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 20px;
+            }
+            QComboBox::down-arrow {
+                width: 12px;
+                height: 12px;
+            }
+        """)
+        combo.setAutoFillBackground(True)
+        return combo
+
+    def setEditorData(self, editor, index):
+        """Populate ComboBox with tune file options"""
+        editor.clear()
+        # Get tune files list from item's UserRole
+        tune_files = index.data(Qt.UserRole)
+        if tune_files:
+            for suffix, filepath in tune_files:
+                editor.addItem(suffix, filepath)
+        else:
+            editor.addItem("(no tune)")
+
+    def setModelData(self, editor, model, index):
+        """Save selected tune file (not really needed for display-only)"""
+        pass
+
+    def updateEditorGeometry(self, editor, option, index):
+        """Position the editor"""
+        editor.setGeometry(option.rect)
+
+    def paint(self, painter, option, index):
+        """Custom paint to show ComboBox-like appearance"""
+        # 1. Draw background from model (Status Colors)
+        bg_brush = index.data(Qt.BackgroundRole)
+        if bg_brush:
+            painter.save()
+            if isinstance(bg_brush, QBrush):
+                painter.fillRect(option.rect, bg_brush)
+            elif isinstance(bg_brush, QColor):
+                painter.fillRect(option.rect, bg_brush)
+            painter.restore()
+
+        # 2. Draw Hover/Selection Background
+        painter.save()
+        if option.state & QStyle.State_Selected:
+            painter.fillRect(option.rect, QColor(0xC0, 0xC0, 0xBE))
+        elif option.state & QStyle.State_MouseOver:
+            painter.fillRect(option.rect, QColor(230, 240, 255, 150))
+        painter.restore()
+
+        # 3. Get tune files and text
+        tune_files = index.data(Qt.UserRole)
+        text = index.data(Qt.DisplayRole) or ""
+
+        # 4. Draw text
+        painter.save()
+        text_color = index.data(Qt.ForegroundRole)
+        if text_color:
+            painter.setPen(QPen(text_color.color() if isinstance(text_color, QBrush) else text_color))
+        else:
+            painter.setPen(QPen(Qt.black))
+
+        text_rect = option.rect.adjusted(5, 0, -20, 0)  # Leave space for arrow
+        painter.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter, text)
+        painter.restore()
+
+        # 5. Draw dropdown arrow indicator
+        painter.save()
+        arrow_x = option.rect.right() - 15
+        arrow_y = option.rect.center().y()
+        painter.setPen(QPen(QColor("#666"), 1))
+        # Draw simple down arrow
+        painter.drawLine(arrow_x - 4, arrow_y - 2, arrow_x, arrow_y + 2)
+        painter.drawLine(arrow_x, arrow_y + 2, arrow_x + 4, arrow_y - 2)
+        painter.restore()
+
+    def editorEvent(self, event, model, option, index):
+        """Handle mouse double-click to show popup"""
+        if event.type() == QEvent.MouseButtonDblClick:
+            from PyQt5.QtWidgets import QMenu
+
+            # Create menu for dropdown
+            menu = QMenu(self.tree_view)
+            menu.setStyleSheet("""
+                QMenu {
+                    background: white;
+                    border: 1px solid #ccc;
+                    padding: 0px;
+                }
+                QMenu::item {
+                    padding: 5px 20px;
+                    color: black;
+                    border: none;
+                }
+                QMenu::item:selected {
+                    background-color: #4A90D9;
+                    color: white;
+                }
+            """)
+
+            # Populate menu
+            tune_files = index.data(Qt.UserRole)
+            actions = []
+            if tune_files:
+                for suffix, filepath in tune_files:
+                    action = menu.addAction(suffix)
+                    action.setData(filepath)
+                    actions.append(action)
+            else:
+                action = menu.addAction("(no tune)")
+                action.setEnabled(False)
+
+            # Get the visual rect of the item and show menu below it
+            visual_rect = self.tree_view.visualRect(index)
+            popup_pos = self.tree_view.viewport().mapToGlobal(visual_rect.bottomLeft())
+
+            # Handle selection
+            def on_triggered(action):
+                filepath = action.data()
+                if filepath:
+                    import subprocess
+                    try:
+                        subprocess.Popen(['gvim', filepath])
+                    except Exception as e:
+                        pass
+
+            menu.triggered.connect(on_triggered)
+            menu.exec_(popup_pos)
+            return True
+        return super().editorEvent(event, model, option, index)
+
+
 class TreeViewEventFilter(QObject):
-    """事件过滤器，处理 TreeView 的展开/折叠"""
+    """Event filter for handling TreeView expand/collapse events"""
     def __init__(self, tree_view, parent=None):
         super().__init__(parent)
         self.tree_view = tree_view
@@ -162,21 +318,21 @@ class TreeViewEventFilter(QObject):
         return super().eventFilter(obj, event)
 
     def toggle_level_items(self, level):
-        """切换level对应的items的显示/隐藏状态"""
+        """Toggle visibility of items for a given level"""
         if level not in self.level_items:
             return
             
-        # 切换展开状态
+        # Toggle expand state
         self.level_expanded[level] = not self.level_expanded.get(level, True)
         
-        # 遍历所有相同level的行
+        # Iterate all rows with the same level
         rows = self.level_items[level]
         if not rows:
             return
             
-        # 第一个项目始终显示，其他项目根据展开状态显示/隐藏
+        # First item is always visible, others toggle based on expand state
         for i, row in enumerate(rows):
-            if i == 0:  # 第一个项目
+            if i == 0:  # First item
                 continue
             self.tree_view.setRowHidden(row, QModelIndex(), not self.level_expanded[level])
 
@@ -612,6 +768,260 @@ class DependencyGraphDialog(QDialog):
             
             image.save(file_path)
             logger.info(f"Graph exported to: {file_path}")
+
+
+class CopyTuneDialog(QDialog):
+    """Dialog for copying tune file to multiple runs."""
+    def __init__(self, source_run, target_name, available_runs, parent=None):
+        super().__init__(parent)
+        self.source_run = source_run
+        self.target_name = target_name
+        self.available_runs = available_runs
+        self.selected_runs = []
+        self.checkboxes = {}
+
+        self.setWindowTitle(f"Copy Tune: {target_name}")
+        self.setMinimumWidth(400)
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        # Source info
+        source_label = QLabel(f"Source: {self.source_run}")
+        source_label.setStyleSheet("font-weight: bold; color: #4A90D9;")
+        layout.addWidget(source_label)
+
+        # Instructions
+        instruction_label = QLabel("Select runs to copy tune file to:")
+        layout.addWidget(instruction_label)
+
+        # Create scrollable area for run list
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setMinimumHeight(250)
+
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout(scroll_widget)
+
+        # Add checkboxes for each run (exclude source run)
+        for run in sorted(self.available_runs):
+            if run != self.source_run:
+                cb = QCheckBox(run)
+                self.checkboxes[run] = cb
+                scroll_layout.addWidget(cb)
+
+        scroll_layout.addStretch()
+        scroll.setWidget(scroll_widget)
+        layout.addWidget(scroll)
+
+        # Select/Deselect buttons
+        btn_layout = QHBoxLayout()
+        select_all_btn = QPushButton("Select All")
+        select_all_btn.clicked.connect(self.select_all)
+        deselect_all_btn = QPushButton("Deselect All")
+        deselect_all_btn.clicked.connect(self.deselect_all)
+        btn_layout.addWidget(select_all_btn)
+        btn_layout.addWidget(deselect_all_btn)
+        layout.addLayout(btn_layout)
+
+        # OK/Cancel buttons
+        btn_box = QHBoxLayout()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        copy_btn = QPushButton("Copy")
+        copy_btn.clicked.connect(self.accept)
+        copy_btn.setStyleSheet("background-color: #4A90D9; color: white;")
+        btn_box.addStretch()
+        btn_box.addWidget(cancel_btn)
+        btn_box.addWidget(copy_btn)
+        layout.addLayout(btn_box)
+
+    def select_all(self):
+        for cb in self.checkboxes.values():
+            cb.setChecked(True)
+
+    def deselect_all(self):
+        for cb in self.checkboxes.values():
+            cb.setChecked(False)
+
+    def get_selected_runs(self):
+        return [run for run, cb in self.checkboxes.items() if cb.isChecked()]
+
+
+class SelectTuneDialog(QDialog):
+    """Dialog for selecting a tune file from multiple options."""
+    def __init__(self, target_name, tune_files, parent=None):
+        super().__init__(parent)
+        self.target_name = target_name
+        self.tune_files = tune_files  # List of (suffix, full_path)
+        self.selected_tune = None
+
+        self.setWindowTitle(f"Select Tune: {target_name}")
+        self.setMinimumWidth(350)
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        # Instructions
+        instruction_label = QLabel("Select a tune file:")
+        layout.addWidget(instruction_label)
+
+        # Create buttons for each tune file
+        self.tune_buttons = {}
+        for suffix, filepath in self.tune_files:
+            btn = QPushButton(suffix)
+            btn.setStyleSheet("text-align: left; padding: 8px;")
+            btn.clicked.connect(lambda checked, s=suffix, f=filepath: self.select_tune(s, f))
+            layout.addWidget(btn)
+            self.tune_buttons[suffix] = btn
+
+        # Cancel button
+        btn_box = QHBoxLayout()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btn_box.addStretch()
+        btn_box.addWidget(cancel_btn)
+        layout.addLayout(btn_box)
+
+    def select_tune(self, suffix, filepath):
+        self.selected_tune = (suffix, filepath)
+        self.accept()
+
+    def get_selected_tune(self):
+        return self.selected_tune
+
+
+class CopyTuneSelectDialog(QDialog):
+    """Dialog for selecting tune files and copying to multiple runs."""
+    def __init__(self, source_run, target_name, tune_files, available_runs, parent=None):
+        super().__init__(parent)
+        self.source_run = source_run
+        self.target_name = target_name
+        self.tune_files = tune_files  # List of (suffix, full_path)
+        self.available_runs = available_runs
+        self.selected_tune_suffixes = []  # Changed to list for multiple selection
+        self.selected_runs = []
+
+        self.setWindowTitle(f"Copy Tune: {target_name}")
+        self.setMinimumWidth(450)
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        # Source info
+        source_label = QLabel(f"Source: {self.source_run}")
+        source_label.setStyleSheet("font-weight: bold; color: #4A90D9;")
+        layout.addWidget(source_label)
+
+        # Tune file selection - changed to checkboxes for multi-select
+        tune_label = QLabel("Select tune files to copy:")
+        layout.addWidget(tune_label)
+
+        # Create tune file checkboxes
+        self.tune_checkboxes = {}
+        tune_widget = QWidget()
+        tune_layout = QVBoxLayout(tune_widget)
+        tune_layout.setContentsMargins(0, 0, 0, 0)
+
+        for suffix, filepath in self.tune_files:
+            cb = QCheckBox(suffix)
+            cb.setChecked(True)  # Default to selected
+            self.tune_checkboxes[suffix] = (cb, filepath)
+            tune_layout.addWidget(cb)
+
+        layout.addWidget(tune_widget)
+
+        # Select/Deselect buttons for tune files
+        tune_btn_layout = QHBoxLayout()
+        tune_select_all_btn = QPushButton("Select All Tunes")
+        tune_select_all_btn.clicked.connect(self.select_all_tunes)
+        tune_deselect_all_btn = QPushButton("Deselect All Tunes")
+        tune_deselect_all_btn.clicked.connect(self.deselect_all_tunes)
+        tune_btn_layout.addWidget(tune_select_all_btn)
+        tune_btn_layout.addWidget(tune_deselect_all_btn)
+        layout.addLayout(tune_btn_layout)
+
+        # Separator
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(line)
+
+        # Run selection
+        run_label = QLabel("Select runs to copy to:")
+        layout.addWidget(run_label)
+
+        # Create scrollable area for run list
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setMinimumHeight(200)
+
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout(scroll_widget)
+
+        self.run_checkboxes = {}
+        for run in sorted(self.available_runs):
+            if run != self.source_run:
+                cb = QCheckBox(run)
+                self.run_checkboxes[run] = cb
+                scroll_layout.addWidget(cb)
+
+        scroll_layout.addStretch()
+        scroll.setWidget(scroll_widget)
+        layout.addWidget(scroll)
+
+        # Select/Deselect buttons for runs
+        btn_layout = QHBoxLayout()
+        select_all_btn = QPushButton("Select All Runs")
+        select_all_btn.clicked.connect(self.select_all_runs)
+        deselect_all_btn = QPushButton("Deselect All Runs")
+        deselect_all_btn.clicked.connect(self.deselect_all_runs)
+        btn_layout.addWidget(select_all_btn)
+        btn_layout.addWidget(deselect_all_btn)
+        layout.addLayout(btn_layout)
+
+        # OK/Cancel buttons
+        btn_box = QHBoxLayout()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        copy_btn = QPushButton("Copy")
+        copy_btn.clicked.connect(self.accept)
+        copy_btn.setStyleSheet("background-color: #4A90D9; color: white;")
+        btn_box.addStretch()
+        btn_box.addWidget(cancel_btn)
+        btn_box.addWidget(copy_btn)
+        layout.addLayout(btn_box)
+
+    def select_all_tunes(self):
+        for cb, _ in self.tune_checkboxes.values():
+            cb.setChecked(True)
+
+    def deselect_all_tunes(self):
+        for cb, _ in self.tune_checkboxes.values():
+            cb.setChecked(False)
+
+    def select_all_runs(self):
+        for cb in self.run_checkboxes.values():
+            cb.setChecked(True)
+
+    def deselect_all_runs(self):
+        for cb in self.run_checkboxes.values():
+            cb.setChecked(False)
+
+    def get_selected_tune_suffixes(self):
+        """Returns list of (suffix, filepath) tuples for selected tunes"""
+        result = []
+        for suffix, (cb, filepath) in self.tune_checkboxes.items():
+            if cb.isChecked():
+                result.append((suffix, filepath))
+        return result
+
+    def get_selected_runs(self):
+        return [run for run, cb in self.run_checkboxes.items() if cb.isChecked()]
+
 
 
 class MainWindow(QMainWindow):
@@ -1060,7 +1470,7 @@ class MainWindow(QMainWindow):
         """)
         
         self.model = QStandardItemModel()
-        self.model.setHorizontalHeaderLabels(["level", "target", "status", "start time", "end time"])
+        self.model.setHorizontalHeaderLabels(["level", "target", "status", "tune", "start time", "end time"])
         self.tree.setModel(self.model)
         
         # Simple column width setup
@@ -1069,7 +1479,11 @@ class MainWindow(QMainWindow):
         # Initialize TreeViewEventFilter
         self.tree_view_event_filter = TreeViewEventFilter(self.tree, self)
         self.tree.viewport().installEventFilter(self.tree_view_event_filter)
-        
+
+        # Set ComboBox delegate for tune column (column 3)
+        self.tune_delegate = TuneComboBoxDelegate(self.tree)
+        self.tree.setItemDelegateForColumn(3, self.tune_delegate)
+
         main_layout.addWidget(self.tree)
 
         # Set right-click context menu
@@ -1267,7 +1681,7 @@ class MainWindow(QMainWindow):
 
         self.tree.setUpdatesEnabled(False)
         self.model.clear()
-        self.model.setHorizontalHeaderLabels(["level", "target", "status", "start time", "end time"])
+        self.model.setHorizontalHeaderLabels(["level", "target", "status", "tune", "start time", "end time"])
         self.set_column_widths()
         
         # Helper to add a single row (returns the created items list)
@@ -1876,7 +2290,7 @@ class MainWindow(QMainWindow):
         self.tree.setUpdatesEnabled(False)
         # Clear existing data
         self.model.clear()
-        self.model.setHorizontalHeaderLabels(["level", "target", "status", "start time", "end time"])
+        self.model.setHorizontalHeaderLabels(["level", "target", "status", "tune", "start time", "end time"])
         self.set_column_widths()
         
         # Get current run name
@@ -1923,6 +2337,15 @@ class MainWindow(QMainWindow):
             s_item.setForeground(QBrush(Qt.black))
             parent_row.append(s_item)
 
+            # Tune - get tune files and store in UserRole for ComboBox
+            tune_files = self.get_tune_files(self.combo_sel, parent_target)
+            tune_display = ", ".join([suffix for suffix, _ in tune_files]) if tune_files else ""
+            tune_item = QStandardItem(tune_display)
+            tune_item.setEditable(True)  # Must be editable for ComboBox delegate to work
+            tune_item.setForeground(QBrush(Qt.black))
+            tune_item.setData(tune_files, Qt.UserRole)  # Store full list for ComboBox
+            parent_row.append(tune_item)
+
             # Time - get from cache
             start_time, end_time = self.get_target_times(current_run, parent_target)
 
@@ -1965,6 +2388,15 @@ class MainWindow(QMainWindow):
                 c_s_item.setEditable(False)
                 c_s_item.setForeground(QBrush(Qt.black))
                 child_row.append(c_s_item)
+
+                # Tune - get tune files and store in UserRole for ComboBox
+                c_tune_files = self.get_tune_files(self.combo_sel, child_target)
+                c_tune_display = ", ".join([suffix for suffix, _ in c_tune_files]) if c_tune_files else ""
+                c_tune_item = QStandardItem(c_tune_display)
+                c_tune_item.setEditable(True)  # Must be editable for ComboBox delegate to work
+                c_tune_item.setForeground(QBrush(Qt.black))
+                c_tune_item.setData(c_tune_files, Qt.UserRole)  # Store full list for ComboBox
+                child_row.append(c_tune_item)
 
                 # Time - get from cache
                 c_start_time, c_end_time = self.get_target_times(current_run, child_target)
@@ -2045,7 +2477,7 @@ class MainWindow(QMainWindow):
         
         # Clear existing model
         self.model.clear()
-        self.model.setHorizontalHeaderLabels(["level", "target", "status", "start time", "end time"])
+        self.model.setHorizontalHeaderLabels(["level", "target", "status", "tune", "start time", "end time"])
         
         # Get targets
         self.get_target()
@@ -2072,10 +2504,11 @@ class MainWindow(QMainWindow):
 
                 start_time, end_time = self.get_start_end_time(tgt_track_file)
                 target_status = self.get_target_status(current_run, target)
+                tune_display = self.get_tune_display(run_dir, target)
 
                 str_lv = ''.join(target_level)
                 o.append(str_lv)
-                d = [target_level, target, target_status, start_time, end_time]
+                d = [target_level, target, target_status, tune_display, start_time, end_time]
                 l.append(d)
         
         # Get all unique levels and sort
@@ -2085,11 +2518,11 @@ class MainWindow(QMainWindow):
         # Group data by level
         level_data = {}
         for data in l:
-            lvl, tgt, st, ct, et = data
+            lvl, tgt, st, tune, ct, et = data
             str_data = ''.join(lvl)
             if str_data not in level_data:
                 level_data[str_data] = []
-            level_data[str_data].append((tgt, st, ct, et))
+            level_data[str_data].append((tgt, st, tune, ct, et))
         
         # Create parent-child structure
         for level in all_lv:
@@ -2109,7 +2542,7 @@ class MainWindow(QMainWindow):
             root_items = [root_item]
             first_item = items[0]
             text_color = QColor("#333333")
-            for value in [first_item[0], first_item[1], first_item[2], first_item[3]]:
+            for value in [first_item[0], first_item[1], first_item[2], first_item[3], first_item[4]]:
                 item = QStandardItem()
                 item.setText(value)
                 item.setEditable(False)
@@ -2127,7 +2560,7 @@ class MainWindow(QMainWindow):
             
             # Add children if more than one item
             if len(items) > 1:
-                for tgt, st, ct, et in items[1:]:
+                for tgt, st, tune, ct, et in items[1:]:
                     child_items = []
                     text_color = QColor("#333333")
                     # level column
@@ -2136,9 +2569,9 @@ class MainWindow(QMainWindow):
                     level_item.setEditable(False)
                     level_item.setForeground(QBrush(text_color))
                     child_items.append(level_item)
-                    
+
                     # Other columns
-                    for value in [tgt, st, ct, et]:
+                    for value in [tgt, st, tune, ct, et]:
                         item = QStandardItem()
                         item.setText(value)
                         item.setEditable(False)
@@ -2244,15 +2677,17 @@ class MainWindow(QMainWindow):
                 level_item = parent_item.child(row_idx, 0)
                 target_item = parent_item.child(row_idx, 1)
                 status_item = parent_item.child(row_idx, 2)
-                start_time_item = parent_item.child(row_idx, 3)
-                end_time_item = parent_item.child(row_idx, 4)
+                tune_item = parent_item.child(row_idx, 3)
+                start_time_item = parent_item.child(row_idx, 4)
+                end_time_item = parent_item.child(row_idx, 5)
             else:
                 # Top-level row
                 level_item = self.model.item(row_idx, 0)
                 target_item = self.model.item(row_idx, 1)
                 status_item = self.model.item(row_idx, 2)
-                start_time_item = self.model.item(row_idx, 3)
-                end_time_item = self.model.item(row_idx, 4)
+                tune_item = self.model.item(row_idx, 3)
+                start_time_item = self.model.item(row_idx, 4)
+                end_time_item = self.model.item(row_idx, 5)
 
             if not all([target_item, status_item]):
                 return
@@ -2271,7 +2706,7 @@ class MainWindow(QMainWindow):
 
                 # Update background color for ALL columns in this row
                 color = QColor(self.colors.get(status, '#87CEEB'))
-                row_items = [level_item, target_item, status_item, start_time_item, end_time_item]
+                row_items = [level_item, target_item, status_item, tune_item, start_time_item, end_time_item]
                 for item in row_items:
                     if item:
                         item.setBackground(QBrush(color))
@@ -2384,6 +2819,150 @@ class MainWindow(QMainWindow):
         else:
             logger.warning(f"Command file not found: {cmd_file}")
 
+    # ========== Tune File Management ==========
+
+    def get_tune_files(self, run_dir, target_name):
+        """Get all tune files for a target.
+        Tune file naming: {run_dir}/tune/{target}/{target}.{suffix}.tcl
+        Returns: list of (suffix, full_path) tuples
+        """
+        import glob as glob_module
+        tune_dir = os.path.join(run_dir, 'tune', target_name)
+        if not os.path.exists(tune_dir):
+            return []
+
+        # Find all files matching pattern: {target}.{suffix}.tcl
+        pattern = os.path.join(tune_dir, f"{target_name}.*.tcl")
+        tune_files = []
+
+        for filepath in glob_module.glob(pattern):
+            filename = os.path.basename(filepath)
+            # Extract suffix: {target}.{suffix}.tcl -> {suffix}
+            parts = filename.split('.')
+            if len(parts) >= 3:  # target.suffix.tcl
+                suffix = '.'.join(parts[1:-1])  # Handle cases like pre.opt.tcl
+                tune_files.append((suffix, filepath))
+
+        return sorted(tune_files)
+
+    def get_tune_display(self, run_dir, target_name):
+        """Get tune display string for tree view.
+        Returns comma-separated suffixes or empty string
+        """
+        tune_files = self.get_tune_files(run_dir, target_name)
+        if not tune_files:
+            return ""
+        return ", ".join([suffix for suffix, _ in tune_files])
+
+    def has_tune(self, run_dir, target_name):
+        """Check if target has any tune file"""
+        return len(self.get_tune_files(run_dir, target_name)) > 0
+
+    def handle_tune(self):
+        """Open tune file for selected target with gvim"""
+        selected_targets = self.get_selected_targets()
+        if not selected_targets or not self.combo_sel:
+            return
+
+        target = selected_targets[0]
+        tune_files = self.get_tune_files(self.combo_sel, target)
+
+        if not tune_files:
+            QMessageBox.information(self, "Info", f"No tune file found for: {target}")
+            return
+
+        if len(tune_files) == 1:
+            # Only one tune file, open directly
+            tune_file = tune_files[0][1]
+            self._open_tune_file(tune_file)
+        else:
+            # Multiple tune files, show selection dialog
+            dialog = SelectTuneDialog(target, tune_files, self)
+            if dialog.exec_() == QDialog.Accepted:
+                selected = dialog.get_selected_tune()
+                if selected:
+                    self._open_tune_file(selected[1])
+
+    def _open_tune_file(self, tune_file):
+        """Open a tune file with gvim (runs in background thread)"""
+        def open_file():
+            try:
+                subprocess.run(['gvim', tune_file], check=True, timeout=5)
+            except subprocess.TimeoutExpired:
+                pass  # gvim runs in background
+            except subprocess.CalledProcessError as e:
+                logger.error(f"gvim returned error code {e.returncode}")
+            except FileNotFoundError:
+                logger.error("gvim not found in PATH")
+            except Exception as e:
+                logger.error(f"Error opening tune: {e}")
+
+        self._executor.submit(open_file)
+
+    def copy_tune_to_runs(self):
+        """Copy tune file to selected runs"""
+        selected_targets = self.get_selected_targets()
+        if not selected_targets or not self.combo_sel:
+            return
+
+        target = selected_targets[0]
+        tune_files = self.get_tune_files(self.combo_sel, target)
+
+        if not tune_files:
+            QMessageBox.information(self, "Info", f"No tune file found for: {target}")
+            return
+
+        # Get available runs
+        available_runs = []
+        if hasattr(self, 'run_base_dir') and os.path.exists(self.run_base_dir):
+            for item in os.listdir(self.run_base_dir):
+                item_path = os.path.join(self.run_base_dir, item)
+                dep_file = os.path.join(item_path, ".target_dependency.csh")
+                if os.path.isdir(item_path) and os.path.exists(dep_file):
+                    available_runs.append(item)
+
+        if not available_runs:
+            QMessageBox.warning(self, "Warning", "No other runs available")
+            return
+
+        current_run = os.path.basename(self.combo_sel) if os.path.isabs(self.combo_sel) else self.combo_sel
+
+        # Show combined dialog for tune selection and run selection
+        dialog = CopyTuneSelectDialog(current_run, target, tune_files, available_runs, self)
+        if dialog.exec_() == QDialog.Accepted:
+            selected_runs = dialog.get_selected_runs()
+            selected_tunes = dialog.get_selected_tune_suffixes()
+
+            if not selected_runs or not selected_tunes:
+                return
+
+            # Copy selected tune files to selected runs
+            total_success = 0
+            total_attempts = len(selected_tunes) * len(selected_runs)
+
+            for suffix, source_tune in selected_tunes:
+                for run in selected_runs:
+                    run_dir = os.path.join(self.run_base_dir, run) if hasattr(self, 'run_base_dir') else run
+                    # Path: {run_dir}/tune/{target}/{target}.{suffix}.tcl
+                    dest_dir = os.path.join(run_dir, 'tune', target)
+                    dest_tune = os.path.join(dest_dir, f"{target}.{suffix}.tcl")
+
+                    try:
+                        # Create tune directory if not exists
+                        if not os.path.exists(dest_dir):
+                            os.makedirs(dest_dir)
+                        # Copy file (overwrite if exists)
+                        shutil.copy2(source_tune, dest_tune)
+                        logger.info(f"Copied tune to: {dest_tune}")
+                        total_success += 1
+                    except Exception as e:
+                        logger.error(f"Failed to copy tune to {run}: {e}")
+
+            # Build summary message
+            tune_names = ", ".join([suffix for suffix, _ in selected_tunes])
+            QMessageBox.information(self, "Copy Complete",
+                f"Copied {len(selected_tunes)} tune file(s) ({tune_names})\nto {total_success}/{len(selected_runs)} runs")
+
     def Xterm(self):
         """Open terminal in current run directory (runs in background thread)"""
         if not self.combo_sel:
@@ -2405,7 +2984,7 @@ class MainWindow(QMainWindow):
         self._executor.submit(open_terminal)
 
     # ========== Right-click Menu ==========
-    
+
     def show_context_menu(self, position):
         """Show context menu on right-click"""
         index = self.tree.indexAt(position)
@@ -2418,17 +2997,29 @@ class MainWindow(QMainWindow):
             selection_model.select(index, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
 
         menu = QMenu()
-        
+
         terminal_action = menu.addAction("Terminal")
         csh_action = menu.addAction("csh")
         log_action = menu.addAction("Log")
         cmd_action = menu.addAction("cmd")
         menu.addSeparator()
+        tune_action = menu.addAction("Tune")
+        copy_tune_action = menu.addAction("Copy Tune To...")
+        menu.addSeparator()
         trace_up_action = menu.addAction("Trace Up")
         trace_down_action = menu.addAction("Trace Down")
-        
+
+        # Check if selected target has tune file and update menu text
+        selected_targets = self.get_selected_targets()
+        if selected_targets and self.combo_sel:
+            tune_display = self.get_tune_display(self.combo_sel, selected_targets[0])
+            if tune_display:
+                tune_action.setText(f"Tune ({tune_display})")
+            else:
+                tune_action.setText("Tune")
+
         action = menu.exec_(self.tree.viewport().mapToGlobal(position))
-        
+
         if action == terminal_action:
             self.Xterm()
         elif action == csh_action:
@@ -2437,6 +3028,10 @@ class MainWindow(QMainWindow):
             self.handle_log()
         elif action == cmd_action:
             self.handle_cmd()
+        elif action == tune_action:
+            self.handle_tune()
+        elif action == copy_tune_action:
+            self.copy_tune_to_runs()
         elif action == trace_up_action:
             self.retrace_tab('in')
         elif action == trace_down_action:
@@ -2577,11 +3172,12 @@ class MainWindow(QMainWindow):
 
     def set_column_widths(self):
         """Set column widths to user preferences"""
-        self.tree.setColumnWidth(0, 104) # level
-        self.tree.setColumnWidth(1, 625) # target
-        self.tree.setColumnWidth(2, 95)  # status
-        self.tree.setColumnWidth(3, 173) # start time
-        self.tree.setColumnWidth(4, 179) # end time
+        self.tree.setColumnWidth(0, 80)  # level
+        self.tree.setColumnWidth(1, 480) # target
+        self.tree.setColumnWidth(2, 70)  # status
+        self.tree.setColumnWidth(3, 150) # tune (show suffixes like "pre_opt, pre_output")
+        self.tree.setColumnWidth(4, 140) # start time
+        self.tree.setColumnWidth(5, 140) # end time
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
