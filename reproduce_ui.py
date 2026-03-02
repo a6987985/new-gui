@@ -29,56 +29,160 @@ RE_QUOTED_STRING = re.compile(r"^['\"](.*)['\"]\s*$")
 RE_DEPENDENCY_OUT = re.compile(r'set\s+DEPENDENCY_OUT_(\w+)\s*=\s*"([^"]*)"')
 RE_ALL_RELATED = re.compile(r'set\s+ALL_RELATED_(\w+)\s*=\s*"([^"]*)"')
 
-# ========== Status Colors Constant ==========
-STATUS_COLORS = {
-    "finish": "#98FB98",    # PaleGreen
-    "skip": "#FFDAB9",      # PeachPuff
-    "running": "#FFFF00",   # Yellow
-    "failed": "#FF9999",    # Light Red
-    "scheduled": "#4A90D9", # Deeper Blue
-    "pending": "#87CEEB",   # SkyBlue
-    "": "#87CEEB"           # Default/No status
+# ========== Status Configuration Constant ==========
+# Extended configuration with icons and animation settings
+STATUS_CONFIG = {
+    "finish": {"color": "#98FB98", "icon": "✓", "animation": None, "text_color": "#1a5f1a"},
+    "skip": {"color": "#FFDAB9", "icon": "○", "animation": None, "text_color": "#8b6914"},
+    "running": {"color": "#FFFF00", "icon": "▶", "animation": "pulse", "text_color": "#333333"},
+    "failed": {"color": "#FF9999", "icon": "✗", "animation": "shake", "text_color": "#8b0000"},
+    "scheduled": {"color": "#4A90D9", "icon": "◷", "animation": None, "text_color": "#ffffff"},
+    "pending": {"color": "#FFA500", "icon": "◇", "animation": None, "text_color": "#333333"},
+    "": {"color": "#88D0EC", "icon": "", "animation": None, "text_color": "#1a4f6f"}
 }
 
-from PyQt5.QtCore import QPropertyAnimation, QEasingCurve, Qt, QTimer, QObject, QEvent, QModelIndex, QRect, pyqtSignal, QItemSelectionModel, QPointF, QLineF, QFileSystemWatcher
+# Legacy STATUS_COLORS for backward compatibility
+STATUS_COLORS = {k: v["color"] for k, v in STATUS_CONFIG.items()}
+
+# ========== Theme Configuration ==========
+THEMES = {
+    "light": {
+        "name": "Light",
+        "window_bg": "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e0f7fa, stop:1 #80deea)",
+        "panel_bg": "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #a8e6cf, stop:1 #56ab2f)",
+        "tree_bg": "rgba(255, 255, 255, 0.9)",
+        "text_color": "#333333",
+        "accent_color": "#4A90D9",
+        "border_color": "#cccccc",
+        "hover_bg": "rgba(230, 240, 255, 0.6)",
+        "selection_bg": "#C0C0BE",
+        "menu_bg": "#ffffff",
+        "menu_hover": "#e6f7ff",
+        "status_bar_bg": "#f5f5f5"
+    },
+    "dark": {
+        "name": "Dark",
+        "window_bg": "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1a1a2e, stop:1 #16213e)",
+        "panel_bg": "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2d3436, stop:1 #636e72)",
+        "tree_bg": "rgba(30, 30, 40, 0.95)",
+        "text_color": "#e0e0e0",
+        "accent_color": "#64b5f6",
+        "border_color": "#444444",
+        "hover_bg": "rgba(80, 80, 100, 0.5)",
+        "selection_bg": "#3d5a80",
+        "menu_bg": "#2d2d2d",
+        "menu_hover": "#3d5a80",
+        "status_bar_bg": "#252525"
+    },
+    "high_contrast": {
+        "name": "High Contrast",
+        "window_bg": "#ffffff",
+        "panel_bg": "#000000",
+        "tree_bg": "#ffffff",
+        "text_color": "#000000",
+        "accent_color": "#0000ff",
+        "border_color": "#000000",
+        "hover_bg": "#ffff00",
+        "selection_bg": "#0000ff",
+        "menu_bg": "#ffffff",
+        "menu_hover": "#0000ff",
+        "status_bar_bg": "#e0e0e0"
+    }
+}
+
+# ========== Keyboard Shortcuts Configuration ==========
+SHORTCUTS = {
+    "search": {"key": "Ctrl+F", "description": "Focus search field"},
+    "refresh": {"key": "Ctrl+R", "description": "Refresh current view"},
+    "expand_all": {"key": "Ctrl+E", "description": "Expand all items"},
+    "collapse_all": {"key": "Ctrl+W", "description": "Collapse all items"},
+    "toggle_theme": {"key": "Ctrl+T", "description": "Toggle dark/light theme"},
+    "show_graph": {"key": "Ctrl+G", "description": "Show dependency graph"},
+    "copy_target": {"key": "Ctrl+C", "description": "Copy selected target name"},
+    "run_selected": {"key": "Ctrl+Enter", "description": "Run selected targets"},
+    "trace_up": {"key": "Ctrl+U", "description": "Trace upstream dependencies"},
+    "trace_down": {"key": "Ctrl+D", "description": "Trace downstream dependencies"}
+}
+
+# ========== Notification Types ==========
+NOTIFICATION_TYPES = {
+    "info": {"color": "#4A90D9", "icon": "ℹ", "duration": 3000},
+    "success": {"color": "#28a745", "icon": "✓", "duration": 3000},
+    "warning": {"color": "#ffc107", "icon": "⚠", "duration": 5000},
+    "error": {"color": "#dc3545", "icon": "✗", "duration": 7000}
+}
+
+from PyQt5.QtCore import (QPropertyAnimation, QEasingCurve, Qt, QTimer, QObject,
+                          QEvent, QModelIndex, QRect, pyqtSignal, QItemSelectionModel,
+                          QPointF, QLineF, QFileSystemWatcher, QSize, QPoint)
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QLabel, QComboBox, QPushButton, QCompleter,
-                             QTreeView, QLineEdit, QHeaderView, QStyleFactory,
-                             QGraphicsDropShadowEffect, QGraphicsOpacityEffect,
-                             QSizePolicy, QMenu, QStyledItemDelegate, QStyle, QStyleOptionViewItem, QAbstractItemView, QStyleOptionComboBox,
+                             QTreeView, QLineEdit, QHeaderView,
+                             QGraphicsDropShadowEffect,
+                             QSizePolicy, QMenu, QStyledItemDelegate, QStyle, QStyleOptionViewItem,
+                             QAbstractItemView, QStyleOptionComboBox,
                              QMenuBar, QAction, QDialog, QGraphicsScene, QGraphicsView,
                              QGraphicsEllipseItem, QGraphicsTextItem, QGraphicsLineItem,
                              QGraphicsPolygonItem, QFileDialog, QCheckBox, QScrollArea,
-                             QGroupBox, QMessageBox, QFrame)
-from PyQt5.QtGui import (QStandardItemModel, QStandardItem, QColor, QBrush, QFont, 
-                         QFontDatabase, QTextCursor, QPen, QPainter, QPolygonF)
+                             QGroupBox, QMessageBox, QFrame, QShortcut, QShortcut,
+                             QGraphicsRectItem, QGraphicsItem)
+from PyQt5.QtGui import (QStandardItemModel, QStandardItem, QColor, QBrush, QFont,
+                         QFontMetrics, QPen, QPainter, QPolygonF,
+                         QKeySequence)
 import math
 
 
 
 class BorderItemDelegate(QStyledItemDelegate):
+    """Custom delegate for drawing row borders and status icons"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._animator = StatusAnimator()
+
     def paint(self, painter, option, index):
         # 1. Manually draw background from model (Status Colors)
         bg_brush = index.data(Qt.BackgroundRole)
+        original_color = None
+
         if bg_brush:
             painter.save()
             if isinstance(bg_brush, QBrush):
-                painter.fillRect(option.rect, bg_brush)
+                original_color = bg_brush.color()
+                # Check if this item has animation
+                status_text = ""
+                if index.column() == 2:  # Status column
+                    status_text = index.data(Qt.DisplayRole) or ""
+
+                status_config = STATUS_CONFIG.get(status_text.lower() if status_text else "", {})
+                animation_type = status_config.get("animation")
+
+                if animation_type == "pulse":
+                    # Apply pulse animation for running status
+                    animated_color = self._animator.get_animated_color(original_color, animation_type)
+                    painter.fillRect(option.rect, QBrush(animated_color))
+                else:
+                    painter.fillRect(option.rect, bg_brush)
             elif isinstance(bg_brush, QColor):
+                original_color = bg_brush
                 painter.fillRect(option.rect, bg_brush)
             painter.restore()
 
         # 2. Manually draw Hover/Selection Background
         painter.save()
         bg_rect = QRect(option.rect)
-        
+
         # If first column, extend rect to the left edge to cover branch/indentation
         if index.column() == 0:
             bg_rect.setLeft(0)
-            
-        if option.state & QStyle.State_Selected:
+
+        # Check if this item is in hover or selected state
+        is_hover = option.state & QStyle.State_MouseOver
+        is_selected = option.state & QStyle.State_Selected
+
+        if is_selected:
             painter.fillRect(bg_rect, QColor(0xC0, 0xC0, 0xBE))
-        elif option.state & QStyle.State_MouseOver:
+        elif is_hover:
             painter.fillRect(bg_rect, QColor(230, 240, 255, 150)) # Semi-transparent
         painter.restore()
 
@@ -86,29 +190,36 @@ class BorderItemDelegate(QStyledItemDelegate):
         opt = QStyleOptionViewItem(option)
         opt.state &= ~QStyle.State_Selected
         opt.state &= ~QStyle.State_MouseOver
+
+        # Apply bold font when hovering or selected
+        if is_hover or is_selected:
+            font = opt.font
+            font.setBold(True)
+            opt.font = font
+
         super().paint(painter, opt, index)
-        
-        # 4. Draw custom border on top
+
+        # 5. Draw custom border on top
         painter.save()
-        
+
         # Helper to draw row-style border
         def draw_row_border(color):
             painter.setPen(QPen(color, 1))
             painter.setBrush(Qt.NoBrush)
             r = QRect(option.rect)
-            
+
             # If first column, extend to left edge to cover branch/indentation
             if index.column() == 0:
                 r.setLeft(0)
-            
+
             # Draw Top and Bottom lines for ALL cells
             painter.drawLine(r.left(), r.top(), r.right(), r.top())
             painter.drawLine(r.left(), r.bottom(), r.right(), r.bottom())
-            
+
             # Draw Left line ONLY for the first column (at x=0)
             if index.column() == 0:
                 painter.drawLine(r.left(), r.top(), r.left(), r.bottom())
-                
+
             # Draw Right line ONLY for the last column
             model = index.model()
             if model and index.column() == model.columnCount(index.parent()) - 1:
@@ -116,10 +227,10 @@ class BorderItemDelegate(QStyledItemDelegate):
 
         if option.state & QStyle.State_MouseOver:
             draw_row_border(QColor(230, 240, 255))
-            
+
         if option.state & QStyle.State_Selected:
             draw_row_border(QColor(0xC0, 0xC0, 0xBE))
-            
+
         painter.restore()
 
 
@@ -206,18 +317,8 @@ class TuneComboBoxDelegate(QStyledItemDelegate):
         else:
             painter.setPen(QPen(Qt.black))
 
-        text_rect = option.rect.adjusted(5, 0, -20, 0)  # Leave space for arrow
+        text_rect = option.rect.adjusted(5, 0, -5, 0)
         painter.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter, text)
-        painter.restore()
-
-        # 5. Draw dropdown arrow indicator
-        painter.save()
-        arrow_x = option.rect.right() - 15
-        arrow_y = option.rect.center().y()
-        painter.setPen(QPen(QColor("#666"), 1))
-        # Draw simple down arrow
-        painter.drawLine(arrow_x - 4, arrow_y - 2, arrow_x, arrow_y + 2)
-        painter.drawLine(arrow_x, arrow_y + 2, arrow_x + 4, arrow_y - 2)
         painter.restore()
 
     def editorEvent(self, event, model, option, index):
@@ -392,16 +493,16 @@ class BoundedComboBox(QComboBox):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setEditable(False) # Default to non-editable
-        
+
         # Add search icon button
         self.search_btn = QPushButton(self)
         self.search_btn.setCursor(Qt.PointingHandCursor)
-        self.search_btn.setFixedSize(20, 20)
+        self.search_btn.setFixedSize(18, 18)  # Slightly smaller to fit better
         self.search_btn.setStyleSheet("""
             QPushButton {
                 background-color: transparent;
                 border: none;
-                font-size: 14px;
+                font-size: 12px;
                 color: #555;
             }
             QPushButton:hover {
@@ -409,30 +510,58 @@ class BoundedComboBox(QComboBox):
             }
         """)
         # Use a simple text "🔍" or icon if available. Using text for simplicity.
-        self.search_btn.setText("🔍") 
+        self.search_btn.setText("🔍")
         self.search_btn.clicked.connect(self.enable_search_mode)
-        
+
         # Connect signal to exit search mode on selection
         self.currentIndexChanged.connect(self.disable_search_mode)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # Position search button to the left of the dropdown arrow
-        # Standard arrow width is usually around 20px
+        self._position_search_button()
+
+    def _position_search_button(self):
+        """Position search button properly within the ComboBox"""
+        # Get the dropdown arrow rectangle using style options
         opt = QStyleOptionComboBox()
         self.initStyleOption(opt)
-        arrow_width = self.style().subControlRect(QStyle.CC_ComboBox, opt, QStyle.SC_ComboBoxArrow, self).width()
-        
+
+        # Get the arrow sub-control rectangle
+        arrow_rect = self.style().subControlRect(
+            QStyle.CC_ComboBox, opt, QStyle.SC_ComboBoxArrow, self
+        )
+
+        # Calculate arrow width, with fallback to a reasonable default
+        arrow_width = arrow_rect.width() if arrow_rect.width() > 0 else 20
+
         btn_size = self.search_btn.size()
-        x = self.width() - arrow_width - btn_size.width() - 5 # 5px padding
-        y = (self.height() - btn_size.height()) // 2
+        btn_width = btn_size.width()
+        btn_height = btn_size.height()
+
+        # Calculate button position:
+        # Place it just to the left of the dropdown arrow
+        # Ensure we have at least 2px margin from the arrow
+        margin_from_arrow = 2
+        x = self.width() - arrow_width - btn_width - margin_from_arrow
+
+        # Ensure x is not negative (button would be outside left edge)
+        # Also ensure button doesn't overlap with text area too much
+        min_x = 5  # Minimum 5px from left edge
+        x = max(min_x, x)
+
+        # Center vertically
+        y = (self.height() - btn_height) // 2
+
+        # Ensure y is not negative
+        y = max(1, y)
+
         self.search_btn.move(x, y)
 
     def enable_search_mode(self):
         """Enable editing and focus the line edit"""
         self.setEditable(True)
         self.setInsertPolicy(QComboBox.NoInsert)
-        
+
         # Configure completer if not already done (though MainWindow does it too)
         # Configure completer
         if not self.completer() or self.completer().completionMode() != QCompleter.PopupCompletion:
@@ -441,10 +570,10 @@ class BoundedComboBox(QComboBox):
             completer.setCaseSensitivity(Qt.CaseInsensitive)
             completer.setCompletionMode(QCompleter.PopupCompletion)
             self.setCompleter(completer)
-            
+
         self.lineEdit().setFocus()
         self.lineEdit().selectAll()
-        
+
         # Hide search button while searching (optional, but keeps UI clean)
         self.search_btn.hide()
 
@@ -454,6 +583,8 @@ class BoundedComboBox(QComboBox):
         if self.isEditable():
             self.setEditable(False)
         self.search_btn.show()
+        # Reposition button after mode change
+        self._position_search_button()
 
     def showPopup(self):
         # Reorder items: put current selection at the top
@@ -521,15 +652,451 @@ class BoundedComboBox(QComboBox):
 
 class ClickableLabel(QLabel):
     doubleClicked = pyqtSignal()
-    
+
     def mouseDoubleClickEvent(self, event):
         self.doubleClicked.emit()
         super().mouseDoubleClickEvent(event)
 
 
+# ========== Theme Manager ==========
+class ThemeManager:
+    """Manages application themes (Light/Dark/High Contrast)"""
+
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self):
+        if self._initialized:
+            return
+        self._initialized = True
+        self._current_theme = "light"
+        self._themes = THEMES
+        self._listeners = []
+
+    @property
+    def current_theme(self):
+        return self._current_theme
+
+    def get_theme(self):
+        """Get current theme configuration"""
+        return self._themes.get(self._current_theme, self._themes["light"])
+
+    def set_theme(self, theme_name):
+        """Set theme and notify listeners"""
+        if theme_name in self._themes:
+            self._current_theme = theme_name
+            for listener in self._listeners:
+                listener(theme_name)
+            return True
+        return False
+
+    def toggle_theme(self):
+        """Toggle between light and dark theme"""
+        new_theme = "dark" if self._current_theme == "light" else "light"
+        return self.set_theme(new_theme)
+
+
+# ========== Status Animator ==========
+class StatusAnimator(QObject):
+    """Manages status animation effects (pulse, shake, fade)"""
+
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self, parent=None):
+        if self._initialized:
+            return
+        super().__init__(parent)
+        self._initialized = True
+        self._pulse_phase = 0
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._update_animations)
+        self._timer.start(50)  # 20 FPS for smooth animations
+
+    def _update_animations(self):
+        """Update all active animations"""
+        self._pulse_phase = (self._pulse_phase + 0.1) % (2 * math.pi)
+
+    def get_pulse_factor(self):
+        """Get current pulse animation factor (0.0 to 1.0)"""
+        return (math.sin(self._pulse_phase) + 1) / 2
+
+    def get_animated_color(self, base_color, animation_type):
+        """Get animated color for a given base color and animation type"""
+        if animation_type == "pulse":
+            # Pulse between base color and a lighter version
+            factor = self.get_pulse_factor()
+            color = QColor(base_color)
+            lighter = color.lighter(130)
+            return self._blend_colors(color, lighter, factor)
+        return QColor(base_color)
+
+    def _blend_colors(self, color1, color2, factor):
+        """Blend two colors by factor (0.0 = color1, 1.0 = color2)"""
+        r = int(color1.red() * (1 - factor) + color2.red() * factor)
+        g = int(color1.green() * (1 - factor) + color2.green() * factor)
+        b = int(color1.blue() * (1 - factor) + color2.blue() * factor)
+        return QColor(r, g, b)
+
+
+# ========== Notification Widget ==========
+class NotificationWidget(QFrame):
+    """A single notification widget that shows at the corner of the screen"""
+
+    clicked = pyqtSignal()
+
+    def __init__(self, title, message, notification_type="info", parent=None):
+        super().__init__(parent)
+        self.notification_type = notification_type
+        self.title = title
+        self.message = message
+
+        self._setup_ui()
+        self._start_animation()
+
+    def _setup_ui(self):
+        """Setup the notification UI"""
+        config = NOTIFICATION_TYPES.get(self.notification_type, NOTIFICATION_TYPES["info"])
+
+        self.setFrameStyle(QFrame.StyledPanel | QFrame.Raised)
+        self.setFixedWidth(350)
+        self.setCursor(Qt.PointingHandCursor)
+
+        # Main layout
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(10)
+
+        # Icon
+        icon_label = QLabel(config["icon"])
+        icon_label.setStyleSheet(f"""
+            font-size: 24px;
+            color: {config['color']};
+        """)
+        layout.addWidget(icon_label)
+
+        # Text container
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(2)
+
+        # Title
+        title_label = QLabel(self.title)
+        title_label.setStyleSheet(f"""
+            font-weight: bold;
+            font-size: 13px;
+            color: #333333;
+        """)
+        text_layout.addWidget(title_label)
+
+        # Message
+        message_label = QLabel(self.message)
+        message_label.setStyleSheet("""
+            font-size: 11px;
+            color: #666666;
+        """)
+        message_label.setWordWrap(True)
+        text_layout.addWidget(message_label)
+
+        layout.addLayout(text_layout)
+        layout.addStretch()
+
+        # Close button
+        close_btn = QPushButton("×")
+        close_btn.setFixedSize(20, 20)
+        close_btn.setCursor(Qt.PointingHandCursor)
+        close_btn.setStyleSheet("""
+            QPushButton {
+                border: none;
+                font-size: 16px;
+                color: #999999;
+                background: transparent;
+            }
+            QPushButton:hover {
+                color: #333333;
+            }
+        """)
+        close_btn.clicked.connect(self._on_close)
+        layout.addWidget(close_btn)
+
+        # Widget styling
+        self.setStyleSheet(f"""
+            NotificationWidget {{
+                background-color: white;
+                border: 1px solid #e0e0e0;
+                border-left: 4px solid {config['color']};
+                border-radius: 6px;
+            }}
+        """)
+
+        # Shadow effect
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(15)
+        shadow.setOffset(0, 3)
+        shadow.setColor(QColor(0, 0, 0, 60))
+        self.setGraphicsEffect(shadow)
+
+    def _start_animation(self):
+        """Start the entrance animation"""
+        self.setWindowOpacity(0.0)
+        self._fade_anim = QPropertyAnimation(self, b"windowOpacity")
+        self._fade_anim.setDuration(200)
+        self._fade_anim.setStartValue(0.0)
+        self._fade_anim.setEndValue(1.0)
+        self._fade_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._fade_anim.start()
+
+    def fade_out(self):
+        """Start fade out animation"""
+        self._fade_anim = QPropertyAnimation(self, b"windowOpacity")
+        self._fade_anim.setDuration(200)
+        self._fade_anim.setStartValue(1.0)
+        self._fade_anim.setEndValue(0.0)
+        self._fade_anim.setEasingCurve(QEasingCurve.InCubic)
+        self._fade_anim.finished.connect(self.deleteLater)
+        self._fade_anim.start()
+
+    def _on_close(self):
+        """Handle close button click"""
+        self.fade_out()
+
+    def mousePressEvent(self, event):
+        """Handle click on notification"""
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+            self.fade_out()
+        super().mousePressEvent(event)
+
+
+# ========== Notification Manager ==========
+class NotificationManager(QObject):
+    """Manages notification widgets at the corner of the screen"""
+
+    _instance = None
+
+    def __new__(cls, parent=None):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self, parent=None):
+        if self._initialized:
+            return
+        super().__init__(parent)
+        self._initialized = True
+        self._notifications = []
+        self._parent = parent
+        self._max_notifications = 5
+        self._spacing = 10
+        self._margin_bottom = 80
+        self._margin_right = 20
+
+    def show_notification(self, title, message, notification_type="info", duration=None):
+        """Show a notification"""
+        if not self._parent:
+            return
+
+        config = NOTIFICATION_TYPES.get(notification_type, NOTIFICATION_TYPES["info"])
+        if duration is None:
+            duration = config["duration"]
+
+        # Create notification widget
+        notification = NotificationWidget(title, message, notification_type, self._parent)
+        notification.clicked.connect(lambda: self._remove_notification(notification))
+
+        # Position it
+        self._position_notification(notification)
+
+        # Add to list
+        self._notifications.append(notification)
+        notification.show()
+
+        # Auto-dismiss timer
+        if duration > 0:
+            QTimer.singleShot(duration, lambda: self._dismiss_notification(notification))
+
+        return notification
+
+    def _position_notification(self, notification):
+        """Position a notification widget"""
+        if not self._parent:
+            return
+
+        parent_rect = self._parent.rect()
+        x = parent_rect.right() - notification.width() - self._margin_right
+        y = parent_rect.bottom() - self._margin_bottom
+
+        # Stack notifications
+        for n in self._notifications:
+            if n.isVisible():
+                y -= n.height() + self._spacing
+
+        # Move up if too many
+        if len(self._notifications) >= self._max_notifications:
+            oldest = self._notifications[0]
+            self._dismiss_notification(oldest)
+
+        notification.move(x, y)
+
+    def _dismiss_notification(self, notification):
+        """Dismiss a notification with animation"""
+        if notification in self._notifications:
+            notification.fade_out()
+            self._notifications.remove(notification)
+            self._reposition_all()
+
+    def _remove_notification(self, notification):
+        """Remove a notification from the list"""
+        if notification in self._notifications:
+            self._notifications.remove(notification)
+
+    def _reposition_all(self):
+        """Reposition all visible notifications"""
+        if not self._parent:
+            return
+
+        parent_rect = self._parent.rect()
+        y = parent_rect.bottom() - self._margin_bottom
+
+        for notification in reversed(self._notifications):
+            if notification.isVisible():
+                x = parent_rect.right() - notification.width() - self._margin_right
+                notification.move(x, y - notification.height())
+                y -= notification.height() + self._spacing
+
+
+# ========== Status Bar ==========
+class StatusBar(QFrame):
+    """Custom status bar with task statistics and connection status"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._setup_ui()
+
+    def _setup_ui(self):
+        """Setup the status bar UI"""
+        self.setFixedHeight(28)
+        self.setStyleSheet("""
+            StatusBar {
+                background-color: #f5f5f5;
+                border-top: 1px solid #e0e0e0;
+            }
+            QLabel {
+                color: #666666;
+                font-size: 11px;
+            }
+        """)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 0, 10, 0)
+        layout.setSpacing(20)
+
+        # Left side - Run info
+        self._run_label = QLabel("Run: -")
+        layout.addWidget(self._run_label)
+
+        # Separator
+        layout.addWidget(self._create_separator())
+
+        # Task statistics
+        self._stats_label = QLabel("Tasks: -")
+        layout.addWidget(self._stats_label)
+
+        # Separator
+        layout.addWidget(self._create_separator())
+
+        # Status breakdown
+        self._status_breakdown = QLabel("")
+        layout.addWidget(self._status_breakdown)
+
+        layout.addStretch()
+
+        # Right side - Connection status
+        self._connection_label = QLabel("● Connected")
+        self._connection_label.setStyleSheet("color: #28a745;")
+        layout.addWidget(self._connection_label)
+
+        # Theme indicator
+        self._theme_label = QLabel("☀ Light")
+        self._theme_label.setStyleSheet("color: #666666;")
+        layout.addWidget(self._theme_label)
+
+    def _create_separator(self):
+        """Create a vertical separator"""
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setStyleSheet("color: #cccccc;")
+        return sep
+
+    def update_run(self, run_name):
+        """Update the current run name"""
+        self._run_label.setText(f"Run: {run_name}")
+
+    def update_stats(self, stats):
+        """Update task statistics
+
+        Args:
+            stats: dict with keys: total, finish, running, failed, skip, scheduled, pending
+        """
+        total = stats.get("total", 0)
+        self._stats_label.setText(f"Tasks: {total}")
+
+        # Build status breakdown
+        parts = []
+        for status in ["finish", "running", "failed", "skip", "scheduled", "pending"]:
+            count = stats.get(status, 0)
+            if count > 0:
+                config = STATUS_CONFIG.get(status, {})
+                icon = config.get("icon", "")
+                color = config.get("color", "#87CEEB")
+                parts.append(f'<span style="color:{color}">{icon} {count}</span>')
+
+        self._status_breakdown.setText(" | ".join(parts))
+
+    def update_connection(self, connected):
+        """Update connection status"""
+        if connected:
+            self._connection_label.setText("● Connected")
+            self._connection_label.setStyleSheet("color: #28a745;")
+        else:
+            self._connection_label.setText("○ Disconnected")
+            self._connection_label.setStyleSheet("color: #dc3545;")
+
+    def update_theme(self, theme_name):
+        """Update theme indicator"""
+        if theme_name == "dark":
+            self._theme_label.setText("🌙 Dark")
+        elif theme_name == "high_contrast":
+            self._theme_label.setText("◐ High Contrast")
+        else:
+            self._theme_label.setText("☀ Light")
+
+        theme = THEMES.get(theme_name, THEMES["light"])
+        self.setStyleSheet(f"""
+            StatusBar {{
+                background-color: {theme['status_bar_bg']};
+                border-top: 1px solid {theme['border_color']};
+            }}
+            QLabel {{
+                color: {theme['text_color']};
+                font-size: 11px;
+            }}
+        """)
+
+
 class DependencyGraphDialog(QDialog):
-    """Dialog for displaying dependency graph visualization."""
-    
+    """Enhanced dialog for displaying dependency graph visualization with interactive features."""
+
     def __init__(self, graph_data, status_colors, parent=None):
         """
         Args:
@@ -538,41 +1105,52 @@ class DependencyGraphDialog(QDialog):
         """
         super().__init__(parent)
         self.setWindowTitle("Dependency Graph")
-        self.resize(1100, 750)
+        self.resize(1200, 800)
         self.graph_data = graph_data
         self.status_colors = status_colors
         self.node_items = {}  # Store node positions for edge drawing
-        
+        self.edge_items = []  # Store edge items for highlighting
+        self.node_rects = {}  # Store node rect items for interaction
+        self.node_texts = {}  # Store node text items
+        self.highlighted_nodes = set()  # Currently highlighted nodes
+        self.selected_node = None  # Currently selected node
+
+        # Enable mouse tracking for hover effects
+        self.setMouseTracking(True)
+
         # Setup UI
         self.setup_ui()
-        
+
         # Draw the graph
         self.draw_graph()
-    
+
     def setup_ui(self):
         """Setup the dialog UI components."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
-        
-        # Graphics View
+
+        # Graphics View with enhanced interaction
         self.scene = QGraphicsScene()
         self.view = QGraphicsView(self.scene)
         self.view.setRenderHint(QPainter.Antialiasing)
         self.view.setDragMode(QGraphicsView.ScrollHandDrag)
         self.view.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
+        self.view.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.view.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
+        self.view.setMouseTracking(True)
         self.view.setStyleSheet("""
             QGraphicsView {
-                background-color: #f5f5f5;
+                background-color: #fafafa;
                 border: 1px solid #cccccc;
                 border-radius: 8px;
             }
         """)
         layout.addWidget(self.view)
-        
-        # Toolbar
+
+        # Toolbar with enhanced buttons
         toolbar = QHBoxLayout()
         toolbar.setSpacing(10)
-        
+
         btn_style = """
             QPushButton {
                 background-color: #ffffff;
@@ -584,190 +1162,451 @@ class DependencyGraphDialog(QDialog):
             }
             QPushButton:hover {
                 background-color: #e6f7ff;
+                border: 1px solid #4A90D9;
+            }
+            QPushButton:pressed {
+                background-color: #cce5ff;
             }
         """
-        
-        zoom_in_btn = QPushButton("Zoom In (+)")
+
+        # Navigation buttons
+        zoom_in_btn = QPushButton("🔍+ Zoom In")
         zoom_in_btn.setStyleSheet(btn_style)
+        zoom_in_btn.setToolTip("Zoom In (Ctrl++)")
         zoom_in_btn.clicked.connect(self.zoom_in)
         toolbar.addWidget(zoom_in_btn)
-        
-        zoom_out_btn = QPushButton("Zoom Out (-)")
+
+        zoom_out_btn = QPushButton("🔍- Zoom Out")
         zoom_out_btn.setStyleSheet(btn_style)
+        zoom_out_btn.setToolTip("Zoom Out (Ctrl+-)")
         zoom_out_btn.clicked.connect(self.zoom_out)
         toolbar.addWidget(zoom_out_btn)
-        
-        fit_btn = QPushButton("Fit View")
+
+        fit_btn = QPushButton("⊞ Fit View")
         fit_btn.setStyleSheet(btn_style)
+        fit_btn.setToolTip("Fit all nodes in view")
         fit_btn.clicked.connect(self.fit_view)
         toolbar.addWidget(fit_btn)
-        
-        export_btn = QPushButton("Export PNG")
+
+        reset_btn = QPushButton("↺ Reset")
+        reset_btn.setStyleSheet(btn_style)
+        reset_btn.setToolTip("Reset zoom and position")
+        reset_btn.clicked.connect(self.reset_view)
+        toolbar.addWidget(reset_btn)
+
+        toolbar.addSpacing(20)
+
+        # Path highlighting buttons
+        highlight_up_btn = QPushButton("⬆ Trace Up")
+        highlight_up_btn.setStyleSheet(btn_style)
+        highlight_up_btn.setToolTip("Highlight upstream dependencies (select a node first)")
+        highlight_up_btn.clicked.connect(self.highlight_upstream)
+        toolbar.addWidget(highlight_up_btn)
+
+        highlight_down_btn = QPushButton("⬇ Trace Down")
+        highlight_down_btn.setStyleSheet(btn_style)
+        highlight_down_btn.setToolTip("Highlight downstream dependencies (select a node first)")
+        highlight_down_btn.clicked.connect(self.highlight_downstream)
+        toolbar.addWidget(highlight_down_btn)
+
+        clear_btn = QPushButton("✕ Clear")
+        clear_btn.setStyleSheet(btn_style)
+        clear_btn.setToolTip("Clear all highlights")
+        clear_btn.clicked.connect(self.clear_highlights)
+        toolbar.addWidget(clear_btn)
+
+        toolbar.addStretch()
+
+        # Export button
+        export_btn = QPushButton("📷 Export PNG")
         export_btn.setStyleSheet(btn_style)
         export_btn.clicked.connect(self.export_png)
         toolbar.addWidget(export_btn)
-        
-        toolbar.addStretch()
-        
-        # Legend
+
+        layout.addLayout(toolbar)
+
+        # Legend with icons
+        legend_layout = QHBoxLayout()
         legend_label = QLabel("Legend: ")
         legend_label.setStyleSheet("font-weight: bold; color: #333;")
-        toolbar.addWidget(legend_label)
-        
-        for status, color in [("finish", "#98FB98"), ("running", "#FFFF00"), 
-                               ("failed", "#FF9999"), ("skip", "#FFDAB9"), ("waiting", "#87CEEB")]:
-            legend_item = QLabel(f"  {status}  ")
+        legend_layout.addWidget(legend_label)
+
+        for status, color in [("finish", "#98FB98"), ("running", "#FFFF00"),
+                               ("failed", "#FF9999"), ("skip", "#FFDAB9"), ("pending", "#87CEEB")]:
+            config = STATUS_CONFIG.get(status, {})
+            icon = config.get("icon", "")
+            legend_item = QLabel(f" {icon} {status} ")
             legend_item.setStyleSheet(f"background-color: {color}; border: 1px solid #999; border-radius: 3px; padding: 2px 6px;")
-            toolbar.addWidget(legend_item)
-        
-        layout.addLayout(toolbar)
-    
+            legend_layout.addWidget(legend_item)
+
+        legend_layout.addStretch()
+
+        # Info label
+        self._info_label = QLabel("Click a node to select. Use toolbar to trace dependencies.")
+        self._info_label.setStyleSheet("color: #666; font-size: 11px;")
+        legend_layout.addWidget(self._info_label)
+
+        layout.addLayout(legend_layout)
+
+        # Setup keyboard shortcuts
+        self._setup_shortcuts()
+
+    def _setup_shortcuts(self):
+        """Setup keyboard shortcuts for the dialog"""
+        # Escape to clear selection
+        shortcut_esc = QShortcut(QKeySequence(Qt.Key_Escape), self)
+        shortcut_esc.activated.connect(self.clear_highlights)
+
+        # Ctrl+Plus for zoom in
+        shortcut_zoom_in = QShortcut(QKeySequence("Ctrl+="), self)
+        shortcut_zoom_in.activated.connect(self.zoom_in)
+
+        # Ctrl+Minus for zoom out
+        shortcut_zoom_out = QShortcut(QKeySequence("Ctrl+-"), self)
+        shortcut_zoom_out.activated.connect(self.zoom_out)
+
+        # Ctrl+0 for fit view
+        shortcut_fit = QShortcut(QKeySequence("Ctrl+0"), self)
+        shortcut_fit.activated.connect(self.fit_view)
+
     def draw_graph(self):
         """Draw the dependency graph using hierarchical layout."""
         nodes = self.graph_data.get('nodes', [])
         edges = self.graph_data.get('edges', [])
         levels = self.graph_data.get('levels', {})  # level -> [targets]
-        
+
         if not nodes:
-            # No data, show message
             text = QGraphicsTextItem("No dependency data found")
             text.setFont(QFont("Arial", 14))
             self.scene.addItem(text)
             return
-        
+
         # Calculate positions using level-based layout
-        # Each level gets a row, nodes in each level are spread horizontally
         node_positions = {}
-        
-        # Vertical spacing between levels
+
+        # Spacing
         level_height = 100
-        # Horizontal spacing between nodes
         node_width = 180
-        
+
         y_offset = 50
         max_x = 0
-        
+
         # Sort levels
         sorted_levels = sorted(levels.keys())
-        
+
         for level in sorted_levels:
             level_targets = levels[level]
             num_nodes = len(level_targets)
-            
+
             # Calculate starting x to center the level
             total_width = num_nodes * node_width
             start_x = -total_width / 2 + node_width / 2
-            
+
             for i, target in enumerate(level_targets):
                 x = start_x + i * node_width
                 y = y_offset
                 node_positions[target] = (x, y)
                 max_x = max(max_x, abs(x) + node_width)
-            
+
             y_offset += level_height
-        
+
         # Draw edges first (so they appear behind nodes)
-        for source, target in edges:
-            if source in node_positions and target in node_positions:
-                x1, y1 = node_positions[source]
-                x2, y2 = node_positions[target]
-                self.draw_arrow(x1, y1 + 20, x2, y2 - 20)
-        
+        self._draw_edges(edges, node_positions)
+
         # Draw nodes
+        self._draw_nodes(nodes, node_positions)
+
+        # Fit view after drawing
+        self.view.setSceneRect(self.scene.itemsBoundingRect().adjusted(-50, -50, 50, 50))
+
+    def _draw_nodes(self, nodes, node_positions):
+        """Draw all nodes with interactive elements"""
         for node_name, status in nodes:
             if node_name not in node_positions:
                 continue
             x, y = node_positions[node_name]
-            self.draw_node(node_name, status, x, y)
-        
-        # Fit view after drawing
-        self.view.setSceneRect(self.scene.itemsBoundingRect().adjusted(-50, -50, 50, 50))
-    
-    def draw_node(self, name, status, x, y):
-        """Draw a single node at the specified position."""
-        # Node dimensions
+            self._draw_node(node_name, status, x, y)
+
+    def _draw_node(self, name, status, x, y):
+        """Draw a single interactive node at the specified position."""
         width = 150
         height = 40
-        
+
         # Get color based on status
         color_hex = self.status_colors.get(status.lower(), "#87CEEB")
         color = QColor(color_hex)
-        
-        # Draw rounded rectangle for node
-        rect = self.scene.addRect(x - width/2, y - height/2, width, height,
-                                   QPen(QColor("#333333"), 2),
-                                   QBrush(color))
-        rect.setToolTip(f"Target: {name}\nStatus: {status or 'pending'}")
-        
+
+        # Create node rect with hover effect
+        rect_item = InteractiveNodeItem(x - width/2, y - height/2, width, height, name, self)
+        rect_item.setPen(QPen(QColor("#333333"), 2))
+        rect_item.setBrush(QBrush(color))
+        rect_item.setToolTip(f"Target: {name}\nStatus: {status or 'pending'}\n\nClick to select")
+        rect_item.setCursor(Qt.PointingHandCursor)
+
+        self.scene.addItem(rect_item)
+        self.node_rects[name] = rect_item
+
+        # Add status icon
+        config = STATUS_CONFIG.get(status.lower() if status else "", {})
+        icon = config.get("icon", "")
+        if icon:
+            icon_item = QGraphicsTextItem(icon)
+            icon_item.setFont(QFont("Arial", 10, QFont.Bold))
+            icon_item.setDefaultTextColor(QColor(config.get("text_color", "#333333")))
+            icon_item.setPos(x - width/2 + 5, y - icon_item.boundingRect().height()/2)
+            self.scene.addItem(icon_item)
+
         # Add text label
-        text = QGraphicsTextItem(name)
-        text.setFont(QFont("Arial", 9, QFont.Bold))
-        text.setDefaultTextColor(QColor("#000000"))
-        
-        # Center text in node
-        text_rect = text.boundingRect()
-        text.setPos(x - text_rect.width()/2, y - text_rect.height()/2)
-        self.scene.addItem(text)
-        
+        text_item = QGraphicsTextItem(name)
+        text_item.setFont(QFont("Arial", 9, QFont.Bold))
+        text_item.setDefaultTextColor(QColor("#000000"))
+        text_rect = text_item.boundingRect()
+        text_item.setPos(x - text_rect.width()/2, y - text_rect.height()/2)
+        self.scene.addItem(text_item)
+        self.node_texts[name] = text_item
+
         # Store position
         self.node_items[name] = (x, y)
-    
-    def draw_arrow(self, x1, y1, x2, y2):
-        """Draw an arrow from (x1,y1) to (x2,y2)."""
+
+    def _draw_edges(self, edges, node_positions):
+        """Draw all edges between nodes"""
+        for source, target in edges:
+            if source in node_positions and target in node_positions:
+                x1, y1 = node_positions[source]
+                x2, y2 = node_positions[target]
+                self._draw_arrow(source, target, x1, y1 + 20, x2, y2 - 20)
+
+    def _draw_arrow(self, source, target, x1, y1, x2, y2):
+        """Draw an arrow from (x1,y1) to (x2,y2) with metadata for highlighting."""
         # Draw line
-        line = QGraphicsLineItem(x1, y1, x2, y2)
-        line.setPen(QPen(QColor("#666666"), 1.5))
-        self.scene.addItem(line)
-        
+        line_item = QGraphicsLineItem(x1, y1, x2, y2)
+        line_item.setPen(QPen(QColor("#666666"), 1.5))
+        line_item.setData(0, "edge")  # Mark as edge for identification
+        line_item.setData(1, source)  # Store source
+        line_item.setData(2, target)  # Store target
+        self.scene.addItem(line_item)
+        self.edge_items.append(line_item)
+
         # Calculate arrow head
         angle = math.atan2(y2 - y1, x2 - x1)
         arrow_size = 10
-        
+
         # Arrow head points
         p1 = QPointF(x2 - arrow_size * math.cos(angle - math.pi/6),
                      y2 - arrow_size * math.sin(angle - math.pi/6))
         p2 = QPointF(x2 - arrow_size * math.cos(angle + math.pi/6),
                      y2 - arrow_size * math.sin(angle + math.pi/6))
         p3 = QPointF(x2, y2)
-        
+
         # Draw arrow head
         arrow_head = QPolygonF([p1, p2, p3])
         arrow_item = QGraphicsPolygonItem(arrow_head)
         arrow_item.setBrush(QBrush(QColor("#666666")))
         arrow_item.setPen(QPen(QColor("#666666"), 1))
+        arrow_item.setData(0, "arrow")
+        arrow_item.setData(1, source)
+        arrow_item.setData(2, target)
         self.scene.addItem(arrow_item)
-    
+        self.edge_items.append(arrow_item)
+
+    def highlight_upstream(self):
+        """Highlight upstream dependencies of selected node"""
+        if not self.selected_node:
+            self._info_label.setText("Please select a node first by clicking on it.")
+            return
+        self._trace_dependencies(self.selected_node, "upstream")
+
+    def highlight_downstream(self):
+        """Highlight downstream dependencies of selected node"""
+        if not self.selected_node:
+            self._info_label.setText("Please select a node first by clicking on it.")
+            return
+        self._trace_dependencies(self.selected_node, "downstream")
+
+    def _trace_dependencies(self, node, direction):
+        """Trace and highlight dependencies"""
+        self.clear_highlights()
+
+        nodes_to_highlight = set()
+        nodes_to_highlight.add(node)
+
+        edges = self.graph_data.get('edges', [])
+
+        # Build adjacency list
+        if direction == "downstream":
+            # Find all nodes reachable from this node
+            queue = [node]
+            visited = set()
+            while queue:
+                current = queue.pop(0)
+                if current in visited:
+                    continue
+                visited.add(current)
+                for source, target in edges:
+                    if source == current and target not in visited:
+                        nodes_to_highlight.add(target)
+                        queue.append(target)
+        else:
+            # Find all nodes that can reach this node (upstream)
+            queue = [node]
+            visited = set()
+            while queue:
+                current = queue.pop(0)
+                if current in visited:
+                    continue
+                visited.add(current)
+                for source, target in edges:
+                    if target == current and source not in visited:
+                        nodes_to_highlight.add(source)
+                        queue.append(source)
+
+        self.highlighted_nodes = nodes_to_highlight
+
+        # Apply highlights
+        for name, rect_item in self.node_rects.items():
+            if name in nodes_to_highlight:
+                rect_item.setPen(QPen(QColor("#ff6600"), 3))
+                rect_item.setZValue(100)
+            else:
+                rect_item.setPen(QPen(QColor("#333333"), 1))
+                rect_item.setBrush(QBrush(QColor(rect_item.brush().color().red(),
+                                                   rect_item.brush().color().green(),
+                                                   rect_item.brush().color().blue(), 128)))
+                rect_item.setZValue(0)
+
+        # Highlight edges
+        for edge_item in self.edge_items:
+            source = edge_item.data(1)
+            target = edge_item.data(2)
+            if source in nodes_to_highlight and target in nodes_to_highlight:
+                if isinstance(edge_item, QGraphicsLineItem):
+                    edge_item.setPen(QPen(QColor("#ff6600"), 2.5))
+                else:
+                    edge_item.setBrush(QBrush(QColor("#ff6600")))
+                    edge_item.setPen(QPen(QColor("#ff6600"), 1))
+                edge_item.setZValue(100)
+            else:
+                if isinstance(edge_item, QGraphicsLineItem):
+                    edge_item.setPen(QPen(QColor("#cccccc"), 1))
+                else:
+                    edge_item.setBrush(QBrush(QColor("#cccccc")))
+                    edge_item.setPen(QPen(QColor("#cccccc"), 1))
+                edge_item.setZValue(0)
+
+        self._info_label.setText(f"Highlighted {len(nodes_to_highlight)} nodes for {direction} trace from '{node}'")
+
+    def clear_highlights(self):
+        """Clear all highlights and restore original colors"""
+        self.selected_node = None
+        self.highlighted_nodes.clear()
+
+        # Restore nodes
+        nodes = self.graph_data.get('nodes', [])
+        for name, status in nodes:
+            if name in self.node_rects:
+                color_hex = self.status_colors.get(status.lower(), "#87CEEB")
+                self.node_rects[name].setPen(QPen(QColor("#333333"), 2))
+                self.node_rects[name].setBrush(QBrush(QColor(color_hex)))
+                self.node_rects[name].setZValue(0)
+
+        # Restore edges
+        for edge_item in self.edge_items:
+            if isinstance(edge_item, QGraphicsLineItem):
+                edge_item.setPen(QPen(QColor("#666666"), 1.5))
+            else:
+                edge_item.setBrush(QBrush(QColor("#666666")))
+                edge_item.setPen(QPen(QColor("#666666"), 1))
+            edge_item.setZValue(0)
+
+        self._info_label.setText("Click a node to select. Use toolbar to trace dependencies.")
+
+    def select_node(self, node_name):
+        """Select a node for dependency tracing"""
+        self.clear_highlights()
+        self.selected_node = node_name
+
+        if node_name in self.node_rects:
+            rect_item = self.node_rects[node_name]
+            rect_item.setPen(QPen(QColor("#4A90D9"), 3))
+            rect_item.setZValue(100)
+
+        self._info_label.setText(f"Selected: {node_name}. Click 'Trace Up' or 'Trace Down' to see dependencies.")
+
     def zoom_in(self):
         """Zoom in the view."""
         self.view.scale(1.2, 1.2)
-    
+
     def zoom_out(self):
         """Zoom out the view."""
         self.view.scale(0.8, 0.8)
-    
+
     def fit_view(self):
         """Fit the entire graph in the view."""
         self.view.fitInView(self.scene.itemsBoundingRect(), Qt.KeepAspectRatio)
-    
+
+    def reset_view(self):
+        """Reset zoom and position to default"""
+        self.view.resetTransform()
+        self.fit_view()
+
     def export_png(self):
         """Export the graph to a PNG file."""
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Export Graph", "dependency_graph.png", "PNG Files (*.png)"
         )
         if file_path:
-            # Create image from scene
             from PyQt5.QtGui import QImage
             rect = self.scene.itemsBoundingRect()
             image = QImage(int(rect.width()) + 100, int(rect.height()) + 100, QImage.Format_ARGB32)
             image.fill(Qt.white)
-            
+
             painter = QPainter(image)
             painter.setRenderHint(QPainter.Antialiasing)
             self.scene.render(painter)
             painter.end()
-            
+
             image.save(file_path)
             logger.info(f"Graph exported to: {file_path}")
+
+
+class InteractiveNodeItem(QGraphicsRectItem):
+    """Interactive node item that responds to clicks and hovers"""
+
+    def __init__(self, x, y, width, height, name, dialog, parent=None):
+        super().__init__(x, y, width, height, parent)
+        self.name = name
+        self.dialog = dialog
+        self.setAcceptHoverEvents(True)
+        self._original_brush = None
+
+    def mousePressEvent(self, event):
+        """Handle mouse click to select node"""
+        if event.button() == Qt.LeftButton:
+            self.dialog.select_node(self.name)
+        super().mousePressEvent(event)
+
+    def hoverEnterEvent(self, event):
+        """Handle mouse hover to show highlight"""
+        self._original_brush = self.brush()
+        # Create a slightly brighter version of the current color
+        color = self.brush().color()
+        lighter = color.lighter(110)
+        self.setBrush(QBrush(lighter))
+        self.setPen(QPen(QColor("#4A90D9"), 2))
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        """Handle mouse leave to restore original color"""
+        if self._original_brush:
+            self.setBrush(self._original_brush)
+        # Restore pen based on selection state
+        if self.name == self.dialog.selected_node:
+            self.setPen(QPen(QColor("#4A90D9"), 3))
+        elif self.name in self.dialog.highlighted_nodes:
+            self.setPen(QPen(QColor("#ff6600"), 3))
+        else:
+            self.setPen(QPen(QColor("#333333"), 2))
+        super().hoverLeaveEvent(event)
 
 
 class CopyTuneDialog(QDialog):
@@ -1035,18 +1874,13 @@ class MainWindow(QMainWindow):
 
         # Thread pool for background file operations
         self._executor = ThreadPoolExecutor(max_workers=4)
-        
-        # Status colors
-        self.colors = {
-            'finish': '#98FB98',    # PaleGreen
-            'skip': '#FFDAB9',      # PeachPuff
-            'running': '#FFFF00',   # Yellow
-            'failed': '#FF9999',    # Light Red
-            'scheduled': '#4A90D9', # Deeper Blue
-            'pending': '#87CEEB',   # SkyBlue
-            '': '#FFFFFF'           # White/No status
-        }
-        
+
+        # Status colors (using extended STATUS_CONFIG)
+        self.colors = {k: v["color"] for k, v in STATUS_CONFIG.items()}
+
+        # Initialize theme manager
+        self.theme_manager = ThemeManager()
+
         # Check if mock_runs exists, otherwise check if we are inside a run
         if os.path.exists("mock_runs"):
             self.run_base_dir = "mock_runs"
@@ -1081,7 +1915,7 @@ class MainWindow(QMainWindow):
                     stop:0 #e0f7fa, stop:1 #80deea);
             }
         """)
-        
+
         # Create Menu Bar
         self.menu_bar = self.menuBar()
         self.menu_bar.setStyleSheet("""
@@ -1108,22 +1942,39 @@ class MainWindow(QMainWindow):
                 background-color: #e6f7ff;
             }
         """)
-        
+
         # Status Menu
         status_menu = self.menu_bar.addMenu("Status")
-        
+
         # Show All Status Action
         show_all_status_action = QAction("Show All Status", self)
         show_all_status_action.triggered.connect(self.show_all_status)
         status_menu.addAction(show_all_status_action)
-        
+
         # View Menu
         view_menu = self.menu_bar.addMenu("View")
-        
-        # Show Dependency Graph Action
+
+        # Show Dependency Graph Action with shortcut
         show_graph_action = QAction("Show Dependency Graph", self)
+        show_graph_action.setShortcut(QKeySequence("Ctrl+G"))
         show_graph_action.triggered.connect(self.show_dependency_graph)
         view_menu.addAction(show_graph_action)
+
+        # Theme submenu
+        view_menu.addSeparator()
+        theme_menu = view_menu.addMenu("Theme")
+
+        light_theme_action = QAction("Light Theme", self)
+        light_theme_action.triggered.connect(lambda: self.apply_theme("light"))
+        theme_menu.addAction(light_theme_action)
+
+        dark_theme_action = QAction("Dark Theme", self)
+        dark_theme_action.triggered.connect(lambda: self.apply_theme("dark"))
+        theme_menu.addAction(dark_theme_action)
+
+        high_contrast_action = QAction("High Contrast", self)
+        high_contrast_action.triggered.connect(lambda: self.apply_theme("high_contrast"))
+        theme_menu.addAction(high_contrast_action)
         
         # Track if we are in "All Status" view mode
         self.is_all_status_view = False
@@ -1492,34 +2343,263 @@ class MainWindow(QMainWindow):
 
         # Connect double-click signal for copy functionality in All Status view
         self.tree.doubleClicked.connect(self.on_tree_double_clicked)
-        
+
+        # ========== Add Status Bar ==========
+        self._status_bar = StatusBar(self)
+        main_layout.addWidget(self._status_bar)
+
+        # ========== Initialize Notification Manager ==========
+        self._notification_manager = NotificationManager(self)
+
+        # ========== Setup Keyboard Shortcuts ==========
+        self._setup_keyboard_shortcuts()
+
         # Initial UI Update
         self.on_run_changed()
-        
+
         # Setup file system watcher for efficient status monitoring (replaces polling timer)
         self.status_watcher = QFileSystemWatcher(self)
         self.status_watcher.directoryChanged.connect(self.on_status_directory_changed)
         self.status_watcher.fileChanged.connect(self.on_status_file_changed)
-        
+
         # Track watched directories to avoid duplicates
         self.watched_status_dirs = set()
-        
+
         # Setup initial watch on current run's status directory
         self.setup_status_watcher()
-        
+
         # Backup timer with longer interval (10 seconds) as fallback
         # This handles cases where file watcher might miss events
         self.backup_timer = QTimer()
         self.backup_timer.timeout.connect(self.change_run)
         self.backup_timer.start(10000)  # 10 seconds
-        
+
         # Debounce timer to batch rapid file changes
         self.debounce_timer = QTimer()
         self.debounce_timer.setSingleShot(True)
         self.debounce_timer.timeout.connect(self.change_run)
-        
+
         # Expand all
         self.tree.expandAll()
+
+    def _setup_keyboard_shortcuts(self):
+        """Setup global keyboard shortcuts"""
+        # Search focus
+        shortcut_search = QShortcut(QKeySequence(SHORTCUTS["search"]["key"]), self)
+        shortcut_search.activated.connect(self._focus_search)
+        shortcut_search.setContext(Qt.ApplicationShortcut)
+
+        # Refresh
+        shortcut_refresh = QShortcut(QKeySequence(SHORTCUTS["refresh"]["key"]), self)
+        shortcut_refresh.activated.connect(self._refresh_view)
+        shortcut_refresh.setContext(Qt.ApplicationShortcut)
+
+        # Expand all
+        shortcut_expand = QShortcut(QKeySequence(SHORTCUTS["expand_all"]["key"]), self)
+        shortcut_expand.activated.connect(self.tree.expandAll)
+        shortcut_expand.setContext(Qt.ApplicationShortcut)
+
+        # Collapse all
+        shortcut_collapse = QShortcut(QKeySequence(SHORTCUTS["collapse_all"]["key"]), self)
+        shortcut_collapse.activated.connect(self.tree.collapseAll)
+        shortcut_collapse.setContext(Qt.ApplicationShortcut)
+
+        # Toggle theme
+        shortcut_theme = QShortcut(QKeySequence(SHORTCUTS["toggle_theme"]["key"]), self)
+        shortcut_theme.activated.connect(self._toggle_theme)
+        shortcut_theme.setContext(Qt.ApplicationShortcut)
+
+        # Show dependency graph
+        shortcut_graph = QShortcut(QKeySequence(SHORTCUTS["show_graph"]["key"]), self)
+        shortcut_graph.activated.connect(self.show_dependency_graph)
+        shortcut_graph.setContext(Qt.ApplicationShortcut)
+
+        # Copy target name
+        shortcut_copy = QShortcut(QKeySequence(SHORTCUTS["copy_target"]["key"]), self)
+        shortcut_copy.activated.connect(self._copy_selected_target)
+        shortcut_copy.setContext(Qt.ApplicationShortcut)
+
+        # Run selected
+        shortcut_run = QShortcut(QKeySequence(SHORTCUTS["run_selected"]["key"]), self)
+        shortcut_run.activated.connect(lambda: self.start('XMeta_run'))
+        shortcut_run.setContext(Qt.ApplicationShortcut)
+
+        # Trace up
+        shortcut_trace_up = QShortcut(QKeySequence(SHORTCUTS["trace_up"]["key"]), self)
+        shortcut_trace_up.activated.connect(lambda: self.retrace_tab('in'))
+        shortcut_trace_up.setContext(Qt.ApplicationShortcut)
+
+        # Trace down
+        shortcut_trace_down = QShortcut(QKeySequence(SHORTCUTS["trace_down"]["key"]), self)
+        shortcut_trace_down.activated.connect(lambda: self.retrace_tab('out'))
+        shortcut_trace_down.setContext(Qt.ApplicationShortcut)
+
+    def _focus_search(self):
+        """Focus the search input"""
+        if hasattr(self, 'filter_input'):
+            self.filter_input.setFocus()
+            self.filter_input.selectAll()
+
+    def _refresh_view(self):
+        """Refresh the current view"""
+        current_run = self.combo.currentText()
+        if current_run and current_run != "No runs found":
+            self._build_status_cache(current_run)
+            self.populate_data()
+            self.show_notification("Refresh", f"Refreshed view for {current_run}", "info")
+
+    def _toggle_theme(self):
+        """Toggle between light and dark theme"""
+        new_theme = self.theme_manager.toggle_theme()
+        self.apply_theme(new_theme)
+        self.show_notification("Theme", f"Switched to {THEMES[new_theme]['name']} theme", "info")
+
+    def _copy_selected_target(self):
+        """Copy selected target name to clipboard"""
+        targets = self.get_selected_targets()
+        if targets:
+            clipboard = QApplication.clipboard()
+            clipboard.setText("\n".join(targets))
+            self.show_notification("Copied", f"Copied {len(targets)} target(s)", "success")
+
+    def apply_theme(self, theme_name):
+        """Apply a theme to the application"""
+        self.theme_manager.set_theme(theme_name)
+        theme = self.theme_manager.get_theme()
+
+        # Apply main window stylesheet
+        self.setStyleSheet(f"""
+            QMainWindow {{
+                background: {theme['window_bg']};
+            }}
+            QTreeView {{
+                background: {theme['tree_bg']};
+                color: {theme['text_color']};
+                border: 1px solid {theme['border_color']};
+                border-radius: 10px;
+                padding: 5px;
+            }}
+            QTreeView::item {{
+                height: 15px;
+                padding: 6px 4px;
+                border: none;
+            }}
+            QTreeView::item:hover {{
+                background: {theme['hover_bg']};
+            }}
+            QTreeView::item:selected {{
+                background: {theme['selection_bg']};
+                color: {theme['text_color']};
+            }}
+            QHeaderView::section {{
+                background: rgba(250,250,250,0.95);
+                padding: 8px;
+                border: 1px solid {theme['border_color']};
+                font-weight: 600;
+                color: {theme['text_color']};
+            }}
+            QMenuBar {{
+                background-color: {theme['menu_bg']};
+                color: {theme['text_color']};
+                border-bottom: 1px solid {theme['border_color']};
+                padding: 2px;
+            }}
+            QMenuBar::item {{
+                background-color: transparent;
+                padding: 4px 12px;
+            }}
+            QMenuBar::item:selected {{
+                background-color: {theme['menu_hover']};
+            }}
+            QMenu {{
+                background-color: {theme['menu_bg']};
+                color: {theme['text_color']};
+                border: 1px solid {theme['border_color']};
+            }}
+            QMenu::item {{
+                padding: 6px 20px;
+            }}
+            QMenu::item:selected {{
+                background-color: {theme['menu_hover']};
+            }}
+            QComboBox {{
+                background-color: {theme['menu_bg']};
+                color: {theme['text_color']};
+                border: 1px solid {theme['border_color']};
+                border-radius: 2px;
+                padding: 2px;
+            }}
+            QLineEdit {{
+                background-color: {theme['menu_bg']};
+                color: {theme['text_color']};
+                border: 1px solid {theme['border_color']};
+                border-radius: 2px;
+            }}
+            QPushButton {{
+                background-color: {theme['menu_bg']};
+                color: {theme['text_color']};
+                border: 1px solid {theme['border_color']};
+                border-radius: 6px;
+                padding: 4px 12px;
+            }}
+            QPushButton:hover {{
+                background-color: {theme['menu_hover']};
+            }}
+            QLabel {{
+                color: {theme['text_color']};
+            }}
+        """)
+
+        # Update status bar
+        if hasattr(self, '_status_bar'):
+            self._status_bar.update_theme(theme_name)
+
+        # Show notification
+        theme_info = THEMES.get(theme_name, THEMES["light"])
+        self.show_notification("Theme", f"Applied {theme_info['name']} theme", "info")
+
+    def show_notification(self, title, message, notification_type="info"):
+        """Show a notification message"""
+        if hasattr(self, '_notification_manager'):
+            self._notification_manager.show_notification(title, message, notification_type)
+
+    def update_status_bar(self):
+        """Update the status bar with current statistics"""
+        if not hasattr(self, '_status_bar'):
+            return
+
+        # Get current run
+        current_run = self.combo.currentText()
+        self._status_bar.update_run(current_run)
+
+        # Count tasks by status
+        stats = {"total": 0, "finish": 0, "running": 0, "failed": 0, "skip": 0, "scheduled": 0, "pending": 0}
+
+        for row in range(self.model.rowCount()):
+            level_item = self.model.item(row, 0)
+            if level_item:
+                # Count parent
+                status_item = self.model.item(row, 2)
+                if status_item:
+                    status = (status_item.text() or "").lower()
+                    stats["total"] += 1
+                    if status in stats:
+                        stats[status] += 1
+
+                # Count children
+                if level_item.hasChildren():
+                    for child_row in range(level_item.rowCount()):
+                        child_status_item = level_item.child(child_row, 2)
+                        if child_status_item:
+                            status = (child_status_item.text() or "").lower()
+                            stats["total"] += 1
+                            if status in stats:
+                                stats[status] += 1
+
+        self._status_bar.update_stats(stats)
+
+        # Update connection status (always connected for file system)
+        self._status_bar.update_connection(True)
 
     def close_tree_view(self):
         """Close the tree view (or clear trace filter)"""
@@ -2094,6 +3174,9 @@ class MainWindow(QMainWindow):
             # Update file system watcher to monitor new run's status directory
             if hasattr(self, 'status_watcher'):
                 self.setup_status_watcher()
+
+            # Update status bar
+            self.update_status_bar()
 
 
         
@@ -2730,6 +3813,9 @@ class MainWindow(QMainWindow):
             if level_item.hasChildren():
                 for child_row in range(level_item.rowCount()):
                     update_row_status(child_row, level_item)
+
+        # Update status bar with latest stats
+        self.update_status_bar()
     
     def get_start_end_time(self, tgt_track_file):
         """Get start and end time from target tracker file"""
@@ -2986,7 +4072,7 @@ class MainWindow(QMainWindow):
     # ========== Right-click Menu ==========
 
     def show_context_menu(self, position):
-        """Show context menu on right-click"""
+        """Show context menu on right-click with icons and grouping"""
         index = self.tree.indexAt(position)
         if not index.isValid():
             return
@@ -2997,45 +4083,144 @@ class MainWindow(QMainWindow):
             selection_model.select(index, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
 
         menu = QMenu()
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: white;
+                border: 1px solid #cccccc;
+                border-radius: 6px;
+                padding: 4px 0px;
+            }
+            QMenu::item {
+                padding: 6px 30px 6px 10px;
+                border-radius: 0px;
+            }
+            QMenu::item:selected {
+                background-color: #e6f7ff;
+            }
+            QMenu::separator {
+                height: 1px;
+                background: #e0e0e0;
+                margin: 4px 10px;
+            }
+        """)
 
-        terminal_action = menu.addAction("Terminal")
-        csh_action = menu.addAction("csh")
-        log_action = menu.addAction("Log")
-        cmd_action = menu.addAction("cmd")
-        menu.addSeparator()
-        tune_action = menu.addAction("Tune")
-        copy_tune_action = menu.addAction("Copy Tune To...")
-        menu.addSeparator()
-        trace_up_action = menu.addAction("Trace Up")
-        trace_down_action = menu.addAction("Trace Down")
-
-        # Check if selected target has tune file and update menu text
+        # Get selected targets for context
         selected_targets = self.get_selected_targets()
+        single_target = len(selected_targets) == 1
+
+        # === Execution Actions Group ===
+        exec_menu = menu.addMenu("▶ Execute")
+
+        run_all_action = exec_menu.addAction("▶ Run All")
+        run_all_action.setToolTip("Run all targets (Ctrl+Shift+Enter)")
+        run_all_action.triggered.connect(lambda: self.start('XMeta_run all'))
+
+        run_action = exec_menu.addAction("▶ Run Selected")
+        run_action.setToolTip("Run selected targets (Ctrl+Enter)")
+        run_action.triggered.connect(lambda: self.start('XMeta_run'))
+
+        stop_action = exec_menu.addAction("■ Stop")
+        stop_action.setToolTip("Stop selected targets")
+        stop_action.triggered.connect(lambda: self.start('XMeta_stop'))
+
+        exec_menu.addSeparator()
+
+        skip_action = exec_menu.addAction("○ Skip")
+        skip_action.setToolTip("Skip selected targets")
+        skip_action.triggered.connect(lambda: self.start('XMeta_skip'))
+
+        unskip_action = exec_menu.addAction("● Unskip")
+        unskip_action.setToolTip("Unskip selected targets")
+        unskip_action.triggered.connect(lambda: self.start('XMeta_unskip'))
+
+        invalid_action = exec_menu.addAction("✕ Invalid")
+        invalid_action.setToolTip("Mark selected targets as invalid")
+        invalid_action.triggered.connect(lambda: self.start('XMeta_invalid'))
+
+        menu.addSeparator()
+
+        # === File Actions Group ===
+        file_menu = menu.addMenu("📁 Files")
+
+        terminal_action = file_menu.addAction("⌘ Terminal")
+        terminal_action.setToolTip("Open terminal in run directory")
+        terminal_action.triggered.connect(self.Xterm)
+
+        csh_action = file_menu.addAction("📄 csh")
+        csh_action.setToolTip("Open shell file for selected target")
+        csh_action.triggered.connect(self.handle_csh)
+
+        log_action = file_menu.addAction("📋 Log")
+        log_action.setToolTip("Open log file for selected target")
+        log_action.triggered.connect(self.handle_log)
+
+        cmd_action = file_menu.addAction("⚡ cmd")
+        cmd_action.setToolTip("Open command file for selected target")
+        cmd_action.triggered.connect(self.handle_cmd)
+
+        menu.addSeparator()
+
+        # === Tune File Actions ===
+        tune_menu = menu.addMenu("🎵 Tune")
+
+        # Check if selected target has tune file
         if selected_targets and self.combo_sel:
             tune_display = self.get_tune_display(self.combo_sel, selected_targets[0])
             if tune_display:
-                tune_action.setText(f"Tune ({tune_display})")
+                tune_action = tune_menu.addAction(f"📝 Open Tune ({tune_display})")
             else:
-                tune_action.setText("Tune")
+                tune_action = tune_menu.addAction("📝 Open Tune")
+        else:
+            tune_action = tune_menu.addAction("📝 Open Tune")
+        tune_action.setToolTip("Open tune file for selected target")
+        tune_action.triggered.connect(self.handle_tune)
 
+        copy_tune_action = tune_menu.addAction("📋 Copy Tune To...")
+        copy_tune_action.setToolTip("Copy tune file to other runs")
+        copy_tune_action.triggered.connect(self.copy_tune_to_runs)
+
+        menu.addSeparator()
+
+        # === Dependency Trace Actions ===
+        trace_menu = menu.addMenu("🔗 Trace")
+
+        trace_up_action = trace_menu.addAction("⬆ Trace Up (Ctrl+U)")
+        trace_up_action.setToolTip("Trace upstream dependencies")
+        trace_up_action.triggered.connect(lambda: self.retrace_tab('in'))
+
+        trace_down_action = trace_menu.addAction("⬇ Trace Down (Ctrl+D)")
+        trace_down_action.setToolTip("Trace downstream dependencies")
+        trace_down_action.triggered.connect(lambda: self.retrace_tab('out'))
+
+        trace_menu.addSeparator()
+
+        graph_action = trace_menu.addAction("📊 Dependency Graph (Ctrl+G)")
+        graph_action.setToolTip("Show full dependency graph")
+        graph_action.triggered.connect(self.show_dependency_graph)
+
+        menu.addSeparator()
+
+        # === Copy Actions ===
+        copy_menu = menu.addMenu("📋 Copy")
+
+        copy_target_action = copy_menu.addAction("Copy Target Name (Ctrl+C)")
+        copy_target_action.setToolTip("Copy selected target names to clipboard")
+        copy_target_action.triggered.connect(self._copy_selected_target)
+
+        if single_target and selected_targets:
+            copy_path_action = copy_menu.addAction("Copy Run Path")
+            copy_path_action.setToolTip("Copy the full path of the current run")
+            copy_path_action.triggered.connect(lambda: self._copy_run_path())
+
+        # Execute menu
         action = menu.exec_(self.tree.viewport().mapToGlobal(position))
 
-        if action == terminal_action:
-            self.Xterm()
-        elif action == csh_action:
-            self.handle_csh()
-        elif action == log_action:
-            self.handle_log()
-        elif action == cmd_action:
-            self.handle_cmd()
-        elif action == tune_action:
-            self.handle_tune()
-        elif action == copy_tune_action:
-            self.copy_tune_to_runs()
-        elif action == trace_up_action:
-            self.retrace_tab('in')
-        elif action == trace_down_action:
-            self.retrace_tab('out')
+    def _copy_run_path(self):
+        """Copy the current run path to clipboard"""
+        if self.combo_sel:
+            clipboard = QApplication.clipboard()
+            clipboard.setText(self.combo_sel)
+            self.show_notification("Copied", f"Copied path: {self.combo_sel}", "success")
 
     # ========== Trace Functionality ==========
     
@@ -3174,10 +4359,27 @@ class MainWindow(QMainWindow):
         """Set column widths to user preferences"""
         self.tree.setColumnWidth(0, 80)  # level
         self.tree.setColumnWidth(1, 480) # target
-        self.tree.setColumnWidth(2, 70)  # status
+
+        # Calculate status column width based on the widest status text
+        # All possible status values
+        status_values = ["finish", "running", "failed", "skip", "scheduled", "pending"]
+        font_metrics = self.tree.fontMetrics()
+        max_status_width = 0
+        for status in status_values:
+            width = font_metrics.horizontalAdvance(status)
+            max_status_width = max(max_status_width, width)
+        status_width = max_status_width + 20  # Add padding
+
+        self.tree.setColumnWidth(2, status_width)  # status
         self.tree.setColumnWidth(3, 150) # tune (show suffixes like "pre_opt, pre_output")
-        self.tree.setColumnWidth(4, 140) # start time
-        self.tree.setColumnWidth(5, 140) # end time
+
+        # Calculate time column width based on character length
+        # Time format: "YYYY-MM-DD HH:MM:SS" (19 characters)
+        time_format = "YYYY-MM-DD HH:MM:SS"
+        time_width = font_metrics.horizontalAdvance(time_format) + 20  # Add padding
+
+        self.tree.setColumnWidth(4, time_width)  # start time
+        self.tree.setColumnWidth(5, time_width)  # end time
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
