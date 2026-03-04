@@ -2747,6 +2747,8 @@ class MainWindow(QMainWindow):
         self.combo_sel = None
         self.cached_targets_by_level = {} # Cache for search optimization
         self.is_tree_expanded = True  # Track expansion state
+        self.is_search_mode = False  # Track if search filter is active
+        self.search_selected_targets = []  # Store targets selected during search
 
         # Thread pool for background file operations
         self._executor = ThreadPoolExecutor(max_workers=4)
@@ -3372,7 +3374,7 @@ class MainWindow(QMainWindow):
 
     def _copy_selected_target(self):
         """Copy selected target name to clipboard"""
-        targets = self.get_selected_targets()
+        targets = self._exit_search_mode_and_get_targets()
         if targets:
             clipboard = QApplication.clipboard()
             clipboard.setText("\n".join(targets))
@@ -3607,13 +3609,116 @@ class MainWindow(QMainWindow):
             target = self.model.data(target_index)
             if target:
                 targets.append(target)
-        
+
         return targets
+
+    def _select_targets_in_tree(self, target_names):
+        """Select targets in the tree by their names.
+
+        Args:
+            target_names: List of target names to select
+        """
+        if not target_names:
+            return
+
+        target_set = set(target_names)
+        selection_model = self.tree.selectionModel()
+        selection_model.clearSelection()
+
+        # Iterate through all items in the model
+        for row in range(self.model.rowCount()):
+            # Check parent item
+            target_index = self.model.index(row, 1)  # Column 1 is target name
+            target_name = self.model.data(target_index)
+
+            if target_name in target_set:
+                selection_model.select(target_index, QItemSelectionModel.Select | QItemSelectionModel.Rows)
+                self.tree.scrollTo(target_index)
+
+            # Check child items
+            level_item = self.model.item(row, 0)
+            if level_item and level_item.hasChildren():
+                for child_row in range(level_item.rowCount()):
+                    child_target_index = self.model.index(child_row, 1, level_item.index())
+                    child_target_name = self.model.data(child_target_index)
+                    if child_target_name in target_set:
+                        selection_model.select(child_target_index, QItemSelectionModel.Select | QItemSelectionModel.Rows)
+
+    def _get_selected_targets_keep_search(self):
+        """Get selected targets while keeping search mode active.
+
+        This method gets selected targets without exiting search mode.
+        Used for operations that should maintain search state after execution.
+
+        Returns:
+            tuple: (selected_targets, was_in_search_mode, search_text)
+        """
+        was_in_search = self.is_search_mode
+        search_text = ""
+        if hasattr(self, 'header'):
+            search_text = self.header.get_filter_text()
+        selected_targets = self.get_selected_targets()
+        return selected_targets, was_in_search, search_text
+
+    def _refresh_after_action(self, was_in_search, search_text):
+        """Refresh the view after an action, preserving search state if needed.
+
+        Args:
+            was_in_search: Whether the user was in search mode before the action
+            search_text: The search text to restore
+        """
+        current_run = self.combo.currentText()
+        if current_run and current_run != "No runs found":
+            self._build_status_cache(current_run)
+
+        if was_in_search and search_text:
+            # Re-apply the search filter to refresh status while keeping search mode
+            self.model.clear()
+            self.populate_data()
+            self.filter_tree(search_text)
+        else:
+            # Normal refresh
+            self.model.clear()
+            self.populate_data()
+
+    def _exit_search_mode_and_get_targets(self):
+        """Exit search mode if active and return selected targets.
+
+        This method handles the transition from search mode to normal mode:
+        1. Saves selected targets from search results
+        2. Clears search filter and restores full tree
+        3. Re-selects the saved targets in the restored tree
+        4. Returns the list of selected target names
+
+        Returns:
+            list: Selected target names
+        """
+        if self.is_search_mode:
+            # Save currently selected targets from search results
+            selected_targets = self.get_selected_targets()
+            logger.info(f"Exiting search mode with {len(selected_targets)} selected targets")
+
+            # Clear search to restore full tree
+            if hasattr(self, 'header'):
+                self.header.set_filter_text("")
+                self.header.hide_filter()
+            self.is_search_mode = False
+            self.model.clear()
+            self.populate_data()
+
+            # Re-select the targets in the restored tree
+            if selected_targets:
+                self._select_targets_in_tree(selected_targets)
+
+            return selected_targets
+        else:
+            return self.get_selected_targets()
 
     def start(self, action):
         """Execute flow action and refresh view (runs command in background thread)."""
-        # Get selected targets
-        selected_targets = self.get_selected_targets()
+        # Get selected targets while keeping search mode state
+        selected_targets, was_in_search, search_text = self._get_selected_targets_keep_search()
+
         if not selected_targets:
             logger.warning(f"No targets selected for action: {action}")
             return
@@ -3650,11 +3755,11 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 logger.error(f"Error executing command: {e}")
 
-            # Rebuild cache and refresh UI after command completes
-            self._build_status_cache(current_run)
-            self.populate_data()
+            # Refresh while preserving search state
+            self._refresh_after_action(was_in_search, search_text)
         else:
             # Execute other commands in background thread
+            # Store search state for later use in refresh
             def run_command():
                 try:
                     process = subprocess.Popen(
@@ -3687,7 +3792,14 @@ class MainWindow(QMainWindow):
         If text is present, show FLAT list of matching items (no parents).
         """
         logger.debug(f"filter_tree called with text='{text}'")
-        
+
+        # Update search mode flag
+        if text:
+            self.is_search_mode = True
+        else:
+            self.is_search_mode = False
+            self.search_selected_targets = []  # Clear stored selection
+
         if not text:
             # Restore full hierarchy
             self.model.clear() # Force clear to trigger full rebuild in populate_data
@@ -4260,6 +4372,11 @@ class MainWindow(QMainWindow):
         if not found_statuses:
             return ""
 
+        # Priority: skip status takes precedence over others (even if finish exists)
+        # This is because skip is an intentional override
+        if "skip" in found_statuses:
+            return "skip"
+
         # If multiple statuses found, check modification time to see which is latest.
         latest_status = None
         latest_time = 0
@@ -4309,11 +4426,17 @@ class MainWindow(QMainWindow):
                             pass
 
                 # For each target, find the latest status
+                # Priority: skip status takes precedence over others
                 for target_name, status_list in target_status_files.items():
                     if status_list:
-                        # Sort by mtime descending, get the latest
-                        latest = max(status_list, key=lambda x: x[1])
-                        statuses[target_name] = latest[0]
+                        # Check if skip exists - it has priority
+                        status_names = [s[0] for s in status_list]
+                        if "skip" in status_names:
+                            statuses[target_name] = "skip"
+                        else:
+                            # Sort by mtime descending, get the latest
+                            latest = max(status_list, key=lambda x: x[1])
+                            statuses[target_name] = latest[0]
 
             except Exception as e:
                 logger.error(f"Error building status cache: {e}")
@@ -4928,10 +5051,10 @@ class MainWindow(QMainWindow):
         return start_time, end_time
 
     # ========== File Viewers ==========
-    
+
     def handle_csh(self):
         """Open shell file for selected target (runs in background thread)"""
-        selected_targets = self.get_selected_targets()
+        selected_targets = self._exit_search_mode_and_get_targets()
         if not selected_targets or not self.combo_sel:
             return
         target = selected_targets[0]
@@ -4956,7 +5079,7 @@ class MainWindow(QMainWindow):
 
     def handle_log(self):
         """Open log file for selected target (runs in background thread)"""
-        selected_targets = self.get_selected_targets()
+        selected_targets = self._exit_search_mode_and_get_targets()
         if not selected_targets or not self.combo_sel:
             return
         target = selected_targets[0]
@@ -4980,7 +5103,7 @@ class MainWindow(QMainWindow):
 
     def handle_cmd(self):
         """Open command file for selected target (runs in background thread)"""
-        selected_targets = self.get_selected_targets()
+        selected_targets = self._exit_search_mode_and_get_targets()
         if not selected_targets or not self.combo_sel:
             return
         target = selected_targets[0]
@@ -5127,7 +5250,7 @@ class MainWindow(QMainWindow):
 
     def handle_tune(self):
         """Open tune file for selected target with gvim"""
-        selected_targets = self.get_selected_targets()
+        selected_targets = self._exit_search_mode_and_get_targets()
         if not selected_targets or not self.combo_sel:
             return
 
@@ -5168,7 +5291,7 @@ class MainWindow(QMainWindow):
 
     def copy_tune_to_runs(self):
         """Copy tune file to selected runs"""
-        selected_targets = self.get_selected_targets()
+        selected_targets = self._exit_search_mode_and_get_targets()
         if not selected_targets or not self.combo_sel:
             return
 
@@ -5512,7 +5635,8 @@ class MainWindow(QMainWindow):
 
     def retrace_tab(self, inout):
         """Execute trace and filter view (In-Place)"""
-        selected_targets = self.get_selected_targets()
+        # Exit search mode if active and get selected targets
+        selected_targets = self._exit_search_mode_and_get_targets()
         if not selected_targets or not self.combo_sel:
             logger.warning("No target selected for trace")
             return

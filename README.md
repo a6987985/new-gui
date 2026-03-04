@@ -394,6 +394,19 @@ python reproduce_ui.py
 
 ## Changelog
 
+### v2.5.0 - Bug Fixes and UX Improvements
+
+#### Bug Fixes
+- **Skip Status Priority**: Fixed status detection when both `finish` and `skip` status files exist
+  - Skip status now takes precedence over other statuses (intentional override)
+  - Applies to both `get_target_status()` and `_build_status_cache()` methods
+
+#### UX Improvements
+- **Search Mode Persistence**: Search filter now persists after executing actions (skip, unskip, run, etc.)
+  - Previously: Executing actions in search mode would exit to full tree view
+  - Now: Search results are preserved and refreshed with updated status
+  - New methods: `_get_selected_targets_keep_search()` and `_refresh_after_action()`
+
 ### v2.4.0 - Code Cleanup and Documentation
 
 #### Code Improvements
