@@ -377,6 +377,7 @@ python reproduce_ui.py
 - Fixed scrollbar rounded corners not displaying on Linux
 - Fixed ComboBox dropdown arrow not visible on Linux
 - Platform-independent UI components using manual paint events
+- **Removed duplicate toolbar buttons**: Removed second row of buttons (Terminal, CSH, Log, CMD, Trace Up, Trace Down) as these functions are already available via right-click context menu and keyboard shortcuts, making the UI more compact
 
 ### v2.2.0 - Feature Enhancements
 

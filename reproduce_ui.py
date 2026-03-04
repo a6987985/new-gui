@@ -3062,43 +3062,6 @@ class MainWindow(QMainWindow):
         row1_layout.addWidget(bt_invalid)
 
         top_layout.addLayout(row1_layout)
-
-        # Row 2 of Top Panel (Button handlers for files and trace)
-        row2_layout = QHBoxLayout()
-        row2_layout.addStretch()
-
-        bt_term = QPushButton("Terminal")
-        bt_term.setStyleSheet(btn_style)
-        bt_term.clicked.connect(self.Xterm)
-        row2_layout.addWidget(bt_term)
-
-        bt_csh = QPushButton("CSH")
-        bt_csh.setStyleSheet(btn_style)
-        bt_csh.clicked.connect(self.handle_csh)
-        row2_layout.addWidget(bt_csh)
-
-        bt_log = QPushButton("Log")
-        bt_log.setStyleSheet(btn_style)
-        bt_log.clicked.connect(self.handle_log)
-        row2_layout.addWidget(bt_log)
-
-        bt_cmd = QPushButton("CMD")
-        bt_cmd.setStyleSheet(btn_style)
-        bt_cmd.clicked.connect(self.handle_cmd)
-        row2_layout.addWidget(bt_cmd)
-
-        bt_trace_up = QPushButton("Trace Up")
-        bt_trace_up.setStyleSheet(btn_style)
-        bt_trace_up.clicked.connect(lambda: self.retrace_tab('in'))
-        row2_layout.addWidget(bt_trace_up)
-
-        bt_trace_dn = QPushButton("Trace Down")
-        bt_trace_dn.setStyleSheet(btn_style)
-        bt_trace_dn.clicked.connect(lambda: self.retrace_tab('out'))
-        row2_layout.addWidget(bt_trace_dn)
-
-
-        top_layout.addLayout(row2_layout)
         main_layout.addWidget(top_panel)
 
         # Tab Bar (Modern clean look)
