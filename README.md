@@ -6,7 +6,7 @@ A PyQt5-based GUI monitoring tool for tracking task execution status and depende
 
 ```
 new-gui/
-├── reproduce_ui.py    # Main application file (~4700 lines)
+├── reproduce_ui.py    # Main application file (~5590 lines)
 ├── README.md          # This documentation file
 ├── .cursorrules       # Cursor editor rules configuration
 ├── .gitignore         # Git ignore rules
@@ -31,15 +31,20 @@ new-gui/
 
 ### 2. Status Types and Visual Indicators
 
-| Status | Color | Animation | Description |
-|--------|-------|-----------|-------------|
-| `finish` | PaleGreen (#98FB98) | None | Task completed successfully |
-| `running` | Yellow (#FFFF00) | Pulse | Task currently running |
-| `failed` | Light Red (#FF9999) | None | Task failed |
-| `skip` | PeachPuff (#FFDAB9) | None | Task skipped |
-| `scheduled` | Deep Blue (#4A90D9) | None | Task scheduled |
-| `pending` | Orange (#FFA500) | None | Task pending |
-| (no status) | Light Blue (#88D0EC) | None | Status not yet determined |
+| Status | Color | Icon | Animation | Description |
+|--------|-------|------|-----------|-------------|
+| `finish` | PaleGreen (#98FB98) | ✓ | None | Task completed successfully |
+| `running` | Yellow (#FFFF00) | ▶ | Pulse | Task currently running |
+| `failed` | Light Red (#FF9999) | ✗ | None | Task failed |
+| `skip` | PeachPuff (#FFDAB9) | ○ | None | Task skipped |
+| `scheduled` | Deep Blue (#4A90D9) | ◷ | None | Task scheduled |
+| `pending` | Orange (#FFA500) | ◇ | None | Task pending |
+| (no status) | Light Blue (#88D0EC) | | None | Status not yet determined |
+
+#### Row Visual Effects
+- **Hover**: Semi-transparent blue background (#E6F0FF), bold text
+- **Selected**: Gray background (#C0C0BE), bold text
+- **Row Borders**: Drawn on hover/selection for visual clarity
 
 ### 3. Dependency Tracing
 
@@ -199,6 +204,22 @@ VARC = 333
 - **Context Menu**: Right-click → Params → User Params / Tile Params
 - **Shortcuts**: Ctrl+P / Ctrl+Shift+P
 
+### 15. Multi-Selection Support
+
+The tree view supports extended selection for batch operations:
+- **Ctrl+Click**: Add/remove individual items from selection
+- **Shift+Click**: Select range of items
+- Actions (Run, Stop, Skip, Unskip, Invalid) apply to all selected targets
+- Copy (Ctrl+C) copies all selected target names to clipboard
+
+### 16. Run Selection with Search
+
+The run dropdown (BoundedComboBox) provides:
+- **Search Mode**: Click the 🔍 button to enable text filtering
+- **Auto-complete**: Type to filter available runs
+- **Smart Positioning**: Popup stays within window bounds
+- **Current Selection First**: Selected run appears at top of list when opened
+
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
@@ -220,27 +241,27 @@ VARC = 333
 
 | Class | Description |
 |-------|-------------|
-| `MainWindow` | Main application window |
+| `MainWindow` | Main application window (~2800 lines) |
 | `ThemeManager` | Singleton managing application themes |
-| `StatusAnimator` | Manages status animations (pulse effect) |
+| `StatusAnimator` | Singleton managing status animations (pulse effect) |
 | `NotificationWidget` | Individual notification popup |
-| `NotificationManager` | Manages notification stacking and display |
+| `NotificationManager` | Singleton managing notification stacking and display |
 | `StatusBar` | Bottom status bar with statistics |
-| `BorderItemDelegate` | Custom delegate for row borders and bold text on hover/selection |
-| `DependencyGraphDialog` | Interactive dependency graph viewer |
-| `ParamsEditorDialog` | Dialog for editing user.params and viewing tile.params |
-| `ParamsTableModel` | High-performance table model for params data with virtualization |
-| `InteractiveNodeItem` | Clickable node for graph |
+| `BorderItemDelegate` | Custom delegate for row borders, status colors, and bold text on hover/selection |
+| `FilterHeaderView` | Custom header with embedded search input for Target column |
+| `TuneComboBoxDelegate` | ComboBox delegate for Tune column dropdown |
 | `TreeViewEventFilter` | Event filter for expand/collapse handling |
-| `ColorTreeView` | Custom tree view with colored backgrounds |
 | `RoundedScrollBar` | Custom scrollbar with rounded corners (cross-platform) |
-| `BoundedComboBox` | ComboBox with search functionality and bounded popup |
-| `FilterHeaderView` | Custom header with embedded filter input for target column search |
-| `TuneComboBoxDelegate` | ComboBox delegate for tune column dropdown |
-| `SelectTuneDialog` | Dialog for selecting a tune file |
-| `CopyTuneDialog` | Dialog for selecting runs to copy tune to |
-| `CopyTuneSelectDialog` | Combined dialog for tune copy operations |
+| `ColorTreeView` | Custom tree view with custom branch drawing and rounded scrollbars |
+| `BoundedComboBox` | ComboBox with search functionality and bounded popup positioning |
 | `ClickableLabel` | QLabel that emits doubleClicked signal |
+| `ParamsTableModel` | High-performance QAbstractTableModel for params data with filtering |
+| `ParamsEditorDialog` | Dialog for editing user.params and viewing tile.params |
+| `DependencyGraphDialog` | Interactive dependency graph viewer with zoom/pan/export |
+| `InteractiveNodeItem` | Clickable/hoverable node for dependency graph |
+| `SelectTuneDialog` | Dialog for selecting a single tune file |
+| `CopyTuneDialog` | Dialog for selecting runs to copy tune to |
+| `CopyTuneSelectDialog` | Combined dialog for multi-tune selection and multi-run copy |
 
 ## Data Sources
 
@@ -262,6 +283,15 @@ File modification times are used for start/end timestamps.
 {run_dir}/.target_dependency.csh
 ```
 Contains `ACTIVE_TARGETS`, `LEVEL_N`, `TARGET_LEVEL_*`, `DEPENDENCY_OUT_*`, and `ALL_RELATED_*` definitions.
+
+### BSUB Parameters
+```
+{run_dir}/make_targets/{target}.csh
+```
+Shell scripts containing BSUB job submission parameters:
+- `-q <queue>`: Queue name
+- `-n <cores>`: Number of CPU cores
+- `-R "rusage[mem=<MB>]"`: Memory allocation
 
 ## Configuration
 
@@ -306,14 +336,14 @@ SHORTCUTS = {
 | Column | Width |
 |--------|-------|
 | Level | 80px (fixed) |
-| Target | 480px (fixed) |
-| Status | Dynamic (based on longest status text) |
-| Tune | 150px (fixed) |
-| Start Time | 140px (based on time format) |
-| End Time | 140px (based on time format) |
-| Queue | 80px (auto-resize) |
-| Cores | 60px (auto-resize) |
-| Memory | 80px (auto-resize) |
+| Target | 400px (fixed) |
+| Status | Dynamic (based on longest status text + 20px padding) |
+| Tune | 120px (fixed) |
+| Start Time | Dynamic (based on time format "YYYY-MM-DD HH:MM:SS" + 20px) |
+| End Time | Dynamic (based on time format "YYYY-MM-DD HH:MM:SS" + 20px) |
+| Queue | 100px (fixed) |
+| Cores | 60px (fixed) |
+| Memory | 80px (fixed) |
 
 ### Tree View Columns
 
@@ -338,13 +368,17 @@ The tree view displays the following columns:
 
 ## Performance Optimizations
 
-1. **Status Caching**: Batch status lookups with `_build_status_cache()`
-2. **File System Watcher**: Replaces polling timer for status updates
-3. **Debounce Timer**: 300ms delay to batch rapid file changes
-4. **In-place Updates**: Refresh status without rebuilding entire tree
-5. **Animation Timer**: 20 FPS animation update for running status
-6. **Delegate Drawing**: Custom delegate for efficient row rendering
-7. **Code Optimization**: Removed unused classes and imports (~9% code reduction)
+1. **Status Caching**: Batch status lookups with `_build_status_cache()` - reads all status files in one pass
+2. **Time Caching**: Batch timestamp lookups cached alongside status
+3. **File System Watcher**: `QFileSystemWatcher` replaces polling timer for real-time status updates
+4. **Debounce Timer**: 300ms delay to batch rapid file changes before UI refresh
+5. **Backup Timer**: 10-second fallback refresh in case file watcher misses events
+6. **In-place Updates**: Refresh status/time without rebuilding entire tree when possible
+7. **Animation Timer**: 20 FPS (50ms interval) for running status pulse animation
+8. **Delegate Drawing**: Custom `BorderItemDelegate` for efficient row rendering with visual effects
+9. **Virtualized Params Table**: `ParamsTableModel` uses `QAbstractTableModel` for large params files
+10. **Search Debounce**: 200ms debounce in params editor search to avoid lag on large files
+11. **ThreadPoolExecutor**: Background threads for file operations (gvim, terminal, commands)
 
 ## Usage
 
@@ -359,6 +393,23 @@ python reproduce_ui.py
 - gvim (optional, for opening tune files)
 
 ## Changelog
+
+### v2.4.0 - Code Cleanup and Documentation
+
+#### Code Improvements
+- **Single File Architecture**: Complete application in ~5590 lines
+- **Organized Imports**: Standard library, PyQt5, and local imports properly grouped
+- **Pre-compiled Regex**: All regex patterns compiled at module level for performance
+- **Singleton Pattern**: `ThemeManager`, `StatusAnimator`, `NotificationManager` use proper singleton pattern
+
+#### Documentation Updates
+- Updated column widths to match actual code values
+- Added BSUB Parameters data source documentation
+- Added row visual effects (hover/selection) description
+- Added multi-selection support documentation
+- Added run selection with search documentation
+- Updated Core Classes table with accurate descriptions
+- Expanded Performance Optimizations section
 
 ### v2.3.0 - Cross-Platform UI Fixes
 
