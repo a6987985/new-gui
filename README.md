@@ -233,6 +233,7 @@ VARC = 333
 | `InteractiveNodeItem` | Clickable node for graph |
 | `TreeViewEventFilter` | Event filter for expand/collapse handling |
 | `ColorTreeView` | Custom tree view with colored backgrounds |
+| `RoundedScrollBar` | Custom scrollbar with rounded corners (cross-platform) |
 | `BoundedComboBox` | ComboBox with search functionality and bounded popup |
 | `FilterHeaderView` | Custom header with embedded filter input for target column search |
 | `TuneComboBoxDelegate` | ComboBox delegate for tune column dropdown |
@@ -358,6 +359,24 @@ python reproduce_ui.py
 - gvim (optional, for opening tune files)
 
 ## Changelog
+
+### v2.3.0 - Cross-Platform UI Fixes
+
+#### New Features
+- **Rounded Scrollbar**: Custom scrollbar with rounded corners for all platforms
+  - Works consistently across macOS and Linux (CentOS 7)
+  - Custom QPainter-based rendering bypasses platform-specific QSS limitations
+  - Supports hover and pressed color states
+  - Theme-aware color updates
+- **Custom ComboBox Dropdown Arrow**: Double-V arrow icon for dropdown indicator
+  - Custom QPainter rendering for cross-platform consistency
+  - SVG-style rounded line caps and joins
+  - Hover color feedback
+
+#### Improvements
+- Fixed scrollbar rounded corners not displaying on Linux
+- Fixed ComboBox dropdown arrow not visible on Linux
+- Platform-independent UI components using manual paint events
 
 ### v2.2.0 - Feature Enhancements
 

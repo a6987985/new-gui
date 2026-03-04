@@ -131,7 +131,8 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QGraphicsPolygonItem, QFileDialog, QCheckBox, QScrollArea,
                              QGroupBox, QMessageBox, QFrame, QShortcut, QShortcut,
                              QGraphicsRectItem, QGraphicsItem, QTableWidget, QTableWidgetItem,
-                             QTableView, QItemDelegate, QInputDialog, QProxyStyle)
+                             QTableView, QItemDelegate, QInputDialog, QScrollBar,
+                             QStyleOptionSlider)
 from PyQt5.QtGui import (QStandardItemModel, QStandardItem, QColor, QBrush, QFont,
                          QFontMetrics, QPen, QPainter, QPolygonF,
                          QKeySequence, QIcon, QPixmap, QPainterPath)
@@ -564,7 +565,129 @@ class TreeViewEventFilter(QObject):
                 continue
             self.tree_view.setRowHidden(row, QModelIndex(), not self.level_expanded[level])
 
+
+class RoundedScrollBar(QScrollBar):
+    """Custom ScrollBar with rounded corners on all sides - works across platforms"""
+
+    def __init__(self, orientation, parent=None):
+        super().__init__(orientation, parent)
+        self._handle_color = QColor("#b0b0b0")
+        self._handle_color_hover = QColor("#909090")
+        self._handle_color_pressed = QColor("#707070")
+        self._track_color = QColor("#f0f0f0")
+        self._border_radius = 7.0
+        self._hover = False
+        self._pressed = False
+
+        # Enable mouse tracking for hover effects
+        self.setMouseTracking(True)
+
+    def setColors(self, handle_color, handle_hover, handle_pressed, track_color):
+        """Update scrollbar colors (for theme support)"""
+        self._handle_color = QColor(handle_color)
+        self._handle_color_hover = QColor(handle_hover)
+        self._handle_color_pressed = QColor(handle_pressed)
+        self._track_color = QColor(track_color)
+        self.update()
+
+    def _calculate_slider_rect(self):
+        """Manually calculate slider rectangle based on scrollbar properties"""
+        # Get scrollbar dimensions and range
+        if self.orientation() == Qt.Vertical:
+            total_length = self.height()
+            slider_extent = self.pageStep()
+        else:
+            total_length = self.width()
+            slider_extent = self.pageStep()
+
+        # Get range
+        doc_size = self.maximum() - self.minimum() + self.pageStep()
+        if doc_size <= 0:
+            doc_size = 1
+
+        # Calculate slider size (minimum 20 pixels)
+        slider_size = max(20, int((slider_extent / doc_size) * total_length))
+
+        # Calculate slider position
+        value_range = self.maximum() - self.minimum()
+        if value_range <= 0:
+            slider_pos = 0
+        else:
+            slider_pos = int(((self.value() - self.minimum()) / value_range) * (total_length - slider_size))
+
+        # Create the slider rectangle
+        if self.orientation() == Qt.Vertical:
+            return QRect(0, slider_pos, self.width(), slider_size)
+        else:
+            return QRect(slider_pos, 0, slider_size, self.height())
+
+    def paintEvent(self, event):
+        """Custom paint event to draw rounded scrollbar - platform independent"""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # Fill track background
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(self._track_color)
+        painter.drawRect(self.rect())
+
+        # Get slider rectangle using manual calculation
+        slider_rect = self._calculate_slider_rect()
+
+        if not slider_rect.isValid() or slider_rect.width() < 2 or slider_rect.height() < 2:
+            return
+
+        # Determine handle color based on state
+        if self._pressed:
+            handle_color = self._handle_color_pressed
+        elif self._hover:
+            handle_color = self._handle_color_hover
+        else:
+            handle_color = self._handle_color
+
+        # Draw rounded handle
+        painter.setBrush(handle_color)
+        painter.setPen(Qt.NoPen)
+
+        # Add small margin for visual padding
+        margin = 2
+        adjusted = slider_rect.adjusted(margin, margin, -margin, -margin)
+        if adjusted.width() < 4 or adjusted.height() < 4:
+            adjusted = slider_rect
+
+        # Draw the rounded rectangle
+        painter.drawRoundedRect(adjusted, self._border_radius, self._border_radius)
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self._hover = True
+        self.update()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self._hover = False
+        self.update()
+
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+        self._pressed = True
+        self.update()
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        self._pressed = False
+        self.update()
+
+
 class ColorTreeView(QTreeView):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Replace default scrollbars with rounded ones
+        self._v_scrollbar = RoundedScrollBar(Qt.Vertical, self)
+        self._h_scrollbar = RoundedScrollBar(Qt.Horizontal, self)
+        self.setVerticalScrollBar(self._v_scrollbar)
+        self.setHorizontalScrollBar(self._h_scrollbar)
+
     def drawBranches(self, painter, rect, index):
         # Check if row is selected or current (focused)
         is_selected = self.selectionModel().isSelected(index)
@@ -620,6 +743,8 @@ class BoundedComboBox(QComboBox):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setEditable(False) # Default to non-editable
+        self._arrow_color = QColor("#555555")
+        self._arrow_color_hover = QColor("#333333")
 
         # Add search icon button
         self.search_btn = QPushButton(self)
@@ -642,6 +767,64 @@ class BoundedComboBox(QComboBox):
 
         # Connect signal to exit search mode on selection
         self.currentIndexChanged.connect(self.disable_search_mode)
+
+    def setArrowColor(self, color):
+        """Set the dropdown arrow color"""
+        self._arrow_color = QColor(color)
+        self.update()
+
+    def paintEvent(self, event):
+        """Custom paint event to draw dropdown arrow"""
+        super().paintEvent(event)
+
+        # Draw custom dropdown arrow (double V-shaped, matching SVG style)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # Get the dropdown arrow rectangle
+        opt = QStyleOptionComboBox()
+        self.initStyleOption(opt)
+
+        arrow_rect = self.style().subControlRect(
+            QStyle.CC_ComboBox, opt, QStyle.SC_ComboBoxArrow, self
+        )
+
+        if arrow_rect.isValid():
+            # Determine arrow color based on hover state
+            if opt.state & QStyle.State_MouseOver:
+                arrow_color = self._arrow_color_hover
+            else:
+                arrow_color = self._arrow_color
+
+            # Draw double V-shaped arrow with rounded caps (matching SVG style)
+            # SVG: M1 5L5 1L9 5 (up V) M9 11L5 15L1 11 (down V)
+            pen = QPen(arrow_color)
+            pen.setWidth(2)
+            pen.setCapStyle(Qt.RoundCap)
+            pen.setJoinStyle(Qt.RoundJoin)
+            painter.setPen(pen)
+
+            # Arrow dimensions (scaled to fit the arrow_rect)
+            arrow_width = 6   # Total width of each V
+            arrow_height = 3  # Height from tip to ends
+            gap = 2           # Gap between the two V shapes
+
+            center_x = arrow_rect.center().x()
+            center_y = arrow_rect.center().y()
+
+            # Upward V (∧) - above center
+            up_v_tip = QPointF(center_x, center_y - gap - arrow_height)
+            up_v_left = QPointF(center_x - arrow_width // 2, center_y - gap)
+            up_v_right = QPointF(center_x + arrow_width // 2, center_y - gap)
+            painter.drawLine(up_v_left, up_v_tip)
+            painter.drawLine(up_v_tip, up_v_right)
+
+            # Downward V (∨) - below center
+            down_v_left = QPointF(center_x - arrow_width // 2, center_y + gap)
+            down_v_tip = QPointF(center_x, center_y + gap + arrow_height)
+            down_v_right = QPointF(center_x + arrow_width // 2, center_y + gap)
+            painter.drawLine(down_v_left, down_v_tip)
+            painter.drawLine(down_v_tip, down_v_right)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -3079,61 +3262,6 @@ class MainWindow(QMainWindow):
             QTreeView::branch:hover {
                 background: rgba(230,240,255,0.6) !important;
             }
-            /* Scrollbar styling */
-            QScrollBar:vertical {
-                background: #f0f0f0;
-                width: 16px;
-                margin: 0px;
-                border-radius: 8px;
-            }
-            QScrollBar::handle:vertical {
-                background: #b0b0b0;
-                min-height: 40px;
-                border-radius: 8px;
-                margin: 2px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: #909090;
-            }
-            QScrollBar::handle:vertical:pressed {
-                background: #707070;
-            }
-            QScrollBar::add-line:vertical,
-            QScrollBar::sub-line:vertical {
-                height: 0px;
-                background: none;
-            }
-            QScrollBar::add-page:vertical,
-            QScrollBar::sub-page:vertical {
-                background: none;
-            }
-            QScrollBar:horizontal {
-                background: #f0f0f0;
-                height: 16px;
-                margin: 0px;
-                border-radius: 8px;
-            }
-            QScrollBar::handle:horizontal {
-                background: #b0b0b0;
-                min-width: 40px;
-                border-radius: 8px;
-                margin: 2px;
-            }
-            QScrollBar::handle:horizontal:hover {
-                background: #909090;
-            }
-            QScrollBar::handle:horizontal:pressed {
-                background: #707070;
-            }
-            QScrollBar::add-line:horizontal,
-            QScrollBar::sub-line:horizontal {
-                width: 0px;
-                background: none;
-            }
-            QScrollBar::add-page:horizontal,
-            QScrollBar::sub-page:horizontal {
-                background: none;
-            }
         """)
 
         self.model = QStandardItemModel()
@@ -3297,10 +3425,22 @@ class MainWindow(QMainWindow):
             scrollbar_bg = "#2d2d2d"
             scrollbar_handle = "#555555"
             scrollbar_handle_hover = "#666666"
+            scrollbar_handle_pressed = "#444444"
         else:
             scrollbar_bg = "#f5f5f5"
             scrollbar_handle = "#c0c0c0"
             scrollbar_handle_hover = "#a0a0a0"
+            scrollbar_handle_pressed = "#808080"
+
+        # Update custom scrollbar colors
+        if hasattr(self.tree, '_v_scrollbar'):
+            self.tree._v_scrollbar.setColors(
+                scrollbar_handle, scrollbar_handle_hover, scrollbar_handle_pressed, scrollbar_bg
+            )
+        if hasattr(self.tree, '_h_scrollbar'):
+            self.tree._h_scrollbar.setColors(
+                scrollbar_handle, scrollbar_handle_hover, scrollbar_handle_pressed, scrollbar_bg
+            )
 
         # Apply main window stylesheet
         self.setStyleSheet(f"""
@@ -3389,54 +3529,6 @@ class MainWindow(QMainWindow):
             }}
             QLabel {{
                 color: {theme['text_color']};
-            }}
-            QScrollBar:vertical {{
-                background: {scrollbar_bg};
-                width: 16px;
-                margin: 0px;
-                border-radius: 8px;
-            }}
-            QScrollBar::handle:vertical {{
-                background: {scrollbar_handle};
-                min-height: 40px;
-                border-radius: 8px;
-                margin: 2px;
-            }}
-            QScrollBar::handle:vertical:hover {{
-                background: {scrollbar_handle_hover};
-            }}
-            QScrollBar::add-line:vertical,
-            QScrollBar::sub-line:vertical {{
-                height: 0px;
-                background: none;
-            }}
-            QScrollBar::add-page:vertical,
-            QScrollBar::sub-page:vertical {{
-                background: none;
-            }}
-            QScrollBar:horizontal {{
-                background: {scrollbar_bg};
-                height: 16px;
-                margin: 0px;
-                border-radius: 8px;
-            }}
-            QScrollBar::handle:horizontal {{
-                background: {scrollbar_handle};
-                min-width: 40px;
-                border-radius: 8px;
-                margin: 2px;
-            }}
-            QScrollBar::handle:horizontal:hover {{
-                background: {scrollbar_handle_hover};
-            }}
-            QScrollBar::add-line:horizontal,
-            QScrollBar::sub-line:horizontal {{
-                width: 0px;
-                background: none;
-            }}
-            QScrollBar::add-page:horizontal,
-            QScrollBar::sub-page:horizontal {{
-                background: none;
             }}
         """)
 
