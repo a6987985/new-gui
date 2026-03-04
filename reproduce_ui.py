@@ -745,6 +745,7 @@ class BoundedComboBox(QComboBox):
         self.setEditable(False) # Default to non-editable
         self._arrow_color = QColor("#555555")
         self._arrow_color_hover = QColor("#333333")
+        self._delegate = None  # Custom delegate for hiding current row
 
         # Add search icon button
         self.search_btn = QPushButton(self)
@@ -799,7 +800,7 @@ class BoundedComboBox(QComboBox):
             # Draw double V-shaped arrow with rounded caps (matching SVG style)
             # SVG: M1 5L5 1L9 5 (up V) M9 11L5 15L1 11 (down V)
             pen = QPen(arrow_color)
-            pen.setWidth(2)
+            pen.setWidthF(1.5)
             pen.setCapStyle(Qt.RoundCap)
             pen.setJoinStyle(Qt.RoundJoin)
             painter.setPen(pen)
@@ -897,52 +898,46 @@ class BoundedComboBox(QComboBox):
         self._position_search_button()
 
     def showPopup(self):
-        # Reorder items: put current selection at the top
+        # Hide current item from popup and position popup tightly below combobox
         current_idx = self.currentIndex()
-        current_text = self.currentText()
+        self._hidden_row = current_idx
 
-        if current_idx > 0 and self.count() > 1:
-            # Block signals to prevent triggering currentIndexChanged
-            self.blockSignals(True)
+        # Create custom delegate that returns zero height for hidden row
+        class HiddenRowDelegate(QStyledItemDelegate):
+            def __init__(self, parent_combo):
+                super().__init__(parent_combo)
+                self.hidden_row = -1
 
-            # Collect all items
-            items = [self.itemText(i) for i in range(self.count())]
+            def sizeHint(self, option, index):
+                size = super().sizeHint(option, index)
+                if index.row() == self.hidden_row:
+                    return QSize(size.width(), 0)
+                return size
 
-            # Remove current item and insert at beginning
-            if current_text in items:
-                items.remove(current_text)
-                items.insert(0, current_text)
+            def paint(self, painter, option, index):
+                if index.row() == self.hidden_row:
+                    return  # Don't paint hidden row
+                super().paint(painter, option, index)
 
-            # Clear and re-add items
-            self.clear()
-            self.addItems(items)
-
-            # Set current index back to 0 (now the first item)
-            self.setCurrentIndex(0)
-
-            self.blockSignals(False)
+        # Set custom delegate
+        if not hasattr(self, '_delegate') or self._delegate is None:
+            self._delegate = HiddenRowDelegate(self)
+        self._delegate.hidden_row = current_idx
+        self.view().setItemDelegate(self._delegate)
 
         super().showPopup()
 
-        # Get the popup (the list view that drops down)
+        # Get the popup after showing
         popup = self.view().parentWidget()
         if popup:
-            # Get popup's current geometry
-            popup_geo = popup.geometry()
+            # Position popup directly below combobox with no gap
+            combo_bottom_left = self.mapToGlobal(self.rect().bottomLeft())
+            popup.move(combo_bottom_left)
 
-            # Get main window
-            main_window = self.window()
-            if main_window:
-                # Get window's global position
-                window_top = main_window.mapToGlobal(main_window.rect().topLeft()).y()
-                # Add title bar height (approximately 30-40 pixels)
-                title_bar_height = 40
-                min_y = window_top + title_bar_height
-
-                # If popup extends above the limit, reposition it
-                if popup_geo.top() < min_y:
-                    popup_geo.moveTop(min_y)
-                    popup.setGeometry(popup_geo)
+    def hidePopup(self):
+        # Reset hidden row
+        self._hidden_row = -1
+        super().hidePopup()
 
     def focusOutEvent(self, event):
         super().focusOutEvent(event)
@@ -2789,7 +2784,8 @@ class MainWindow(QMainWindow):
 
         # Create Menu Bar
         self.menu_bar = self.menuBar()
-        self.menu_bar.setStyleSheet("""
+        # Save default menu bar style for later use
+        self._default_menu_bar_style = """
             QMenuBar {
                 background-color: #ffffff;
                 border-bottom: 1px solid #e0e0e0;
@@ -2828,7 +2824,8 @@ class MainWindow(QMainWindow):
                 background: #e0e0e0;
                 margin: 4px 12px;
             }
-        """)
+        """
+        self.menu_bar.setStyleSheet(self._default_menu_bar_style)
 
         # Status Menu
         status_menu = self.menu_bar.addMenu("Status")
@@ -2893,10 +2890,11 @@ class MainWindow(QMainWindow):
         main_layout.setAlignment(Qt.AlignTop)
 
         # Top Control Panel
-        top_panel = QWidget()
-        top_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        # Modern clean gradient background
-        top_panel.setStyleSheet("""
+        self.top_panel = QWidget()
+        self.top_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        # Default background (will be updated when run changes)
+        self._default_top_panel_bg = "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #f8f9fa, stop:1 #e9ecef)"
+        self.top_panel.setStyleSheet("""
             QWidget {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #f8f9fa, stop:1 #e9ecef);
@@ -2908,9 +2906,9 @@ class MainWindow(QMainWindow):
         shadow.setBlurRadius(8)
         shadow.setOffset(0, 2)
         shadow.setColor(QColor(0, 0, 0, 30))
-        top_panel.setGraphicsEffect(shadow)
+        self.top_panel.setGraphicsEffect(shadow)
 
-        top_layout = QVBoxLayout(top_panel)
+        top_layout = QVBoxLayout(self.top_panel)
         top_layout.setContentsMargins(16, 12, 16, 12)
         top_layout.setSpacing(8)
         
@@ -2927,20 +2925,20 @@ class MainWindow(QMainWindow):
         self.combo.setStyleSheet("""
             QComboBox {
                 background-color: #ffffff;
-                border: 1px solid #545F71;
+                border: 1px solid #a0a0a0;
                 border-radius: 6px;
                 padding: 6px 12px;
                 padding-right: 32px;
-                color: #545F71;
-                font-size: 13px;
+                color: #000000;
+                font-size: 14px;
                 min-width: 200px;
             }
             QComboBox:hover {
-                border: 1px solid #545F71;
+                border: 1px solid #808080;
                 background-color: #f5f5f5;
             }
             QComboBox:focus {
-                border: 2px solid #545F71;
+                border: 1px solid #808080;
             }
             QComboBox:disabled {
                 background-color: #EEF1F4;
@@ -2953,14 +2951,23 @@ class MainWindow(QMainWindow):
                 subcontrol-origin: padding;
                 subcontrol-position: right center;
             }
+            QComboBox:on {
+                border-bottom-left-radius: 0px;
+                border-bottom-right-radius: 0px;
+                border-bottom: none;
+            }
             QComboBox QAbstractItemView {
-                color: #545F71;
+                color: #000000;
                 background-color: #ffffff;
-                border: 1px solid #545F71;
-                border-radius: 6px;
+                border: 1px solid #a0a0a0;
+                border-top: none;
                 selection-background-color: #EEF1F4;
-                selection-color: #545F71;
-                padding: 4px;
+                selection-color: #000000;
+                outline: none;
+                padding-left: 10px;
+            }
+            QComboBox QAbstractItemView::item {
+                height: 28px;
             }
         """)
 
@@ -3064,7 +3071,10 @@ class MainWindow(QMainWindow):
         row1_layout.addWidget(bt_invalid)
 
         top_layout.addLayout(row1_layout)
-        main_layout.addWidget(top_panel)
+        main_layout.addWidget(self.top_panel)
+
+        # Initialize top panel background from XMETA_BACKGROUND env variable
+        self._init_top_panel_background()
 
         # Tab Bar (Modern clean look)
         self.tab_bar = QWidget()
@@ -4345,8 +4355,76 @@ class MainWindow(QMainWindow):
             # Update status bar
             self.update_status_bar()
 
+    def _init_top_panel_background(self):
+        """Initialize top panel and menu bar background color from XMETA_BACKGROUND env variable."""
+        try:
+            # Get XMETA_BACKGROUND environment variable
+            bg_color = os.environ.get('XMETA_BACKGROUND', '').strip()
 
-        
+            if bg_color:
+                # Use the color from environment variable for top panel
+                self.top_panel.setStyleSheet(f"""
+                    QWidget {{
+                        background-color: {bg_color};
+                        border-radius: 0px;
+                    }}
+                """)
+                # Use the color for menu bar (only change background-color)
+                self.menu_bar.setStyleSheet(f"""
+                    QMenuBar {{
+                        background-color: {bg_color};
+                        border-bottom: 1px solid #e0e0e0;
+                        padding: 4px 8px;
+                        font-size: 13px;
+                    }}
+                    QMenuBar::item {{
+                        background-color: transparent;
+                        padding: 6px 14px;
+                        border-radius: 4px;
+                        color: #333333;
+                    }}
+                    QMenuBar::item:selected {{
+                        background-color: #e3f2fd;
+                        color: #1976d2;
+                    }}
+                    QMenuBar::item:pressed {{
+                        background-color: #bbdefb;
+                    }}
+                    QMenu {{
+                        background-color: #ffffff;
+                        border: 1px solid #e0e0e0;
+                        border-radius: 6px;
+                        padding: 4px 0px;
+                    }}
+                    QMenu::item {{
+                        padding: 8px 24px;
+                        color: #333333;
+                    }}
+                    QMenu::item:selected {{
+                        background-color: #e3f2fd;
+                        color: #1976d2;
+                    }}
+                    QMenu::separator {{
+                        height: 1px;
+                        background: #e0e0e0;
+                        margin: 4px 12px;
+                    }}
+                """)
+                logger.info(f"Set top panel and menu bar background to: {bg_color}")
+            else:
+                # Use default styles if no env variable
+                self.top_panel.setStyleSheet(f"""
+                    QWidget {{
+                        background: {self._default_top_panel_bg};
+                        border-radius: 0px;
+                    }}
+                """)
+                self.menu_bar.setStyleSheet(self._default_menu_bar_style)
+        except Exception as e:
+            logger.warning(f"Failed to get XMETA_BACKGROUND: {e}")
+
+
+
     def get_target_status(self, run_name, target_name):
         """Get status of a target by checking status files in run_dir/status/"""
         # Use cached status if available

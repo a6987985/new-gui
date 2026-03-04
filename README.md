@@ -394,6 +394,23 @@ python reproduce_ui.py
 
 ## Changelog
 
+### v2.6.0 - UI Refinements
+
+#### ComboBox Improvements
+- **Dropdown Arrow**: Line width reduced from 2px to 1.5px for a cleaner look
+- **Font Size**: Increased from 13px to 14px for better readability
+- **Font Color**: Changed from gray-blue (#545F71) to pure black (#000000)
+- **Border Color**: Changed from dark gray-blue (#545F71) to light gray (#a0a0a0)
+- **Popup Positioning**: Dropdown popup now sits flush against the combobox with no gap
+- **Hidden Current Selection**: Current selected item is hidden from dropdown list
+- **Item Alignment**: Dropdown items left-padding (10px) aligned with combobox text
+- **Custom Delegate**: Implemented `HiddenRowDelegate` to properly hide current selection row
+
+#### Background Color Environment Variable
+- **XMETA_BACKGROUND**: Top panel and menu bar background color can be customized via `XMETA_BACKGROUND` environment variable
+- Colors are read once at GUI startup
+- Falls back to default gradient if environment variable is not set
+
 ### v2.5.0 - Bug Fixes and UX Improvements
 
 #### Bug Fixes
