@@ -6,7 +6,7 @@ A PyQt5-based GUI monitoring tool for tracking task execution status and depende
 
 ```
 new-gui/
-├── reproduce_ui.py    # Main application file (~4400 lines)
+├── reproduce_ui.py    # Main application file (~4700 lines)
 ├── README.md          # This documentation file
 ├── .cursorrules       # Cursor editor rules configuration
 ├── .gitignore         # Git ignore rules
@@ -64,14 +64,16 @@ Tune files are TCL scripts used for task configuration.
 
 #### Naming Convention
 ```
-{run_dir}/tune/{target}.{suffix}.tcl
+{run_dir}/tune/{target}/{target}.{suffix}.tcl
 ```
 
-Example: `/path/to/run/tune/synthesis.pre_opt.tcl`
+Example: `/path/to/run/tune/synthesis/synthesis.pre_opt.tcl`
 
 #### Operations
 - **Open Tune**: Open tune file with gvim (supports multiple tune files per target)
-- **Copy Tune To...**: Copy tune file to multiple runs
+  - Via context menu: Right-click → Tune → Open Tune
+  - Via double-click: Double-click on the Tune column cell to show dropdown menu
+- **Copy Tune To...**: Copy tune file to multiple runs (supports selecting multiple tune files)
 
 ### 6. Context Menu Actions
 
@@ -100,9 +102,41 @@ Right-click on a target to access organized menu:
 
 **📋 Copy**
 - Copy Target Name (Ctrl+C)
-- Copy Run Path
+- Copy Run Path (single target only)
 
-### 7. Theme System
+**⚙ Params**
+- User Params (Ctrl+P)
+- Tile Params (Ctrl+Shift+P)
+
+### 7. Status Overview
+
+Access via `Status → Show All Status` menu to view a summary of all run directories:
+- Displays: Run Directory, Latest Target, Status, Time Stamp
+- Double-click any row to copy the run name to clipboard
+- Provides quick overview of all runs in the base directory
+
+### 8. Embedded Search Filter
+
+Double-click on the Target column header to show an embedded search input:
+- Real-time filtering as you type
+- Press Escape or Enter to hide the filter
+- Shows flat list of matching targets
+
+### 9. BSUB Parameter Editing
+
+Double-click on Queue, Cores, or Memory columns to edit bsub parameters:
+- **Queue**: BSUB queue name (-q parameter)
+- **Cores**: Number of CPU cores (-n parameter, must be numeric)
+- **Memory**: Memory allocation in MB (rusage[mem=XXX], must be numeric)
+- Changes are saved directly to `{run_dir}/make_targets/{target}.csh`
+
+### 10. Tab Label Interaction
+
+The tab label (showing current run name) supports:
+- **Double-click**: Toggle between Expand All and Collapse All
+- Displays trace mode status (red text) when tracing dependencies
+
+### 11. Theme System
 
 Three themes available:
 - **Light Theme** (default): Clean, bright interface
@@ -111,7 +145,7 @@ Three themes available:
 
 Access via `View → Theme` menu or `Ctrl+T` shortcut.
 
-### 8. Status Bar
+### 12. Status Bar
 
 Bottom status bar displays:
 - Current run name
@@ -119,7 +153,7 @@ Bottom status bar displays:
 - Connection status indicator
 - Current theme indicator
 
-### 9. Notifications
+### 13. Notifications
 
 Toast notifications appear in bottom-right corner:
 - **Info** (blue): General information
@@ -128,6 +162,42 @@ Toast notifications appear in bottom-right corner:
 - **Error** (red): Errors
 
 Auto-dismiss after configurable duration, click to close.
+
+### 14. Params Editor
+
+Edit and view parameter files for each run.
+
+#### File Locations
+```
+{run_dir}/user.params   # User-modifiable parameters (editable)
+{run_dir}/tile.params   # All parameters used (read-only)
+```
+
+#### File Format
+```
+# Comment lines start with #
+VARA = 111
+VARB = "value with spaces"
+VARC = 333
+```
+
+#### User Params Features
+- **Add**: Create new parameters
+- **Edit**: Modify existing parameter values
+- **Delete**: Remove parameters
+- **Search**: Filter parameters by name (with debounce for large files)
+- **Save**: Write changes to file (auto-backup to .bak)
+- **Gen Params**: Execute `XMeta_gen_params` to generate params to flow
+
+#### Tile Params Features
+- **View**: Read-only parameter list
+- **Search**: Filter parameters by name
+- **Copy**: Double-click to copy parameter to clipboard
+
+#### Access Methods
+- **Menu**: Tools → User Params / Tile Params
+- **Context Menu**: Right-click → Params → User Params / Tile Params
+- **Shortcuts**: Ctrl+P / Ctrl+Shift+P
 
 ## Keyboard Shortcuts
 
@@ -143,6 +213,8 @@ Auto-dismiss after configurable duration, click to close.
 | `Ctrl+Enter` | Run selected targets |
 | `Ctrl+U` | Trace upstream dependencies |
 | `Ctrl+D` | Trace downstream dependencies |
+| `Ctrl+P` | Open user.params editor |
+| `Ctrl+Shift+P` | View tile.params |
 
 ## Core Classes
 
@@ -156,13 +228,18 @@ Auto-dismiss after configurable duration, click to close.
 | `StatusBar` | Bottom status bar with statistics |
 | `BorderItemDelegate` | Custom delegate for row borders and bold text on hover/selection |
 | `DependencyGraphDialog` | Interactive dependency graph viewer |
+| `ParamsEditorDialog` | Dialog for editing user.params and viewing tile.params |
+| `ParamsTableModel` | High-performance table model for params data with virtualization |
 | `InteractiveNodeItem` | Clickable node for graph |
 | `TreeViewEventFilter` | Event filter for expand/collapse handling |
 | `ColorTreeView` | Custom tree view with colored backgrounds |
-| `BoundedComboBox` | ComboBox with search functionality |
+| `BoundedComboBox` | ComboBox with search functionality and bounded popup |
+| `FilterHeaderView` | Custom header with embedded filter input for target column search |
+| `TuneComboBoxDelegate` | ComboBox delegate for tune column dropdown |
 | `SelectTuneDialog` | Dialog for selecting a tune file |
 | `CopyTuneDialog` | Dialog for selecting runs to copy tune to |
 | `CopyTuneSelectDialog` | Combined dialog for tune copy operations |
+| `ClickableLabel` | QLabel that emits doubleClicked signal |
 
 ## Data Sources
 
@@ -233,6 +310,22 @@ SHORTCUTS = {
 | Tune | 150px (fixed) |
 | Start Time | 140px (based on time format) |
 | End Time | 140px (based on time format) |
+| Queue | 80px (auto-resize) |
+| Cores | 60px (auto-resize) |
+| Memory | 80px (auto-resize) |
+
+### Tree View Columns
+
+The tree view displays the following columns:
+- **Level**: Task level in the dependency hierarchy
+- **Target**: Task name
+- **Status**: Current task status (with color coding)
+- **Tune**: Available tune file suffixes (double-click to open dropdown)
+- **Start Time**: Task start timestamp
+- **End Time**: Task end timestamp
+- **Queue**: BSUB queue name (double-click to edit)
+- **Cores**: Number of CPU cores (double-click to edit)
+- **Memory**: Memory allocation in MB (double-click to edit)
 
 ### Pre-compiled Regex Patterns
 - `RE_LEVEL_LINE`: Parse level definitions
@@ -240,6 +333,7 @@ SHORTCUTS = {
 - `RE_TARGET_LEVEL`: Parse target level assignments
 - `RE_DEPENDENCY_OUT`: Parse output dependencies
 - `RE_ALL_RELATED`: Parse related targets
+- `RE_PARAM_LINE`: Parse parameter file lines (VAR = value)
 
 ## Performance Optimizations
 
@@ -264,6 +358,44 @@ python reproduce_ui.py
 - gvim (optional, for opening tune files)
 
 ## Changelog
+
+### v2.2.0 - Feature Enhancements
+
+#### New Features
+- **BSUB Parameter Columns**: Added Queue, Cores, Memory columns to tree view
+  - Double-click to edit bsub parameters in csh files
+  - Validation for numeric inputs
+- **Status Overview**: New `Status → Show All Status` menu for viewing all runs at a glance
+  - Shows run directory, latest target, status, and timestamp
+  - Double-click to copy run name
+- **Embedded Search Filter**: Double-click Target column header to show inline search
+  - Real-time filtering with flat result display
+- **Tune Column Dropdown**: Double-click Tune column to show dropdown menu
+  - Direct access to open tune files
+- **Copy Run Path**: Context menu action to copy current run path (single target)
+- **Gen Params Button**: User Params Editor now includes "Gen Params" button
+  - Executes `XMeta_gen_params` command
+  - Prompts to save if params modified
+- **Tab Label Double-Click**: Double-click tab label to toggle expand/collapse all
+- **Params Table Performance**: New `ParamsTableModel` using `QAbstractTableModel`
+  - Virtualized rendering for large params files
+  - Debounced search (200ms delay)
+
+#### Improvements
+- Tune file path corrected to `{run_dir}/tune/{target}/{target}.{suffix}.tcl`
+- Copy Tune dialog now supports selecting multiple tune files
+- Improved params editor with better context menu
+
+### v2.1.0 - Params Editor Feature
+
+#### New Features
+- **Params Editor**: Edit user.params and view tile.params
+  - Add, edit, delete parameters
+  - Search/filter functionality
+  - Auto-backup on save
+  - Read-only mode for tile.params
+- **Tools Menu**: New menu for parameter file access
+- **Context Menu**: Params submenu in right-click menu
 
 ### v2.0.0 - UI Enhancement Release
 

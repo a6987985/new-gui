@@ -28,6 +28,8 @@ RE_TARGET_LEVEL = re.compile(r'set\s*(TARGET_LEVEL_\w+)\s*=\s*(.*)')
 RE_QUOTED_STRING = re.compile(r"^['\"](.*)['\"]\s*$")
 RE_DEPENDENCY_OUT = re.compile(r'set\s+DEPENDENCY_OUT_(\w+)\s*=\s*"([^"]*)"')
 RE_ALL_RELATED = re.compile(r'set\s+ALL_RELATED_(\w+)\s*=\s*"([^"]*)"')
+# Parameter file parsing: VARA = 111 or VARA = "value"
+RE_PARAM_LINE = re.compile(r'^\s*(\w+)\s*=\s*(.+?)\s*$')
 
 # ========== Status Configuration Constant ==========
 # Extended configuration with icons and animation settings
@@ -48,22 +50,22 @@ STATUS_COLORS = {k: v["color"] for k, v in STATUS_CONFIG.items()}
 THEMES = {
     "light": {
         "name": "Light",
-        "window_bg": "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e0f7fa, stop:1 #80deea)",
-        "panel_bg": "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #a8e6cf, stop:1 #56ab2f)",
-        "tree_bg": "rgba(255, 255, 255, 0.9)",
+        "window_bg": "#f5f5f5",
+        "panel_bg": "#f8f9fa",
+        "tree_bg": "rgba(255, 255, 255, 0.95)",
         "text_color": "#333333",
-        "accent_color": "#4A90D9",
-        "border_color": "#cccccc",
-        "hover_bg": "rgba(230, 240, 255, 0.6)",
-        "selection_bg": "#C0C0BE",
+        "accent_color": "#1976d2",
+        "border_color": "#e0e0e0",
+        "hover_bg": "#e3f2fd",
+        "selection_bg": "#bbdefb",
         "menu_bg": "#ffffff",
-        "menu_hover": "#e6f7ff",
-        "status_bar_bg": "#f5f5f5"
+        "menu_hover": "#e3f2fd",
+        "status_bar_bg": "#ffffff"
     },
     "dark": {
         "name": "Dark",
-        "window_bg": "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1a1a2e, stop:1 #16213e)",
-        "panel_bg": "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2d3436, stop:1 #636e72)",
+        "window_bg": "#1a1a2e",
+        "panel_bg": "#2d3436",
         "tree_bg": "rgba(30, 30, 40, 0.95)",
         "text_color": "#e0e0e0",
         "accent_color": "#64b5f6",
@@ -101,7 +103,9 @@ SHORTCUTS = {
     "copy_target": {"key": "Ctrl+C", "description": "Copy selected target name"},
     "run_selected": {"key": "Ctrl+Enter", "description": "Run selected targets"},
     "trace_up": {"key": "Ctrl+U", "description": "Trace upstream dependencies"},
-    "trace_down": {"key": "Ctrl+D", "description": "Trace downstream dependencies"}
+    "trace_down": {"key": "Ctrl+D", "description": "Trace downstream dependencies"},
+    "user_params": {"key": "Ctrl+P", "description": "Open user.params editor"},
+    "tile_params": {"key": "Ctrl+Shift+P", "description": "View tile.params"}
 }
 
 # ========== Notification Types ==========
@@ -114,7 +118,8 @@ NOTIFICATION_TYPES = {
 
 from PyQt5.QtCore import (QPropertyAnimation, QEasingCurve, Qt, QTimer, QObject,
                           QEvent, QModelIndex, QRect, pyqtSignal, QItemSelectionModel,
-                          QPointF, QLineF, QFileSystemWatcher, QSize, QPoint)
+                          QPointF, QLineF, QFileSystemWatcher, QSize, QPoint,
+                          QAbstractTableModel, QSortFilterProxyModel)
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QLabel, QComboBox, QPushButton, QCompleter,
                              QTreeView, QLineEdit, QHeaderView,
@@ -125,12 +130,124 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QGraphicsEllipseItem, QGraphicsTextItem, QGraphicsLineItem,
                              QGraphicsPolygonItem, QFileDialog, QCheckBox, QScrollArea,
                              QGroupBox, QMessageBox, QFrame, QShortcut, QShortcut,
-                             QGraphicsRectItem, QGraphicsItem)
+                             QGraphicsRectItem, QGraphicsItem, QTableWidget, QTableWidgetItem,
+                             QTableView, QItemDelegate, QInputDialog, QProxyStyle)
 from PyQt5.QtGui import (QStandardItemModel, QStandardItem, QColor, QBrush, QFont,
                          QFontMetrics, QPen, QPainter, QPolygonF,
-                         QKeySequence)
+                         QKeySequence, QIcon, QPixmap, QPainterPath)
 import math
 
+
+class FilterHeaderView(QHeaderView):
+    """Custom header with embedded filter input for target column"""
+
+    filter_changed = pyqtSignal(str)
+
+    def __init__(self, orientation, parent=None, filter_column=1):
+        super().__init__(orientation, parent)
+        self.filter_column = filter_column
+        self.filter_edit = None
+        self._filter_visible = False
+        self._filter_text = ""
+        self.setSectionsClickable(True)
+        self.sectionDoubleClicked.connect(self._on_double_click)
+
+    def _on_double_click(self, logical_index):
+        if logical_index == self.filter_column:
+            self._toggle_filter()
+
+    def _toggle_filter(self):
+        if self._filter_visible:
+            self._hide_filter()
+        else:
+            self._show_filter()
+
+    def _show_filter(self):
+        if self._filter_visible:
+            return
+
+        # Create QLineEdit overlay at target column position
+        self.filter_edit = QLineEdit(self)
+        self.filter_edit.setStyleSheet("""
+            QLineEdit {
+                background-color: #ffffff;
+                border: 2px solid #1976d2;
+                border-radius: 4px;
+                padding: 2px 6px;
+                color: #333333;
+                font-size: 12px;
+            }
+            QLineEdit:focus {
+                border: 2px solid #1976d2;
+            }
+        """)
+        self.filter_edit.setPlaceholderText("Search targets...")
+        self.filter_edit.setText(self._filter_text)
+
+        # Position the filter at the target column header
+        header_pos = self.sectionViewportPosition(self.filter_column)
+        header_width = self.sectionSize(self.filter_column)
+        header_height = self.height()
+
+        # Account for header offset (first column might be hidden or offset)
+        offset = self.offset()
+        self.filter_edit.setGeometry(int(header_pos - offset), 0, header_width, header_height)
+
+        self.filter_edit.show()
+        self.filter_edit.setFocus()
+        self.filter_edit.selectAll()
+
+        # Connect signals
+        self.filter_edit.textChanged.connect(self._on_filter_changed)
+        self.filter_edit.installEventFilter(self)
+
+        self._filter_visible = True
+
+    def _hide_filter(self):
+        if self.filter_edit:
+            self._filter_text = self.filter_edit.text()
+            self.filter_edit.deleteLater()
+            self.filter_edit = None
+        self._filter_visible = False
+
+    def _on_filter_changed(self, text):
+        self._filter_text = text
+        self.filter_changed.emit(text)
+
+    def eventFilter(self, obj, event):
+        if obj == self.filter_edit:
+            if event.type() == QEvent.KeyPress:
+                if event.key() == Qt.Key_Escape:
+                    self._hide_filter()
+                    return True
+                elif event.key() == Qt.Key_Enter or event.key() == Qt.Key_Return:
+                    self._hide_filter()
+                    return True
+                elif event.key() == Qt.Key_Tab:
+                    self._hide_filter()
+                    return True
+            elif event.type() == QEvent.FocusOut:
+                # Hide filter when focus is lost
+                if self.filter_edit and not self.filter_edit.hasFocus():
+                    self._hide_filter()
+                    return True
+        return super().eventFilter(obj, event)
+
+    def get_filter_text(self):
+        return self._filter_text
+
+    def set_filter_text(self, text):
+        self._filter_text = text
+        if self.filter_edit:
+            self.filter_edit.setText(text)
+
+    def show_filter(self):
+        """Public method to show filter"""
+        self._show_filter()
+
+    def hide_filter(self):
+        """Public method to hide filter"""
+        self._hide_filter()
 
 
 class BorderItemDelegate(QStyledItemDelegate):
@@ -246,23 +363,33 @@ class TuneComboBoxDelegate(QStyledItemDelegate):
         combo = QComboBox(parent)
         combo.setStyleSheet("""
             QComboBox {
-                border: 1px solid #ccc;
-                border-radius: 3px;
+                border: 1px solid #545F71;
+                border-radius: 4px;
                 padding: 2px 5px;
-                background: white;
+                padding-right: 20px;
+                background: #ffffff;
+                color: #545F71;
             }
             QComboBox:hover {
-                border: 1px solid #4A90D9;
+                border: 1px solid #545F71;
+                background: #f5f5f5;
             }
             QComboBox::drop-down {
                 border: none;
-                width: 20px;
+                width: 18px;
+                subcontrol-origin: padding;
+                subcontrol-position: right center;
             }
-            QComboBox::down-arrow {
-                width: 12px;
-                height: 12px;
+            QComboBox QAbstractItemView {
+                color: #545F71;
+                background-color: #ffffff;
+                border: 1px solid #545F71;
+                selection-background-color: #EEF1F4;
+                selection-color: #545F71;
             }
         """)
+        combo.setAutoFillBackground(True)
+        return combo
         combo.setAutoFillBackground(True)
         return combo
 
@@ -489,7 +616,7 @@ class ColorTreeView(QTreeView):
         painter.restore()
 
 class BoundedComboBox(QComboBox):
-    """Custom ComboBox with on-demand search mode"""
+    """Custom ComboBox with on-demand search mode and custom dropdown arrow"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setEditable(False) # Default to non-editable
@@ -985,24 +1112,25 @@ class StatusBar(QFrame):
 
     def _setup_ui(self):
         """Setup the status bar UI"""
-        self.setFixedHeight(28)
+        self.setFixedHeight(32)
         self.setStyleSheet("""
             StatusBar {
-                background-color: #f5f5f5;
+                background-color: #ffffff;
                 border-top: 1px solid #e0e0e0;
             }
             QLabel {
                 color: #666666;
-                font-size: 11px;
+                font-size: 12px;
             }
         """)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 0, 10, 0)
-        layout.setSpacing(20)
+        layout.setContentsMargins(16, 0, 16, 0)
+        layout.setSpacing(16)
 
         # Left side - Run info
         self._run_label = QLabel("Run: -")
+        self._run_label.setStyleSheet("color: #1976d2; font-weight: 500;")
         layout.addWidget(self._run_label)
 
         # Separator
@@ -1023,7 +1151,7 @@ class StatusBar(QFrame):
 
         # Right side - Connection status
         self._connection_label = QLabel("● Connected")
-        self._connection_label.setStyleSheet("color: #28a745;")
+        self._connection_label.setStyleSheet("color: #4caf50; font-weight: 500;")
         layout.addWidget(self._connection_label)
 
         # Theme indicator
@@ -1035,7 +1163,7 @@ class StatusBar(QFrame):
         """Create a vertical separator"""
         sep = QFrame()
         sep.setFrameShape(QFrame.VLine)
-        sep.setStyleSheet("color: #cccccc;")
+        sep.setStyleSheet("color: #e0e0e0;")
         return sep
 
     def update_run(self, run_name):
@@ -1070,7 +1198,7 @@ class StatusBar(QFrame):
             self._connection_label.setStyleSheet("color: #28a745;")
         else:
             self._connection_label.setText("○ Disconnected")
-            self._connection_label.setStyleSheet("color: #dc3545;")
+            self._connection_label.setStyleSheet("color: #ef5350;")
 
     def update_theme(self, theme_name):
         """Update theme indicator"""
@@ -1089,9 +1217,574 @@ class StatusBar(QFrame):
             }}
             QLabel {{
                 color: {theme['text_color']};
-                font-size: 11px;
+                font-size: 12px;
             }}
         """)
+
+
+# ========== Params Table Model (Optimized for large datasets) ==========
+class ParamsTableModel(QAbstractTableModel):
+    """High-performance table model for params data using virtualization"""
+
+    def __init__(self, params_data=None, parent=None):
+        super().__init__(parent)
+        self._data = []  # List of (param_name, value) tuples
+        self._filtered_data = []  # Filtered view
+        self._filter_text = ""
+        if params_data:
+            self.set_data(params_data)
+
+    def set_data(self, params_data):
+        """Set data from dict and sort"""
+        self.beginResetModel()
+        self._data = sorted(params_data.items())
+        self._apply_filter()
+        self.endResetModel()
+
+    def set_filter(self, filter_text):
+        """Apply filter to data"""
+        self.beginResetModel()
+        self._filter_text = filter_text.lower()
+        self._apply_filter()
+        self.endResetModel()
+
+    def _apply_filter(self):
+        """Apply current filter to data"""
+        if not self._filter_text:
+            self._filtered_data = self._data[:]
+        else:
+            self._filtered_data = [
+                (name, value) for name, value in self._data
+                if self._filter_text in name.lower()
+            ]
+
+    def rowCount(self, parent=QModelIndex()):
+        if parent.isValid():
+            return 0
+        return len(self._filtered_data)
+
+    def columnCount(self, parent=QModelIndex()):
+        return 2  # Parameter, Value
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid() or index.row() >= len(self._filtered_data):
+            return None
+
+        param_name, value = self._filtered_data[index.row()]
+
+        if role == Qt.DisplayRole or role == Qt.EditRole:
+            if index.column() == 0:
+                return param_name
+            elif index.column() == 1:
+                return str(value)
+
+        return None
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+            return ["Parameter", "Value"][section]
+        return None
+
+    def get_param(self, row):
+        """Get param name and value at row"""
+        if 0 <= row < len(self._filtered_data):
+            return self._filtered_data[row]
+        return None, None
+
+    def total_count(self):
+        """Get total (unfiltered) count"""
+        return len(self._data)
+
+    def filtered_count(self):
+        """Get filtered count"""
+        return len(self._filtered_data)
+
+
+# ========== Params Editor Dialog (Optimized) ==========
+class ParamsEditorDialog(QDialog):
+    """Dialog for editing user.params and viewing tile.params - optimized for large files"""
+
+    def __init__(self, params_file, params_type="user", parent=None):
+        """
+        Args:
+            params_file: Path to the params file
+            params_type: "user" for editable, "tile" for read-only
+            parent: Parent widget
+        """
+        super().__init__(parent)
+        self.params_file = params_file
+        self.params_type = params_type
+        self.is_readonly = (params_type == "tile")
+        self.params_data = {}  # {param_name: value}
+        self.modified = False
+        self._search_debounce_timer = QTimer()
+        self._search_debounce_timer.setSingleShot(True)
+        self._search_debounce_timer.timeout.connect(self._do_filter)
+
+        # Extract run directory from params file path
+        self.run_dir = os.path.dirname(params_file)
+
+        self._setup_ui()
+        self._load_params()
+
+    def _setup_ui(self):
+        """Setup the dialog UI"""
+        title = f"{'📝' if self.params_type == 'user' else '📋'} {self.params_type.title()} Params Editor"
+        if self.is_readonly:
+            title += " (Read Only)"
+        self.setWindowTitle(title)
+        self.resize(800, 600)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+
+        # Header with file path
+        header_layout = QHBoxLayout()
+        file_label = QLabel(f"File: {self.params_file}")
+        file_label.setStyleSheet("color: #666; font-size: 11px;")
+        file_label.setWordWrap(True)
+        header_layout.addWidget(file_label)
+        header_layout.addStretch()
+
+        # Search and buttons
+        search_layout = QHBoxLayout()
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("🔍 Search parameters... (type and wait)")
+        self.search_input.textChanged.connect(self._debounced_filter)
+        search_layout.addWidget(self.search_input)
+
+        # Clear search button
+        clear_btn = QPushButton("✕")
+        clear_btn.setFixedSize(28, 28)
+        clear_btn.setToolTip("Clear search")
+        clear_btn.clicked.connect(self._clear_search)
+        search_layout.addWidget(clear_btn)
+
+        if not self.is_readonly:
+            add_btn = QPushButton("➕ Add")
+            add_btn.setFixedWidth(80)
+            add_btn.clicked.connect(self._add_param)
+            search_layout.addWidget(add_btn)
+
+        layout.addLayout(header_layout)
+        layout.addLayout(search_layout)
+
+        # Params table - use QTableView with custom model for performance
+        self.table = QTableView()
+        self._model = ParamsTableModel()
+        self.table.setModel(self._model)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setSortingEnabled(False)  # Disable for better performance
+        self.table.verticalHeader().setVisible(False)
+
+        # Double-click to edit/copy
+        self.table.doubleClicked.connect(self._on_double_click)
+
+        # Context menu
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_context_menu)
+
+        layout.addWidget(self.table)
+
+        # Edit panel (only for user params)
+        if not self.is_readonly:
+            edit_group = QGroupBox("Edit Parameter")
+            edit_layout = QHBoxLayout(edit_group)
+
+            edit_layout.addWidget(QLabel("Parameter:"))
+            self.param_input = QLineEdit()
+            self.param_input.setPlaceholderText("PARAM_NAME")
+            self.param_input.setFixedWidth(200)
+            edit_layout.addWidget(self.param_input)
+
+            edit_layout.addWidget(QLabel("Value:"))
+            self.value_input = QLineEdit()
+            self.value_input.setPlaceholderText("value")
+            edit_layout.addWidget(self.value_input)
+
+            update_btn = QPushButton("Update")
+            update_btn.clicked.connect(self._update_param)
+            edit_layout.addWidget(update_btn)
+
+            delete_btn = QPushButton("Delete")
+            delete_btn.clicked.connect(self._delete_selected)
+            edit_layout.addWidget(delete_btn)
+
+            layout.addWidget(edit_group)
+
+        # Status bar
+        self.status_label = QLabel("Ready")
+        self.status_label.setStyleSheet("color: #666; font-size: 11px;")
+        layout.addWidget(self.status_label)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+
+        if not self.is_readonly:
+            save_btn = QPushButton("Save")
+            save_btn.clicked.connect(self._save_params)
+            button_layout.addWidget(save_btn)
+
+            gen_btn = QPushButton("Gen Params")
+            gen_btn.setToolTip("Generate params to flow (XMeta_gen_params)")
+            gen_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #4A90D9;
+                    color: white;
+                }
+                QPushButton:hover {
+                    background-color: #357ABD;
+                }
+            """)
+            gen_btn.clicked.connect(self._gen_params)
+            button_layout.addWidget(gen_btn)
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.close)
+        button_layout.addWidget(close_btn)
+
+        layout.addLayout(button_layout)
+
+        # Apply styling
+        self.setStyleSheet("""
+            QDialog {
+                background-color: white;
+            }
+            QTableView {
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                gridline-color: #e0e0e0;
+            }
+            QTableView::item {
+                padding: 4px;
+            }
+            QTableView::item:selected {
+                background-color: #e6f7ff;
+            }
+            QTableView::item:hover {
+                background-color: #f5f5f5;
+            }
+            QLineEdit {
+                padding: 5px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #4A90D9;
+            }
+            QPushButton {
+                padding: 6px 16px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                background-color: #f5f5f5;
+            }
+            QPushButton:hover {
+                background-color: #e6f7ff;
+                border: 1px solid #4A90D9;
+            }
+            QPushButton:pressed {
+                background-color: #cce5ff;
+            }
+            QGroupBox {
+                font-weight: bold;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+        """)
+
+    def _debounced_filter(self, text):
+        """Debounce search to avoid lag while typing"""
+        self._search_debounce_timer.start(200)  # 200ms delay
+
+    def _do_filter(self):
+        """Actually perform the filter"""
+        filter_text = self.search_input.text()
+        if isinstance(self._model, ParamsTableModel):
+            self._model.set_filter(filter_text)
+            count = self._model.filtered_count()
+            total = self._model.total_count()
+            if filter_text:
+                self.status_label.setText(f"Showing {count} of {total} parameters")
+            else:
+                self.status_label.setText(f"Loaded {total} parameters")
+
+    def _clear_search(self):
+        """Clear search input"""
+        self.search_input.clear()
+        self.search_input.setFocus()
+
+    def _load_params(self):
+        """Load parameters from file"""
+        self.params_data = {}
+
+        if not os.path.exists(self.params_file):
+            self.status_label.setText(f"File not found: {self.params_file}")
+            return
+
+        try:
+            with open(self.params_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    match = RE_PARAM_LINE.match(line)
+                    if match:
+                        param_name = match.group(1)
+                        value = match.group(2).strip()
+                        # Remove quotes if present
+                        if (value.startswith('"') and value.endswith('"')) or \
+                           (value.startswith("'") and value.endswith("'")):
+                            value = value[1:-1]
+                        self.params_data[param_name] = value
+
+            # Set data to model
+            self._model.set_data(self.params_data)
+            self.status_label.setText(f"Loaded {len(self.params_data)} parameters")
+        except Exception as e:
+            self.status_label.setText(f"Error loading file: {e}")
+            logger.error(f"Error loading params file: {e}")
+
+    def _on_double_click(self, index):
+        """Handle double-click on row"""
+        param_name, value = self._model.get_param(index.row())
+        if param_name:
+            if self.is_readonly:
+                # Copy to clipboard
+                clipboard = QApplication.clipboard()
+                clipboard.setText(f"{param_name} = {value}")
+                self.status_label.setText(f"Copied: {param_name}")
+            else:
+                # Populate edit panel
+                self.param_input.setText(param_name)
+                self.value_input.setText(str(value))
+                self.param_input.setFocus()
+
+    def _show_context_menu(self, position):
+        """Show context menu"""
+        index = self.table.indexAt(position)
+        if not index.isValid():
+            return
+
+        param_name, value = self._model.get_param(index.row())
+        if not param_name:
+            return
+
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: white;
+                border: 1px solid #ccc;
+            }
+            QMenu::item:selected {
+                background-color: #e6f7ff;
+            }
+        """)
+
+        # Copy action
+        copy_action = menu.addAction("📋 Copy to clipboard")
+        copy_action.triggered.connect(lambda: self._copy_param(param_name, value))
+
+        if not self.is_readonly:
+            menu.addSeparator()
+            edit_action = menu.addAction("✏️ Edit")
+            edit_action.triggered.connect(lambda: self._edit_param(param_name, value))
+            delete_action = menu.addAction("🗑️ Delete")
+            delete_action.triggered.connect(lambda: self._delete_param(param_name))
+
+        menu.exec_(self.table.viewport().mapToGlobal(position))
+
+    def _copy_param(self, param_name, value):
+        """Copy parameter to clipboard"""
+        clipboard = QApplication.clipboard()
+        clipboard.setText(f"{param_name} = {value}")
+        self.status_label.setText(f"Copied: {param_name}")
+
+    def _edit_param(self, param_name, current_value):
+        """Edit an existing parameter"""
+        self.param_input.setText(param_name)
+        self.value_input.setText(str(current_value))
+        self.param_input.setFocus()
+
+    def _add_param(self):
+        """Add a new parameter"""
+        param_name = self.param_input.text().strip()
+        value = self.value_input.text().strip()
+
+        if not param_name:
+            self.status_label.setText("Error: Parameter name is required")
+            return
+
+        if not re.match(r'^\w+$', param_name):
+            self.status_label.setText("Error: Parameter name must be alphanumeric")
+            return
+
+        self.params_data[param_name] = value
+        self.modified = True
+
+        # Refresh model
+        self._model.set_data(self.params_data)
+        # Re-apply current filter
+        if self.search_input.text():
+            self._model.set_filter(self.search_input.text())
+
+        self.status_label.setText(f"Added parameter: {param_name}")
+        self.param_input.clear()
+        self.value_input.clear()
+
+    def _update_param(self):
+        """Update parameter value"""
+        param_name = self.param_input.text().strip()
+        value = self.value_input.text().strip()
+
+        if not param_name:
+            self.status_label.setText("Error: Parameter name is required")
+            return
+
+        if param_name in self.params_data:
+            self.params_data[param_name] = value
+            self.modified = True
+
+            # Refresh model
+            self._model.set_data(self.params_data)
+            if self.search_input.text():
+                self._model.set_filter(self.search_input.text())
+
+            self.status_label.setText(f"Updated parameter: {param_name}")
+        else:
+            self.status_label.setText(f"Error: Parameter '{param_name}' not found. Use Add to create new.")
+
+    def _delete_param(self, param_name):
+        """Delete a parameter"""
+        if param_name in self.params_data:
+            del self.params_data[param_name]
+            self.modified = True
+
+            # Refresh model
+            self._model.set_data(self.params_data)
+            if self.search_input.text():
+                self._model.set_filter(self.search_input.text())
+
+            self.status_label.setText(f"Deleted parameter: {param_name}")
+
+    def _delete_selected(self):
+        """Delete selected parameter"""
+        index = self.table.currentIndex()
+        if not index.isValid():
+            return
+
+        param_name, _ = self._model.get_param(index.row())
+        if param_name:
+            self._delete_param(param_name)
+
+    def _save_params(self):
+        """Save parameters to file"""
+        try:
+            # Create backup
+            if os.path.exists(self.params_file):
+                backup_file = self.params_file + ".bak"
+                shutil.copy2(self.params_file, backup_file)
+
+            with open(self.params_file, 'w') as f:
+                f.write(f"# {self.params_type.title()} Parameters\n")
+                f.write(f"# Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+
+                for param_name, value in sorted(self.params_data.items()):
+                    # Quote value if it contains spaces or special chars
+                    if ' ' in value or not re.match(r'^[\w\.\-]+$', value):
+                        f.write(f'{param_name} = "{value}"\n')
+                    else:
+                        f.write(f'{param_name} = {value}\n')
+
+            self.modified = False
+            self.status_label.setText(f"Saved to: {self.params_file}")
+            logger.info(f"Saved params to: {self.params_file}")
+
+        except Exception as e:
+            self.status_label.setText(f"Error saving file: {e}")
+            logger.error(f"Error saving params file: {e}")
+
+    def _gen_params(self):
+        """Execute XMeta_gen_params to generate params to flow"""
+        # Check if modified and prompt to save
+        if self.modified:
+            reply = QMessageBox.question(
+                self, 'Save Changes',
+                'Parameters have been modified. Save changes before generating?',
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel
+            )
+
+            if reply == QMessageBox.Yes:
+                self._save_params()
+            elif reply == QMessageBox.Cancel:
+                return
+            # If No, continue with existing file
+
+        if not self.run_dir or not os.path.exists(self.run_dir):
+            self.status_label.setText(f"Error: Run directory not found: {self.run_dir}")
+            QMessageBox.warning(self, "Error", f"Run directory not found:\n{self.run_dir}")
+            return
+
+        # Log the directory for debugging
+        logger.info(f"Gen params - run_dir: {self.run_dir}")
+        logger.info(f"Gen params - params_file: {self.params_file}")
+        self.status_label.setText(f"Generating params in: {self.run_dir}")
+
+        cmd = f"cd {self.run_dir} && XMeta_gen_params"
+        logger.info(f"Executing: {cmd}")
+
+        try:
+            process = subprocess.Popen(
+                cmd,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=self.run_dir  # Explicitly set working directory
+            )
+            stdout, stderr = process.communicate(timeout=60)
+
+            if stdout:
+                logger.info(stdout.decode())
+            if stderr:
+                logger.error(stderr.decode())
+
+            if process.returncode == 0:
+                self.status_label.setText("Params generated successfully!")
+                QMessageBox.information(self, "Success", "Params generated to flow successfully!")
+            else:
+                self.status_label.setText(f"Gen params failed (exit code: {process.returncode})")
+                QMessageBox.warning(self, "Warning", f"XMeta_gen_params exited with code {process.returncode}")
+
+        except subprocess.TimeoutExpired:
+            process.kill()
+            self.status_label.setText("Error: Command timed out")
+            logger.error(f"XMeta_gen_params timed out")
+        except Exception as e:
+            self.status_label.setText(f"Error: {e}")
+            logger.error(f"Error executing XMeta_gen_params: {e}")
+
+    def closeEvent(self, event):
+        """Handle close event - prompt to save if modified"""
+        if self.modified and not self.is_readonly:
+            reply = QMessageBox.question(
+                self, 'Save Changes',
+                'Parameters have been modified. Save changes?',
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel
+            )
+
+            if reply == QMessageBox.Yes:
+                self._save_params()
+            elif reply == QMessageBox.Cancel:
+                event.ignore()
+                return
+
+        event.accept()
 
 
 class DependencyGraphDialog(QDialog):
@@ -1891,28 +2584,21 @@ class MainWindow(QMainWindow):
         else:
             self.run_base_dir = "."
         super().__init__()
-        self.setWindowTitle("Console of XMeta/develop-tile @ Meta_Sep05_1045_22091_GUI")
+        self.setWindowTitle("XMeta Console")
         self.resize(1200, 800)
         # Fade‑in animation for the window
         self.setWindowOpacity(0.0)
         self.fade_anim = QPropertyAnimation(self, b"windowOpacity")
-        self.fade_anim.setDuration(800)
+        self.fade_anim.setDuration(600)
         self.fade_anim.setStartValue(0.0)
         self.fade_anim.setEndValue(1.0)
         self.fade_anim.setEasingCurve(QEasingCurve.InOutCubic)
         self.fade_anim.start()
-        # Set background image with glass‑morphism overlay
 
-        # Apply a semi‑transparent overlay widget for glass effect
-        overlay = QWidget(self)
-        overlay.setGeometry(self.rect())
-        overlay.setStyleSheet("background-color: rgba(255,255,255,0.6); border-radius: 12px;")
-        overlay.lower()  # keep behind central widgets
-        # Apply gradient background to main window
+        # Modern clean background
         self.setStyleSheet("""
             QMainWindow {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #e0f7fa, stop:1 #80deea);
+                background-color: #f5f5f5;
             }
         """)
 
@@ -1920,26 +2606,42 @@ class MainWindow(QMainWindow):
         self.menu_bar = self.menuBar()
         self.menu_bar.setStyleSheet("""
             QMenuBar {
-                background-color: #f0f0f0;
-                border-bottom: 1px solid #cccccc;
-                padding: 2px;
+                background-color: #ffffff;
+                border-bottom: 1px solid #e0e0e0;
+                padding: 4px 8px;
+                font-size: 13px;
             }
             QMenuBar::item {
                 background-color: transparent;
-                padding: 4px 12px;
+                padding: 6px 14px;
+                border-radius: 4px;
+                color: #333333;
             }
             QMenuBar::item:selected {
-                background-color: #e0e0e0;
+                background-color: #e3f2fd;
+                color: #1976d2;
+            }
+            QMenuBar::item:pressed {
+                background-color: #bbdefb;
             }
             QMenu {
-                background-color: white;
-                border: 1px solid #cccccc;
+                background-color: #ffffff;
+                border: 1px solid #e0e0e0;
+                border-radius: 6px;
+                padding: 4px 0px;
             }
             QMenu::item {
-                padding: 6px 20px;
+                padding: 8px 24px;
+                color: #333333;
             }
             QMenu::item:selected {
-                background-color: #e6f7ff;
+                background-color: #e3f2fd;
+                color: #1976d2;
+            }
+            QMenu::separator {
+                height: 1px;
+                background: #e0e0e0;
+                margin: 4px 12px;
             }
         """)
 
@@ -1975,7 +2677,24 @@ class MainWindow(QMainWindow):
         high_contrast_action = QAction("High Contrast", self)
         high_contrast_action.triggered.connect(lambda: self.apply_theme("high_contrast"))
         theme_menu.addAction(high_contrast_action)
-        
+
+        # Tools Menu
+        tools_menu = self.menu_bar.addMenu("Tools")
+
+        # User Params Action
+        user_params_action = QAction("📝 User Params", self)
+        user_params_action.setShortcut(QKeySequence("Ctrl+P"))
+        user_params_action.setToolTip("Edit user.params for current run")
+        user_params_action.triggered.connect(self.open_user_params)
+        tools_menu.addAction(user_params_action)
+
+        # Tile Params Action
+        tile_params_action = QAction("📋 Tile Params", self)
+        tile_params_action.setShortcut(QKeySequence("Ctrl+Shift+P"))
+        tile_params_action.setToolTip("View tile.params for current run")
+        tile_params_action.triggered.connect(self.open_tile_params)
+        tools_menu.addAction(tile_params_action)
+
         # Track if we are in "All Status" view mode
         self.is_all_status_view = False
         
@@ -1991,38 +2710,24 @@ class MainWindow(QMainWindow):
         # Top Control Panel
         top_panel = QWidget()
         top_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        # Apply gradient background and rounded corners
+        # Modern clean gradient background
         top_panel.setStyleSheet("""
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 #a8e6cf, stop:1 #56ab2f);
-            border-radius: 12px;
+            QWidget {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #f8f9fa, stop:1 #e9ecef);
+                border-radius: 0px;
+            }
         """)
         # Add subtle drop shadow
         shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(20)
-        shadow.setOffset(0, 4)
-        shadow.setColor(QColor(0, 0, 0, 100))
+        shadow.setBlurRadius(8)
+        shadow.setOffset(0, 2)
+        shadow.setColor(QColor(0, 0, 0, 30))
         top_panel.setGraphicsEffect(shadow)
-        # Button hover transition (smooth)
-        btn_style = """
-            QPushButton {
-                background-color: #ffffff;
-                border: 1px solid #cccccc;
-                border-radius: 6px;
-                padding: 4px 12px;
-                font-weight: 600;
-                color: #222222;
-                transition: background-color 0.2s ease;
-            }
-            QPushButton:hover {
-                background-color: #e6f7ff;
-            }
-            QPushButton:pressed {
-                background-color: #cce5ff;
-            }
-        """
+
         top_layout = QVBoxLayout(top_panel)
-        top_layout.setContentsMargins(10, 10, 10, 10)
+        top_layout.setContentsMargins(16, 12, 16, 12)
+        top_layout.setSpacing(8)
         
         # Row 1 of Top Panel
         row1_layout = QHBoxLayout()
@@ -2036,178 +2741,233 @@ class MainWindow(QMainWindow):
         self.combo.currentIndexChanged.connect(self.on_run_changed)
         self.combo.setStyleSheet("""
             QComboBox {
-                background-color: white; 
-                border: 1px solid gray; 
-                border-radius: 2px; 
-                padding: 2px;
-                color: black;
+                background-color: #ffffff;
+                border: 1px solid #545F71;
+                border-radius: 6px;
+                padding: 6px 12px;
+                padding-right: 32px;
+                color: #545F71;
+                font-size: 13px;
+                min-width: 200px;
+            }
+            QComboBox:hover {
+                border: 1px solid #545F71;
+                background-color: #f5f5f5;
+            }
+            QComboBox:focus {
+                border: 2px solid #545F71;
+            }
+            QComboBox:disabled {
+                background-color: #EEF1F4;
+                border: 1px solid #9BA5B7;
+                color: #9BA5B7;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 24px;
+                subcontrol-origin: padding;
+                subcontrol-position: right center;
             }
             QComboBox QAbstractItemView {
-                color: black;
-                background-color: white;
+                color: #545F71;
+                background-color: #ffffff;
+                border: 1px solid #545F71;
+                border-radius: 6px;
+                selection-background-color: #EEF1F4;
+                selection-color: #545F71;
+                padding: 4px;
             }
         """)
-        
-        # Filter
-        filter_label = QLabel("Filter:")
-        filter_label.setFont(QFont("Arial", 10, QFont.Bold))
-        filter_label.setStyleSheet("color: black;")
-        self.filter_input = QLineEdit()
-        self.filter_input.setStyleSheet("background-color: white; border: 1px solid gray; border-radius: 2px; color: black;")
-        self.filter_input.setFixedWidth(150)
-        self.filter_input.textChanged.connect(self.filter_tree)
-        
-        
-        # Buttons Group 1
+
+        # Buttons - Modern clean style
         btn_style = """
             QPushButton {
                 background-color: #ffffff;
-                border: 1px solid #cccccc;
+                border: 1px solid #d0d0d0;
                 border-radius: 6px;
-                padding: 4px 12px;
-                font-weight: 600;
-                color: #222222;
+                padding: 6px 14px;
+                font-weight: 500;
+                font-size: 12px;
+                color: #333333;
             }
             QPushButton:hover {
-                background-color: #f0f0f0;
+                background-color: #f5f5f5;
+                border: 1px solid #1976d2;
+                color: #1976d2;
             }
             QPushButton:pressed {
-                background-color: #e0e0e0;
+                background-color: #e3f2fd;
+                border: 1px solid #1976d2;
             }
         """
-        
+
+        # Action button style (for primary actions like run)
+        action_btn_style = """
+            QPushButton {
+                background-color: #1976d2;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-weight: 500;
+                font-size: 12px;
+                color: #ffffff;
+            }
+            QPushButton:hover {
+                background-color: #1565c0;
+            }
+            QPushButton:pressed {
+                background-color: #0d47a1;
+            }
+        """
+
+        # Warning button style (for stop, skip, invalid)
+        warning_btn_style = """
+            QPushButton {
+                background-color: #ffffff;
+                border: 1px solid #ffcdd2;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-weight: 500;
+                font-size: 12px;
+                color: #c62828;
+            }
+            QPushButton:hover {
+                background-color: #ffebee;
+                border: 1px solid #ef5350;
+            }
+            QPushButton:pressed {
+                background-color: #ffcdd2;
+            }
+        """
+
         self.buttons_row1 = ["run all", "run", "stop", "skip", "unskip", "invalid"]
         self.buttons_row2 = ["term", "csh", "log", "cmd", "trace up", "trace dn"]
-        
+
         row1_layout.addWidget(self.combo)
         row1_layout.addStretch()
-        row1_layout.addWidget(filter_label)
-        row1_layout.addWidget(self.filter_input)
-        row1_layout.addSpacing(20)
-        
+        row1_layout.addSpacing(24)
+
         # Create buttons and connect to commands
-        bt_runall = QPushButton("run all")
-        bt_runall.setStyleSheet(btn_style)
+        bt_runall = QPushButton("Run All")
+        bt_runall.setStyleSheet(action_btn_style)
         bt_runall.clicked.connect(lambda: self.start('XMeta_run all'))
         row1_layout.addWidget(bt_runall)
-        
-        bt_run = QPushButton("run")
-        bt_run.setStyleSheet(btn_style)
+
+        bt_run = QPushButton("Run")
+        bt_run.setStyleSheet(action_btn_style)
         bt_run.clicked.connect(lambda: self.start('XMeta_run'))
         row1_layout.addWidget(bt_run)
-        
-        bt_stop = QPushButton("stop")
-        bt_stop.setStyleSheet(btn_style)
+
+        bt_stop = QPushButton("Stop")
+        bt_stop.setStyleSheet(warning_btn_style)
         bt_stop.clicked.connect(lambda: self.start('XMeta_stop'))
         row1_layout.addWidget(bt_stop)
-        
-        bt_skip = QPushButton("skip")
-        bt_skip.setStyleSheet(btn_style)
+
+        bt_skip = QPushButton("Skip")
+        bt_skip.setStyleSheet(warning_btn_style)
         bt_skip.clicked.connect(lambda: self.start('XMeta_skip'))
         row1_layout.addWidget(bt_skip)
-        
-        bt_unskip = QPushButton("unskip")
+
+        bt_unskip = QPushButton("Unskip")
         bt_unskip.setStyleSheet(btn_style)
         bt_unskip.clicked.connect(lambda: self.start('XMeta_unskip'))
         row1_layout.addWidget(bt_unskip)
-        
-        bt_invalid = QPushButton("invalid")
-        bt_invalid.setStyleSheet(btn_style)
+
+        bt_invalid = QPushButton("Invalid")
+        bt_invalid.setStyleSheet(warning_btn_style)
         bt_invalid.clicked.connect(lambda: self.start('XMeta_invalid'))
         row1_layout.addWidget(bt_invalid)
-            
+
         top_layout.addLayout(row1_layout)
-        
+
         # Row 2 of Top Panel (Button handlers for files and trace)
         row2_layout = QHBoxLayout()
         row2_layout.addStretch()
-        
-        bt_term = QPushButton("term")
+
+        bt_term = QPushButton("Terminal")
         bt_term.setStyleSheet(btn_style)
         bt_term.clicked.connect(self.Xterm)
         row2_layout.addWidget(bt_term)
-        
-        bt_csh = QPushButton("csh")
+
+        bt_csh = QPushButton("CSH")
         bt_csh.setStyleSheet(btn_style)
         bt_csh.clicked.connect(self.handle_csh)
         row2_layout.addWidget(bt_csh)
-        
-        bt_log = QPushButton("log")
+
+        bt_log = QPushButton("Log")
         bt_log.setStyleSheet(btn_style)
         bt_log.clicked.connect(self.handle_log)
         row2_layout.addWidget(bt_log)
-        
-        bt_cmd = QPushButton("cmd")
+
+        bt_cmd = QPushButton("CMD")
         bt_cmd.setStyleSheet(btn_style)
         bt_cmd.clicked.connect(self.handle_cmd)
         row2_layout.addWidget(bt_cmd)
-        
-        bt_trace_up = QPushButton("trace up")
+
+        bt_trace_up = QPushButton("Trace Up")
         bt_trace_up.setStyleSheet(btn_style)
         bt_trace_up.clicked.connect(lambda: self.retrace_tab('in'))
         row2_layout.addWidget(bt_trace_up)
-        
-        bt_trace_dn = QPushButton("trace dn")
+
+        bt_trace_dn = QPushButton("Trace Down")
         bt_trace_dn.setStyleSheet(btn_style)
         bt_trace_dn.clicked.connect(lambda: self.retrace_tab('out'))
         row2_layout.addWidget(bt_trace_dn)
-        
-        
+
+
         top_layout.addLayout(row2_layout)
         main_layout.addWidget(top_panel)
 
-        # Tab Bar (Mocking the tab look)
+        # Tab Bar (Modern clean look)
         self.tab_bar = QWidget()
         self.tab_bar.setStyleSheet("""
-            background-color: #f9f9f9;
-            border-bottom: 1px solid #dddddd;
-            border-radius: 0 0 8px 8px;
+            background-color: #f5f5f5;
+            border-bottom: 1px solid #e0e0e0;
         """)
         tab_layout = QHBoxLayout(self.tab_bar)
-        tab_layout.setContentsMargins(5, 5, 5, 0)
+        tab_layout.setContentsMargins(12, 6, 12, 6)
         tab_layout.setSpacing(2)
-        
+
         # Custom Tab Widget (Container for label + close button)
         self.tab_widget = QWidget()
         self.tab_widget.setStyleSheet("""
             QWidget {
-                background-color: white;
-                border: 1px solid #ccc;
+                background-color: #ffffff;
+                border: 1px solid #e0e0e0;
                 border-bottom: none;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
             }
         """)
         tab_inner_layout = QHBoxLayout(self.tab_widget)
-        tab_inner_layout.setContentsMargins(12, 6, 8, 6)
+        tab_inner_layout.setContentsMargins(14, 8, 10, 8)
         tab_inner_layout.setSpacing(8)
-        
+
         self.tab_label = ClickableLabel("") # Initial empty, will be set by update_ui_from_selection
         self.tab_label.doubleClicked.connect(self.toggle_tree_expansion)
         self.tab_label.setToolTip("Double-click to Expand/Collapse All")
-        self.tab_label.setStyleSheet("border: none; font-weight: bold; color: #333; font-size: 13px;")
-        
+        self.tab_label.setStyleSheet("border: none; font-weight: 600; color: #1976d2; font-size: 13px; background: transparent;")
+
         close_btn = QPushButton("×")
-        close_btn.setFixedSize(18, 18)
+        close_btn.setFixedSize(20, 20)
         close_btn.setCursor(Qt.PointingHandCursor)
         close_btn.setToolTip("Close Tab")
         close_btn.clicked.connect(self.close_tree_view)
         close_btn.setStyleSheet("""
             QPushButton {
                 border: none;
-                border-radius: 9px;
-                color: #888;
+                border-radius: 10px;
+                color: #999999;
                 font-weight: bold;
                 background: transparent;
-                font-size: 14px;
-                padding-bottom: 2px;
+                font-size: 16px;
             }
             QPushButton:hover {
-                background-color: #ff4d4d;
+                background-color: #ef5350;
                 color: white;
             }
         """)
-        
+
         tab_inner_layout.addWidget(self.tab_label)
         tab_inner_layout.addWidget(close_btn)
         
@@ -2217,7 +2977,12 @@ class MainWindow(QMainWindow):
 
         # Tree View
         self.tree = ColorTreeView()
-        
+
+        # Set custom header with embedded filter for target column
+        self.header = FilterHeaderView(Qt.Horizontal, self.tree, filter_column=1)
+        self.tree.setHeader(self.header)
+        self.header.filter_changed.connect(self.filter_tree)
+
         # Set the custom delegate
         self.delegate = BorderItemDelegate(self.tree)
         self.tree.setItemDelegate(self.delegate)
@@ -2241,8 +3006,8 @@ class MainWindow(QMainWindow):
             }
             QTreeView::item {
                 height: 15px;
-                padding: 6px 4px; /* Consistent padding */
-                border: none;     /* No border in QSS to avoid jitter/coverage */
+                padding: 6px 4px;
+                border: none;
             }
             QTreeView:focus {
                 outline: none;
@@ -2255,16 +3020,13 @@ class MainWindow(QMainWindow):
                 color: #444444;
             }
             QTreeView::item:hover {
-                /* Background handled by delegate */
                 background: transparent;
             }
             QTreeView::item:selected {
-                /* Background handled by delegate */
                 background: transparent;
                 color: #000000 !important;
                 outline: none;
             }
-            /* Branch styling is no longer needed as delegate handles full row */
             QTreeView::branch {
                 background: transparent;
                 border: none;
@@ -2298,7 +3060,6 @@ class MainWindow(QMainWindow):
             QTreeView::branch:open:has-children {
                 border-image: none;
             }
-            /* Ensure branch selection matches item selection */
             QTreeView::branch:selected {
                 background: #C0C0BE !important;
             }
@@ -2318,10 +3079,65 @@ class MainWindow(QMainWindow):
             QTreeView::branch:hover {
                 background: rgba(230,240,255,0.6) !important;
             }
+            /* Scrollbar styling */
+            QScrollBar:vertical {
+                background: #f0f0f0;
+                width: 16px;
+                margin: 0px;
+                border-radius: 8px;
+            }
+            QScrollBar::handle:vertical {
+                background: #b0b0b0;
+                min-height: 40px;
+                border-radius: 8px;
+                margin: 2px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #909090;
+            }
+            QScrollBar::handle:vertical:pressed {
+                background: #707070;
+            }
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                height: 0px;
+                background: none;
+            }
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: none;
+            }
+            QScrollBar:horizontal {
+                background: #f0f0f0;
+                height: 16px;
+                margin: 0px;
+                border-radius: 8px;
+            }
+            QScrollBar::handle:horizontal {
+                background: #b0b0b0;
+                min-width: 40px;
+                border-radius: 8px;
+                margin: 2px;
+            }
+            QScrollBar::handle:horizontal:hover {
+                background: #909090;
+            }
+            QScrollBar::handle:horizontal:pressed {
+                background: #707070;
+            }
+            QScrollBar::add-line:horizontal,
+            QScrollBar::sub-line:horizontal {
+                width: 0px;
+                background: none;
+            }
+            QScrollBar::add-page:horizontal,
+            QScrollBar::sub-page:horizontal {
+                background: none;
+            }
         """)
-        
+
         self.model = QStandardItemModel()
-        self.model.setHorizontalHeaderLabels(["level", "target", "status", "tune", "start time", "end time"])
+        self.model.setHorizontalHeaderLabels(["level", "target", "status", "tune", "start time", "end time", "queue", "cores", "memory"])
         self.tree.setModel(self.model)
         
         # Simple column width setup
@@ -2434,11 +3250,20 @@ class MainWindow(QMainWindow):
         shortcut_trace_down.activated.connect(lambda: self.retrace_tab('out'))
         shortcut_trace_down.setContext(Qt.ApplicationShortcut)
 
+        # User params
+        shortcut_user_params = QShortcut(QKeySequence(SHORTCUTS["user_params"]["key"]), self)
+        shortcut_user_params.activated.connect(self.open_user_params)
+        shortcut_user_params.setContext(Qt.ApplicationShortcut)
+
+        # Tile params
+        shortcut_tile_params = QShortcut(QKeySequence(SHORTCUTS["tile_params"]["key"]), self)
+        shortcut_tile_params.activated.connect(self.open_tile_params)
+        shortcut_tile_params.setContext(Qt.ApplicationShortcut)
+
     def _focus_search(self):
-        """Focus the search input"""
-        if hasattr(self, 'filter_input'):
-            self.filter_input.setFocus()
-            self.filter_input.selectAll()
+        """Focus the search input - shows the embedded filter in header"""
+        if hasattr(self, 'header'):
+            self.header.show_filter()
 
     def _refresh_view(self):
         """Refresh the current view"""
@@ -2466,6 +3291,16 @@ class MainWindow(QMainWindow):
         """Apply a theme to the application"""
         self.theme_manager.set_theme(theme_name)
         theme = self.theme_manager.get_theme()
+
+        # Determine scrollbar colors based on theme
+        if theme_name == "dark":
+            scrollbar_bg = "#2d2d2d"
+            scrollbar_handle = "#555555"
+            scrollbar_handle_hover = "#666666"
+        else:
+            scrollbar_bg = "#f5f5f5"
+            scrollbar_handle = "#c0c0c0"
+            scrollbar_handle_hover = "#a0a0a0"
 
         # Apply main window stylesheet
         self.setStyleSheet(f"""
@@ -2502,51 +3337,106 @@ class MainWindow(QMainWindow):
                 background-color: {theme['menu_bg']};
                 color: {theme['text_color']};
                 border-bottom: 1px solid {theme['border_color']};
-                padding: 2px;
+                padding: 4px 8px;
+                font-size: 13px;
             }}
             QMenuBar::item {{
                 background-color: transparent;
-                padding: 4px 12px;
+                padding: 6px 14px;
+                border-radius: 4px;
             }}
             QMenuBar::item:selected {{
                 background-color: {theme['menu_hover']};
+                color: #1976d2;
             }}
             QMenu {{
                 background-color: {theme['menu_bg']};
                 color: {theme['text_color']};
                 border: 1px solid {theme['border_color']};
+                border-radius: 6px;
+                padding: 4px 0px;
             }}
             QMenu::item {{
-                padding: 6px 20px;
+                padding: 8px 24px;
             }}
             QMenu::item:selected {{
                 background-color: {theme['menu_hover']};
+                color: #1976d2;
             }}
             QComboBox {{
                 background-color: {theme['menu_bg']};
                 color: {theme['text_color']};
                 border: 1px solid {theme['border_color']};
-                border-radius: 2px;
-                padding: 2px;
+                border-radius: 6px;
+                padding: 6px 12px;
             }}
             QLineEdit {{
                 background-color: {theme['menu_bg']};
                 color: {theme['text_color']};
                 border: 1px solid {theme['border_color']};
-                border-radius: 2px;
+                border-radius: 6px;
+                padding: 6px 10px;
             }}
             QPushButton {{
                 background-color: {theme['menu_bg']};
                 color: {theme['text_color']};
                 border: 1px solid {theme['border_color']};
                 border-radius: 6px;
-                padding: 4px 12px;
+                padding: 6px 14px;
             }}
             QPushButton:hover {{
                 background-color: {theme['menu_hover']};
             }}
             QLabel {{
                 color: {theme['text_color']};
+            }}
+            QScrollBar:vertical {{
+                background: {scrollbar_bg};
+                width: 16px;
+                margin: 0px;
+                border-radius: 8px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {scrollbar_handle};
+                min-height: 40px;
+                border-radius: 8px;
+                margin: 2px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {scrollbar_handle_hover};
+            }}
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {{
+                height: 0px;
+                background: none;
+            }}
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {{
+                background: none;
+            }}
+            QScrollBar:horizontal {{
+                background: {scrollbar_bg};
+                height: 16px;
+                margin: 0px;
+                border-radius: 8px;
+            }}
+            QScrollBar::handle:horizontal {{
+                background: {scrollbar_handle};
+                min-width: 40px;
+                border-radius: 8px;
+                margin: 2px;
+            }}
+            QScrollBar::handle:horizontal:hover {{
+                background: {scrollbar_handle_hover};
+            }}
+            QScrollBar::add-line:horizontal,
+            QScrollBar::sub-line:horizontal {{
+                width: 0px;
+                background: none;
+            }}
+            QScrollBar::add-page:horizontal,
+            QScrollBar::sub-page:horizontal {{
+                background: none;
             }}
         """)
 
@@ -2761,50 +3651,74 @@ class MainWindow(QMainWindow):
 
         self.tree.setUpdatesEnabled(False)
         self.model.clear()
-        self.model.setHorizontalHeaderLabels(["level", "target", "status", "tune", "start time", "end time"])
+        self.model.setHorizontalHeaderLabels(["level", "target", "status", "tune", "start time", "end time", "queue", "cores", "memory"])
         self.set_column_widths()
-        
+
         # Helper to add a single row (returns the created items list)
         def create_row_items(level, target_name):
             # Get real status
             current_run = self.combo.currentText()
             status = self.get_target_status(current_run, target_name)
-            
+
             # Create Row
             row_items = []
-            
+
             # Level
             l_item = QStandardItem(str(level))
             l_item.setEditable(False)
             l_item.setForeground(QBrush(Qt.black))
             row_items.append(l_item)
-            
+
             # Target
             t_item = QStandardItem(target_name)
             t_item.setEditable(False)
             t_item.setForeground(QBrush(Qt.black))
             row_items.append(t_item)
-            
+
             # Status
             s_item = QStandardItem(status)
             s_item.setEditable(False)
             s_item.setForeground(QBrush(Qt.black))
             row_items.append(s_item)
-            
+
+            # Tune
+            tune_display = self.get_tune_display(self.combo_sel, target_name)
+            tune_item = QStandardItem(tune_display)
+            tune_item.setEditable(False)
+            tune_item.setForeground(QBrush(Qt.black))
+            row_items.append(tune_item)
+
             # Time
             tgt_track_file = os.path.join(self.combo_sel, 'logs/targettracker', target_name)
             start_time, end_time = self.get_start_end_time(tgt_track_file)
-            
+
             st_item = QStandardItem(start_time)
             st_item.setEditable(False)
             st_item.setForeground(QBrush(Qt.black))
             row_items.append(st_item)
-            
+
             et_item = QStandardItem(end_time)
             et_item.setEditable(False)
             et_item.setForeground(QBrush(Qt.black))
             row_items.append(et_item)
-            
+
+            # Bsub parameters
+            queue, cores, memory = self.get_bsub_params(self.combo_sel, target_name)
+            queue_item = QStandardItem(queue)
+            queue_item.setEditable(False)
+            queue_item.setForeground(QBrush(Qt.black))
+            row_items.append(queue_item)
+
+            cores_item = QStandardItem(cores)
+            cores_item.setEditable(False)
+            cores_item.setForeground(QBrush(Qt.black))
+            row_items.append(cores_item)
+
+            memory_item = QStandardItem(memory)
+            memory_item.setEditable(False)
+            memory_item.setForeground(QBrush(Qt.black))
+            row_items.append(memory_item)
+
             # Apply background color
             color_code = STATUS_COLORS.get(status.lower(), "#87CEEB")
             color = QColor(color_code)
@@ -3006,19 +3920,68 @@ class MainWindow(QMainWindow):
             self.on_run_changed()
 
     def on_tree_double_clicked(self, index):
-        """Handle double-click on tree view - copy run name in All Status view"""
-        if not self.is_all_status_view:
+        """Handle double-click on tree view"""
+        # In All Status view, copy run name
+        if self.is_all_status_view:
+            # Get the run name from column 0 (Run Directory)
+            run_name_index = self.model.index(index.row(), 0)
+            run_name = self.model.data(run_name_index)
+            if run_name:
+                clipboard = QApplication.clipboard()
+                clipboard.setText(run_name)
+                logger.info(f"Copied run name to clipboard: {run_name}")
             return
 
-        # Get the run name from column 0 (Run Directory)
-        run_name_index = self.model.index(index.row(), 0)
-        run_name = self.model.data(run_name_index)
+        # In normal view, handle editable columns (queue, cores, memory)
+        column = index.column()
+        if column not in [6, 7, 8]:  # Only queue(6), cores(7), memory(8) are editable
+            return
 
-        if run_name:
-            # Copy to clipboard
-            clipboard = QApplication.clipboard()
-            clipboard.setText(run_name)
-            logger.info(f"Copied run name to clipboard: {run_name}")
+        # Get the target name (column 1)
+        target_index = self.model.index(index.row(), 1, index.parent())
+        target = self.model.data(target_index)
+        if not target:
+            return
+
+        # Get current value
+        current_value = self.model.data(index)
+        if current_value == 'N/A':
+            current_value = ''
+
+        # Determine parameter type
+        param_types = {6: 'queue', 7: 'cores', 8: 'memory'}
+        param_type = param_types.get(column)
+        if not param_type:
+            return
+
+        # Get column header for dialog title
+        header = self.model.headerData(column, Qt.Horizontal)
+
+        # Show input dialog
+        new_value, ok = QInputDialog.getText(
+            self,
+            f"Edit {header}",
+            f"Enter new {param_type} value for '{target}':",
+            QLineEdit.Normal,
+            current_value
+        )
+
+        if ok and new_value != current_value:
+            # Validate input
+            if param_type == 'cores' and not new_value.isdigit():
+                QMessageBox.warning(self, "Invalid Input", "Cores must be a number.")
+                return
+            if param_type == 'memory' and not new_value.isdigit():
+                QMessageBox.warning(self, "Invalid Input", "Memory must be a number (MB).")
+                return
+
+            # Save to csh file
+            if self.save_bsub_param(self.combo_sel, target, param_type, new_value):
+                # Update the model
+                self.model.setData(index, new_value)
+                self.show_notification("Saved", f"Updated {param_type} to {new_value} for {target}", "success")
+            else:
+                QMessageBox.warning(self, "Error", f"Failed to update {param_type} for {target}. Check if .csh file exists.")
 
     def build_dependency_graph(self, run_name):
         """
@@ -3080,12 +4043,49 @@ class MainWindow(QMainWindow):
         if not current_run or current_run == "No runs found":
             logger.warning("No run selected")
             return
-        
+
         # Build graph data
         graph_data = self.build_dependency_graph(current_run)
-        
+
         # Show dialog
         dialog = DependencyGraphDialog(graph_data, self.colors, self)
+        dialog.exec_()
+
+    def open_user_params(self):
+        """Open user.params file for editing."""
+        if not self.combo_sel or not os.path.exists(self.combo_sel):
+            self.show_notification("Error", "No run selected or run directory not found", "error")
+            return
+
+        user_params_file = os.path.join(self.combo_sel, "user.params")
+
+        # Create file if not exists
+        if not os.path.exists(user_params_file):
+            try:
+                with open(user_params_file, 'w') as f:
+                    f.write("# User Parameters\n")
+                    f.write(f"# Created: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                self.show_notification("Created", f"Created new user.params file", "success")
+            except Exception as e:
+                self.show_notification("Error", f"Failed to create user.params: {e}", "error")
+                return
+
+        dialog = ParamsEditorDialog(user_params_file, "user", self)
+        dialog.exec_()
+
+    def open_tile_params(self):
+        """Open tile.params file for viewing (read-only)."""
+        if not self.combo_sel or not os.path.exists(self.combo_sel):
+            self.show_notification("Error", "No run selected or run directory not found", "error")
+            return
+
+        tile_params_file = os.path.join(self.combo_sel, "tile.params")
+
+        if not os.path.exists(tile_params_file):
+            self.show_notification("Not Found", f"tile.params file not found in current run", "warning")
+            return
+
+        dialog = ParamsEditorDialog(tile_params_file, "tile", self)
         dialog.exec_()
 
     def populate_run_combo(self):
@@ -3363,17 +4363,17 @@ class MainWindow(QMainWindow):
                 if item and item.hasChildren():
                     for child_r in range(item.rowCount()):
                         update_row(child_r, parent_idx)
-            
+
             self.tree.setUpdatesEnabled(True)
             return
 
         # Save current scroll position
         current_scroll = self.tree.verticalScrollBar().value()
-        
+
         self.tree.setUpdatesEnabled(False)
         # Clear existing data
         self.model.clear()
-        self.model.setHorizontalHeaderLabels(["level", "target", "status", "tune", "start time", "end time"])
+        self.model.setHorizontalHeaderLabels(["level", "target", "status", "tune", "start time", "end time", "queue", "cores", "memory"])
         self.set_column_widths()
         
         # Get current run name
@@ -3441,32 +4441,49 @@ class MainWindow(QMainWindow):
             et_item.setEditable(False)
             et_item.setForeground(QBrush(Qt.black))
             parent_row.append(et_item)
-            
+
+            # Bsub parameters
+            queue, cores, memory = self.get_bsub_params(self.combo_sel, parent_target)
+            queue_item = QStandardItem(queue)
+            queue_item.setEditable(False)
+            queue_item.setForeground(QBrush(Qt.black))
+            parent_row.append(queue_item)
+
+            cores_item = QStandardItem(cores)
+            cores_item.setEditable(False)
+            cores_item.setForeground(QBrush(Qt.black))
+            parent_row.append(cores_item)
+
+            memory_item = QStandardItem(memory)
+            memory_item.setEditable(False)
+            memory_item.setForeground(QBrush(Qt.black))
+            parent_row.append(memory_item)
+
             # Apply background color to parent
             p_color = QColor(get_color(p_status))
             for it in parent_row:
                 it.setBackground(QBrush(p_color))
-            
+
             # Add Parent to Model
             self.model.appendRow(parent_row)
-            
+
             # Handle Children (Subsequent targets in the list)
             children_targets = targets[1:]
             for child_target in children_targets:
                 child_row = []
-                
+
                 # Level (Empty for child)
                 child_row.append(QStandardItem(""))
-                
+
                 # Target
                 c_t_item = QStandardItem(child_target)
                 c_t_item.setEditable(False)
                 c_t_item.setForeground(QBrush(Qt.black))
                 child_row.append(c_t_item)
-                
+
                 # Get real status for child
                 c_status = self.get_target_status(current_run, child_target)
-                
+
                 c_s_item = QStandardItem(c_status)
                 c_s_item.setEditable(False)
                 c_s_item.setForeground(QBrush(Qt.black))
@@ -3493,7 +4510,24 @@ class MainWindow(QMainWindow):
                 c_et_item.setEditable(False)
                 c_et_item.setForeground(QBrush(Qt.black))
                 child_row.append(c_et_item)
-                
+
+                # Bsub parameters for child
+                c_queue, c_cores, c_memory = self.get_bsub_params(self.combo_sel, child_target)
+                c_queue_item = QStandardItem(c_queue)
+                c_queue_item.setEditable(False)
+                c_queue_item.setForeground(QBrush(Qt.black))
+                child_row.append(c_queue_item)
+
+                c_cores_item = QStandardItem(c_cores)
+                c_cores_item.setEditable(False)
+                c_cores_item.setForeground(QBrush(Qt.black))
+                child_row.append(c_cores_item)
+
+                c_memory_item = QStandardItem(c_memory)
+                c_memory_item.setEditable(False)
+                c_memory_item.setForeground(QBrush(Qt.black))
+                child_row.append(c_memory_item)
+
                 # Apply background color to child
                 c_color = QColor(get_color(c_status))
                 for it in child_row:
@@ -3504,7 +4538,7 @@ class MainWindow(QMainWindow):
         
         
         # Check if filter exists (Search Filter)
-        has_search_filter = hasattr(self, 'filter_input') and self.filter_input.text()
+        has_search_filter = hasattr(self, 'header') and self.header.get_filter_text()
         
         # Check if Trace Filter is active
         is_trace_mode = hasattr(self, 'tab_label') and self.tab_label.text().startswith("Trace")
@@ -3540,7 +4574,7 @@ class MainWindow(QMainWindow):
                 
                 elif has_search_filter:
                     # Re-apply search filter
-                    self.filter_tree(self.filter_input.text())
+                    self.filter_tree(self.header.get_filter_text())
                 
                 # Restore scroll position
                 self.tree.verticalScrollBar().setValue(current_scroll)
@@ -3557,20 +4591,20 @@ class MainWindow(QMainWindow):
         if not os.path.exists(os.path.join(run_dir, '.target_dependency.csh')):
             logger.warning(f".target_dependency.csh not found in {run_dir}")
             return
-        
+
         # Clear existing model
         self.model.clear()
-        self.model.setHorizontalHeaderLabels(["level", "target", "status", "tune", "start time", "end time"])
-        
+        self.model.setHorizontalHeaderLabels(["level", "target", "status", "tune", "start time", "end time", "queue", "cores", "memory"])
+
         # Get targets
         self.get_target()
-        
+
         l = []
         o = []
-        
+
         # Get current run name from path
         current_run = os.path.basename(run_dir)
-        
+
         # Read and parse .target_dependency.csh
         with open(os.path.join(run_dir, '.target_dependency.csh'), 'r') as f:
             a_file = f.read()
@@ -3589,9 +4623,12 @@ class MainWindow(QMainWindow):
                 target_status = self.get_target_status(current_run, target)
                 tune_display = self.get_tune_display(run_dir, target)
 
+                # Get bsub parameters
+                queue, cores, memory = self.get_bsub_params(run_dir, target)
+
                 str_lv = ''.join(target_level)
                 o.append(str_lv)
-                d = [target_level, target, target_status, tune_display, start_time, end_time]
+                d = [target_level, target, target_status, tune_display, start_time, end_time, queue, cores, memory]
                 l.append(d)
         
         # Get all unique levels and sort
@@ -3601,49 +4638,49 @@ class MainWindow(QMainWindow):
         # Group data by level
         level_data = {}
         for data in l:
-            lvl, tgt, st, tune, ct, et = data
+            lvl, tgt, st, tune, ct, et, queue, cores, memory = data
             str_data = ''.join(lvl)
             if str_data not in level_data:
                 level_data[str_data] = []
-            level_data[str_data].append((tgt, st, tune, ct, et))
-        
+            level_data[str_data].append((tgt, st, tune, ct, et, queue, cores, memory))
+
         # Create parent-child structure
         for level in all_lv:
             if level not in level_data:
                 continue
-            
+
             items = level_data[level]
             if not items:
                 continue
-            
+
             # Create parent node (first item)
             root_item = QStandardItem()
             root_item.setText(level)
             root_item.setEditable(False)
-            
+
             # Create other columns for parent
             root_items = [root_item]
             first_item = items[0]
             text_color = QColor("#333333")
-            for value in [first_item[0], first_item[1], first_item[2], first_item[3], first_item[4]]:
+            for value in [first_item[0], first_item[1], first_item[2], first_item[3], first_item[4], first_item[5], first_item[6], first_item[7]]:
                 item = QStandardItem()
                 item.setText(value)
                 item.setEditable(False)
                 item.setForeground(QBrush(text_color))
                 root_items.append(item)
-            
+
             # Set parent node color (all columns)
             if first_item[1] in self.colors:
                 color = QColor(self.colors[first_item[1]])
                 for item in root_items:
                     item.setBackground(QBrush(color))
-            
+
             # Add parent to model
             self.model.appendRow(root_items)
-            
+
             # Add children if more than one item
             if len(items) > 1:
-                for tgt, st, tune, ct, et in items[1:]:
+                for tgt, st, tune, ct, et, queue, cores, memory in items[1:]:
                     child_items = []
                     text_color = QColor("#333333")
                     # level column
@@ -3654,34 +4691,34 @@ class MainWindow(QMainWindow):
                     child_items.append(level_item)
 
                     # Other columns
-                    for value in [tgt, st, tune, ct, et]:
+                    for value in [tgt, st, tune, ct, et, queue, cores, memory]:
                         item = QStandardItem()
                         item.setText(value)
                         item.setEditable(False)
                         item.setForeground(QBrush(text_color))
                         child_items.append(item)
-                    
+
                     # Set child color (all columns)
                     if st in self.colors:
                         color = QColor(self.colors[st])
                         for item in child_items:
                             item.setBackground(QBrush(color))
-                    
+
                     # Add child to parent
                     root_item.appendRow(child_items)
         
         
         # Check if filter exists
-        has_filter = hasattr(self, 'filter_input') and self.filter_input.text()
-        
+        has_filter = hasattr(self, 'header') and self.header.get_filter_text()
+
         if not has_filter:
             # Expand all only if no filter
             self.tree.expandAll()
         else:
             # Re-apply filter if exists
-            logger.debug(f"Re-applying filter: {self.filter_input.text()}")
+            logger.debug(f"Re-applying filter: {self.header.get_filter_text()}")
             # Use a delay to ensure model is fully loaded and view is ready
-            QTimer.singleShot(100, lambda: self.filter_tree(self.filter_input.text()))
+            QTimer.singleShot(100, lambda: self.filter_tree(self.header.get_filter_text()))
 
     def get_target(self):
         """Parse ACTIVE_TARGETS from .target_dependency.csh"""
@@ -3763,6 +4800,9 @@ class MainWindow(QMainWindow):
                 tune_item = parent_item.child(row_idx, 3)
                 start_time_item = parent_item.child(row_idx, 4)
                 end_time_item = parent_item.child(row_idx, 5)
+                queue_item = parent_item.child(row_idx, 6)
+                cores_item = parent_item.child(row_idx, 7)
+                memory_item = parent_item.child(row_idx, 8)
             else:
                 # Top-level row
                 level_item = self.model.item(row_idx, 0)
@@ -3771,6 +4811,9 @@ class MainWindow(QMainWindow):
                 tune_item = self.model.item(row_idx, 3)
                 start_time_item = self.model.item(row_idx, 4)
                 end_time_item = self.model.item(row_idx, 5)
+                queue_item = self.model.item(row_idx, 6)
+                cores_item = self.model.item(row_idx, 7)
+                memory_item = self.model.item(row_idx, 8)
 
             if not all([target_item, status_item]):
                 return
@@ -3789,7 +4832,7 @@ class MainWindow(QMainWindow):
 
                 # Update background color for ALL columns in this row
                 color = QColor(self.colors.get(status, '#87CEEB'))
-                row_items = [level_item, target_item, status_item, tune_item, start_time_item, end_time_item]
+                row_items = [level_item, target_item, status_item, tune_item, start_time_item, end_time_item, queue_item, cores_item, memory_item]
                 for item in row_items:
                     if item:
                         item.setBackground(QBrush(color))
@@ -3943,6 +4986,89 @@ class MainWindow(QMainWindow):
     def has_tune(self, run_dir, target_name):
         """Check if target has any tune file"""
         return len(self.get_tune_files(run_dir, target_name)) > 0
+
+    # ========== BSUB Parameter Methods ==========
+
+    def get_bsub_params(self, run_dir, target_name):
+        """Parse bsub parameters from {run_dir}/make_targets/{target}.csh
+        Returns: (queue, cores, memory) tuple, each can be 'N/A' if not found
+        """
+        csh_file = os.path.join(run_dir, 'make_targets', f"{target_name}.csh")
+        if not os.path.exists(csh_file):
+            return ('N/A', 'N/A', 'N/A')
+
+        try:
+            with open(csh_file, 'r') as f:
+                content = f.read()
+
+            # Parse -q (queue)
+            queue_match = re.search(r'-q\s+(\S+)', content)
+            queue = queue_match.group(1) if queue_match else 'N/A'
+
+            # Parse -n (cores)
+            cores_match = re.search(r'-n\s+(\d+)', content)
+            cores = cores_match.group(1) if cores_match else 'N/A'
+
+            # Parse -R "rusage[mem=XXX]" (memory)
+            mem_match = re.search(r'rusage\[mem=(\d+)\]', content)
+            memory = mem_match.group(1) if mem_match else 'N/A'
+
+            return (queue, cores, memory)
+        except Exception as e:
+            logger.error(f"Error parsing bsub params for {target_name}: {e}")
+            return ('N/A', 'N/A', 'N/A')
+
+    def save_bsub_param(self, run_dir, target_name, param_type, new_value):
+        """Save a single bsub parameter to the csh file.
+        Args:
+            run_dir: Run directory path
+            target_name: Target name
+            param_type: 'queue', 'cores', or 'memory'
+            new_value: New value to set
+        Returns: True if successful, False otherwise
+        """
+        csh_file = os.path.join(run_dir, 'make_targets', f"{target_name}.csh")
+        if not os.path.exists(csh_file):
+            logger.warning(f"CSH file not found: {csh_file}")
+            return False
+
+        try:
+            with open(csh_file, 'r') as f:
+                content = f.read()
+
+            if param_type == 'queue':
+                # Replace -q value
+                if re.search(r'-q\s+\S+', content):
+                    content = re.sub(r'-q\s+\S+', f'-q {new_value}', content)
+                else:
+                    logger.warning(f"No -q parameter found in {csh_file}")
+                    return False
+
+            elif param_type == 'cores':
+                # Replace -n value
+                if re.search(r'-n\s+\d+', content):
+                    content = re.sub(r'-n\s+\d+', f'-n {new_value}', content)
+                else:
+                    logger.warning(f"No -n parameter found in {csh_file}")
+                    return False
+
+            elif param_type == 'memory':
+                # Replace rusage[mem=XXX] value, preserving the rest
+                if re.search(r'rusage\[mem=\d+\]', content):
+                    content = re.sub(r'rusage\[mem=\d+\]', f'rusage[mem={new_value}]', content)
+                else:
+                    logger.warning(f"No rusage[mem=] parameter found in {csh_file}")
+                    return False
+
+            with open(csh_file, 'w') as f:
+                f.write(content)
+
+            logger.info(f"Updated {param_type} to {new_value} for {target_name}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error saving bsub param for {target_name}: {e}")
+            return False
 
     def handle_tune(self):
         """Open tune file for selected target with gvim"""
@@ -4181,6 +5307,19 @@ class MainWindow(QMainWindow):
 
         menu.addSeparator()
 
+        # === Params Actions ===
+        params_menu = menu.addMenu("⚙ Params")
+
+        user_params_action = params_menu.addAction("📝 User Params")
+        user_params_action.setToolTip("Edit user.params for current run")
+        user_params_action.triggered.connect(self.open_user_params)
+
+        tile_params_action = params_menu.addAction("📋 Tile Params")
+        tile_params_action.setToolTip("View tile.params for current run")
+        tile_params_action.triggered.connect(self.open_tile_params)
+
+        menu.addSeparator()
+
         # === Dependency Trace Actions ===
         trace_menu = menu.addMenu("🔗 Trace")
 
@@ -4358,7 +5497,7 @@ class MainWindow(QMainWindow):
     def set_column_widths(self):
         """Set column widths to user preferences"""
         self.tree.setColumnWidth(0, 80)  # level
-        self.tree.setColumnWidth(1, 480) # target
+        self.tree.setColumnWidth(1, 400) # target
 
         # Calculate status column width based on the widest status text
         # All possible status values
@@ -4371,7 +5510,7 @@ class MainWindow(QMainWindow):
         status_width = max_status_width + 20  # Add padding
 
         self.tree.setColumnWidth(2, status_width)  # status
-        self.tree.setColumnWidth(3, 150) # tune (show suffixes like "pre_opt, pre_output")
+        self.tree.setColumnWidth(3, 120)  # tune
 
         # Calculate time column width based on character length
         # Time format: "YYYY-MM-DD HH:MM:SS" (19 characters)
@@ -4380,6 +5519,11 @@ class MainWindow(QMainWindow):
 
         self.tree.setColumnWidth(4, time_width)  # start time
         self.tree.setColumnWidth(5, time_width)  # end time
+
+        # New columns for bsub parameters
+        self.tree.setColumnWidth(6, 100)  # queue
+        self.tree.setColumnWidth(7, 60)   # cores
+        self.tree.setColumnWidth(8, 80)   # memory
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
