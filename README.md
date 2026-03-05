@@ -1,5 +1,7 @@
 # XMeta Console GUI
 
+> **Last Updated**: 2026-03-05 19:00
+
 A PyQt5-based GUI monitoring tool for tracking task execution status and dependencies in EDA/chip design workflows.
 
 ## Project Structure
