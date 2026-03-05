@@ -2818,35 +2818,60 @@ class CopyTuneSelectDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         # Initialize core variables FIRST
-        self.tar_name = []
-        self.level_expanded = {}
-        self.combo_sel = None
-        self.cached_targets_by_level = {} # Cache for search optimization
-        self.is_tree_expanded = True  # Track expansion state
-        self.is_search_mode = False  # Track if search filter is active
-        self.search_selected_targets = []  # Store targets selected during search
-
-        # Thread pool for background file operations
-        self._executor = ThreadPoolExecutor(max_workers=4)
-
-        # Status colors (using extended STATUS_CONFIG)
-        self.colors = {k: v["color"] for k, v in STATUS_CONFIG.items()}
+        self._init_core_variables()
 
         # Initialize theme manager
         self.theme_manager = ThemeManager()
 
-        # Check if mock_runs exists, otherwise check if we are inside a run
+        # Detect run base directory
+        self._detect_run_base_dir()
+
+        # Call parent constructor
+        super().__init__()
+
+        # Initialize window
+        self._init_window()
+
+        # Initialize UI components
+        self._init_menu_bar()
+        self._init_central_widget()
+        self._init_top_panel()
+        self._init_tree_view()
+        self._init_status_bar()
+        self._init_notifications()
+        self._init_keyboard_shortcuts()
+        self._init_file_watcher()
+
+        # Expand tree initially
+        self.tree.expandAll()
+
+    def _init_core_variables(self):
+        """Initialize core instance variables."""
+        self.tar_name = []
+        self.level_expanded = {}
+        self.combo_sel = None
+        self.cached_targets_by_level = {}
+        self.is_tree_expanded = True
+        self.is_search_mode = False
+        self.search_selected_targets = []
+        self._executor = ThreadPoolExecutor(max_workers=4)
+        self.colors = {k: v["color"] for k, v in STATUS_CONFIG.items()}
+
+    def _detect_run_base_dir(self):
+        """Detect the run base directory based on environment."""
         if os.path.exists("mock_runs"):
             self.run_base_dir = "mock_runs"
         elif os.path.exists(".target_dependency.csh"):
-            # We are inside a run directory, so scan the parent directory
             self.run_base_dir = ".."
             logger.info(f"Detected run in current directory. Setting base to parent: {os.path.abspath(self.run_base_dir)}")
         else:
             self.run_base_dir = "."
-        super().__init__()
+
+    def _init_window(self):
+        """Initialize window properties and animation."""
         self.setWindowTitle("XMeta Console")
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
+
         # Fade-in animation for the window
         self.setWindowOpacity(0.0)
         self.fade_anim = QPropertyAnimation(self, b"windowOpacity")
@@ -2863,9 +2888,9 @@ class MainWindow(QMainWindow):
             }
         """)
 
-        # Create Menu Bar
+    def _init_menu_bar(self):
+        """Initialize the menu bar."""
         self.menu_bar = self.menuBar()
-        # Save default menu bar style for later use
         self._default_menu_bar_style = """
             QMenuBar {
                 background-color: #ffffff;
@@ -2910,16 +2935,12 @@ class MainWindow(QMainWindow):
 
         # Status Menu
         status_menu = self.menu_bar.addMenu("Status")
-
-        # Show All Status Action
         show_all_status_action = QAction("Show All Status", self)
         show_all_status_action.triggered.connect(self.show_all_status)
         status_menu.addAction(show_all_status_action)
 
         # View Menu
         view_menu = self.menu_bar.addMenu("View")
-
-        # Show Dependency Graph Action with shortcut
         show_graph_action = QAction("Show Dependency Graph", self)
         show_graph_action.setShortcut(QKeySequence("Ctrl+G"))
         show_graph_action.triggered.connect(self.show_dependency_graph)
@@ -2928,30 +2949,23 @@ class MainWindow(QMainWindow):
         # Theme submenu
         view_menu.addSeparator()
         theme_menu = view_menu.addMenu("Theme")
-
         light_theme_action = QAction("Light Theme", self)
         light_theme_action.triggered.connect(lambda: self.apply_theme("light"))
         theme_menu.addAction(light_theme_action)
-
         dark_theme_action = QAction("Dark Theme", self)
         dark_theme_action.triggered.connect(lambda: self.apply_theme("dark"))
         theme_menu.addAction(dark_theme_action)
-
         high_contrast_action = QAction("High Contrast", self)
         high_contrast_action.triggered.connect(lambda: self.apply_theme("high_contrast"))
         theme_menu.addAction(high_contrast_action)
 
         # Tools Menu
         tools_menu = self.menu_bar.addMenu("Tools")
-
-        # User Params Action
         user_params_action = QAction("📝 User Params", self)
         user_params_action.setShortcut(QKeySequence("Ctrl+P"))
         user_params_action.setToolTip("Edit user.params for current run")
         user_params_action.triggered.connect(self.open_user_params)
         tools_menu.addAction(user_params_action)
-
-        # Tile Params Action
         tile_params_action = QAction("📋 Tile Params", self)
         tile_params_action.setShortcut(QKeySequence("Ctrl+Shift+P"))
         tile_params_action.setToolTip("View tile.params for current run")
@@ -2960,20 +2974,20 @@ class MainWindow(QMainWindow):
 
         # Track if we are in "All Status" view mode
         self.is_all_status_view = False
-        
 
-        # Main Widget
+    def _init_central_widget(self):
+        """Initialize the central widget and main layout."""
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
-        main_layout.setAlignment(Qt.AlignTop)
+        self._main_layout = QVBoxLayout(central_widget)
+        self._main_layout.setContentsMargins(0, 0, 0, 0)
+        self._main_layout.setSpacing(0)
+        self._main_layout.setAlignment(Qt.AlignTop)
 
-        # Top Control Panel
+    def _init_top_panel(self):
+        """Initialize the top control panel."""
         self.top_panel = QWidget()
         self.top_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        # Default background (will be updated when run changes)
         self._default_top_panel_bg = "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #f8f9fa, stop:1 #e9ecef)"
         self.top_panel.setStyleSheet("""
             QWidget {
@@ -2982,7 +2996,6 @@ class MainWindow(QMainWindow):
                 border-radius: 0px;
             }
         """)
-        # Add subtle drop shadow
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(8)
         shadow.setOffset(0, 2)
@@ -2992,16 +3005,14 @@ class MainWindow(QMainWindow):
         top_layout = QVBoxLayout(self.top_panel)
         top_layout.setContentsMargins(16, 12, 16, 12)
         top_layout.setSpacing(8)
-        
+
         # Row 1 of Top Panel
         row1_layout = QHBoxLayout()
-        
+
         # Create combo box with bounded popup
         self.combo = BoundedComboBox()
         self.populate_run_combo()
         self.combo.setMinimumWidth(300)
-
-
         self.combo.currentIndexChanged.connect(self.on_run_changed)
         self.combo.setStyleSheet("""
             QComboBox {
@@ -3152,7 +3163,7 @@ class MainWindow(QMainWindow):
         row1_layout.addWidget(bt_invalid)
 
         top_layout.addLayout(row1_layout)
-        main_layout.addWidget(self.top_panel)
+        self._main_layout.addWidget(self.top_panel)
 
         # Initialize top panel background from XMETA_BACKGROUND env variable
         self._init_top_panel_background()
@@ -3212,7 +3223,7 @@ class MainWindow(QMainWindow):
         
         tab_layout.addWidget(self.tab_widget)
         tab_layout.addStretch()
-        main_layout.addWidget(self.tab_bar)
+        self._main_layout.addWidget(self.tab_bar)
 
         # Tree View
         self.tree = ColorTreeView()
@@ -3336,7 +3347,7 @@ class MainWindow(QMainWindow):
         self.tune_delegate = TuneComboBoxDelegate(self.tree)
         self.tree.setItemDelegateForColumn(3, self.tune_delegate)
 
-        main_layout.addWidget(self.tree)
+        self._main_layout.addWidget(self.tree)
 
         # Set right-click context menu
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -3347,7 +3358,7 @@ class MainWindow(QMainWindow):
 
         # ========== Add Status Bar ==========
         self._status_bar = StatusBar(self)
-        main_layout.addWidget(self._status_bar)
+        self._main_layout.addWidget(self._status_bar)
 
         # ========== Initialize Notification Manager ==========
         self._notification_manager = NotificationManager(self)
@@ -4397,11 +4408,15 @@ class MainWindow(QMainWindow):
                         level_num = int(match.group(1))
                         targets = match.group(2).split()
                         targets_by_level[level_num] = targets
+        except FileNotFoundError:
+            logger.warning(f"Dependency file not found: {dependency_file}")
+        except PermissionError as e:
+            logger.error(f"Permission denied reading dependency file: {e}")
+        except UnicodeDecodeError as e:
+            logger.error(f"Error decoding dependency file: {e}")
         except Exception as e:
             logger.error(f"Error parsing dependency file for {run_name}: {e}")
 
-        return targets_by_level
-        
         return targets_by_level
 
     def on_run_changed(self):
@@ -4507,8 +4522,16 @@ class MainWindow(QMainWindow):
 
 
 
-    def get_target_status(self, run_name, target_name):
-        """Get status of a target by checking status files in run_dir/status/"""
+    def get_target_status(self, run_name: str, target_name: str) -> str:
+        """Get status of a target by checking status files in run_dir/status/.
+
+        Args:
+            run_name: Name of the run directory.
+            target_name: Name of the target to check.
+
+        Returns:
+            Status string (finish, running, failed, skip, scheduled, pending, or empty).
+        """
         # Use cached status if available
         if hasattr(self, '_status_cache') and self._status_cache.get('run') == run_name:
             return self._status_cache.get('statuses', {}).get(target_name, "")
@@ -4598,6 +4621,10 @@ class MainWindow(QMainWindow):
                             latest = max(status_list, key=lambda x: x[1])
                             statuses[target_name] = latest[0]
 
+            except PermissionError as e:
+                logger.error(f"Permission denied accessing status directory: {e}")
+            except OSError as e:
+                logger.error(f"Error reading status directory: {e}")
             except Exception as e:
                 logger.error(f"Error building status cache: {e}")
 
@@ -4646,13 +4673,25 @@ class MainWindow(QMainWindow):
                         end_time = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(ft_mtime))
                     times[target_name] = (start_time, end_time)
 
+            except PermissionError as e:
+                logger.error(f"Permission denied accessing tracker directory: {e}")
+            except OSError as e:
+                logger.error(f"Error reading tracker directory: {e}")
             except Exception as e:
                 logger.error(f"Error building time cache: {e}")
 
         self._status_cache = {'run': run_name, 'statuses': statuses, 'times': times}
 
-    def get_target_times(self, run_name, target_name):
-        """Get start and end time from cache"""
+    def get_target_times(self, run_name: str, target_name: str) -> tuple:
+        """Get start and end time from cache.
+
+        Args:
+            run_name: Name of the run directory.
+            target_name: Name of the target.
+
+        Returns:
+            Tuple of (start_time, end_time) as strings, or ("", "") if not found.
+        """
         if hasattr(self, '_status_cache') and self._status_cache.get('run') == run_name:
             return self._status_cache.get('times', {}).get(target_name, ("", ""))
         return ("", "")
@@ -5074,8 +5113,14 @@ class MainWindow(QMainWindow):
                 if match:
                     self.tar_name = match.group(1).split()
                     return
+        except FileNotFoundError:
+            logger.warning(f"Dependency file not found: {deps_file}")
+        except PermissionError as e:
+            logger.error(f"Permission denied reading dependency file: {e}")
+        except UnicodeDecodeError as e:
+            logger.error(f"Error decoding dependency file: {e}")
         except Exception as e:
-            logger.error(f"Error reading ACTIVE_TARGETS: {e}")
+            logger.error(f"Unexpected error reading ACTIVE_TARGETS: {e}")
         self.tar_name = []
 
     def setup_status_watcher(self):
@@ -5197,9 +5242,16 @@ class MainWindow(QMainWindow):
 
         # Update status bar with latest stats
         self.update_status_bar()
-    
-    def get_start_end_time(self, tgt_track_file):
-        """Get start and end time from target tracker file"""
+
+    def get_start_end_time(self, tgt_track_file: str) -> tuple:
+        """Get start and end time from target tracker file.
+
+        Args:
+            tgt_track_file: Base path for tracker files (without .start/.finished suffix).
+
+        Returns:
+            Tuple of (start_time, end_time) as formatted strings.
+        """
         start_time = ""
         end_time = ""
         if os.path.exists(tgt_track_file + '.start'):
@@ -5212,7 +5264,7 @@ class MainWindow(QMainWindow):
 
     # ========== File Viewers ==========
 
-    def _open_file_with_editor(self, filepath, editor='gvim', use_popen=False):
+    def _open_file_with_editor(self, filepath: str, editor: str = 'gvim', use_popen: bool = False) -> None:
         """Open file with editor in background thread.
 
         Args:
@@ -5280,10 +5332,17 @@ class MainWindow(QMainWindow):
 
     # ========== Tune File Management ==========
 
-    def get_tune_files(self, run_dir, target_name):
+    def get_tune_files(self, run_dir: str, target_name: str) -> list:
         """Get all tune files for a target.
+
         Tune file naming: {run_dir}/tune/{target}/{target}.{suffix}.tcl
-        Returns: list of (suffix, full_path) tuples
+
+        Args:
+            run_dir: Path to the run directory.
+            target_name: Name of the target.
+
+        Returns:
+            List of (suffix, full_path) tuples, sorted by suffix.
         """
         import glob as glob_module
         tune_dir = os.path.join(run_dir, 'tune', target_name)
@@ -5319,9 +5378,15 @@ class MainWindow(QMainWindow):
 
     # ========== BSUB Parameter Methods ==========
 
-    def get_bsub_params(self, run_dir, target_name):
-        """Parse bsub parameters from {run_dir}/make_targets/{target}.csh
-        Returns: (queue, cores, memory) tuple, each can be 'N/A' if not found
+    def get_bsub_params(self, run_dir: str, target_name: str) -> tuple:
+        """Parse bsub parameters from {run_dir}/make_targets/{target}.csh.
+
+        Args:
+            run_dir: Path to the run directory.
+            target_name: Name of the target.
+
+        Returns:
+            Tuple of (queue, cores, memory), each can be 'N/A' if not found.
         """
         csh_file = os.path.join(run_dir, 'make_targets', f"{target_name}.csh")
         if not os.path.exists(csh_file):
@@ -5493,12 +5558,12 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Copy Complete",
                 f"Copied {len(selected_tunes)} tune file(s) ({tune_names})\nto {total_success}/{len(selected_runs)} runs")
 
-    def Xterm(self):
+    def open_terminal(self):
         """Open terminal in current run directory (runs in background thread)"""
         if not self.combo_sel:
             return
 
-        def open_terminal():
+        def _run_terminal():
             try:
                 original_dir = os.getcwd()
                 os.chdir(self.combo_sel)
@@ -5511,48 +5576,12 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 logger.error(f"Error opening terminal: {e}")
 
-        self._executor.submit(open_terminal)
+        self._executor.submit(_run_terminal)
 
-    # ========== Right-click Menu ==========
+    # ========== Context Menu Helpers ==========
 
-    def show_context_menu(self, position):
-        """Show context menu on right-click with icons and grouping"""
-        index = self.tree.indexAt(position)
-        if not index.isValid():
-            return
-
-        # Ensure the item is selected
-        selection_model = self.tree.selectionModel()
-        if not selection_model.isSelected(index):
-            selection_model.select(index, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
-
-        menu = QMenu()
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: white;
-                border: 1px solid #cccccc;
-                border-radius: 6px;
-                padding: 4px 0px;
-            }
-            QMenu::item {
-                padding: 6px 30px 6px 10px;
-                border-radius: 0px;
-            }
-            QMenu::item:selected {
-                background-color: #e6f7ff;
-            }
-            QMenu::separator {
-                height: 1px;
-                background: #e0e0e0;
-                margin: 4px 10px;
-            }
-        """)
-
-        # Get selected targets for context
-        selected_targets = self.get_selected_targets()
-        single_target = len(selected_targets) == 1
-
-        # === Execution Actions Group ===
+    def _build_execute_menu(self, menu: QMenu) -> None:
+        """Build the Execute submenu."""
         exec_menu = menu.addMenu("▶ Execute")
 
         run_all_action = exec_menu.addAction("▶ Run All")
@@ -5581,14 +5610,13 @@ class MainWindow(QMainWindow):
         invalid_action.setToolTip("Mark selected targets as invalid")
         invalid_action.triggered.connect(lambda: self.start('XMeta_invalid'))
 
-        menu.addSeparator()
-
-        # === File Actions Group ===
+    def _build_file_menu(self, menu: QMenu) -> None:
+        """Build the Files submenu."""
         file_menu = menu.addMenu("📁 Files")
 
         terminal_action = file_menu.addAction("⌘ Terminal")
         terminal_action.setToolTip("Open terminal in run directory")
-        terminal_action.triggered.connect(self.Xterm)
+        terminal_action.triggered.connect(self.open_terminal)
 
         csh_action = file_menu.addAction("📄 csh")
         csh_action.setToolTip("Open shell file for selected target")
@@ -5602,9 +5630,8 @@ class MainWindow(QMainWindow):
         cmd_action.setToolTip("Open command file for selected target")
         cmd_action.triggered.connect(self.handle_cmd)
 
-        menu.addSeparator()
-
-        # === Tune File Actions ===
+    def _build_tune_menu(self, menu: QMenu, selected_targets: list) -> None:
+        """Build the Tune submenu."""
         tune_menu = menu.addMenu("🎵 Tune")
 
         # Check if selected target has tune file
@@ -5623,9 +5650,8 @@ class MainWindow(QMainWindow):
         copy_tune_action.setToolTip("Copy tune file to other runs")
         copy_tune_action.triggered.connect(self.copy_tune_to_runs)
 
-        menu.addSeparator()
-
-        # === Params Actions ===
+    def _build_params_menu(self, menu: QMenu) -> None:
+        """Build the Params submenu."""
         params_menu = menu.addMenu("⚙ Params")
 
         user_params_action = params_menu.addAction("📝 User Params")
@@ -5636,9 +5662,8 @@ class MainWindow(QMainWindow):
         tile_params_action.setToolTip("View tile.params for current run")
         tile_params_action.triggered.connect(self.open_tile_params)
 
-        menu.addSeparator()
-
-        # === Dependency Trace Actions ===
+    def _build_trace_menu(self, menu: QMenu) -> None:
+        """Build the Trace submenu."""
         trace_menu = menu.addMenu("🔗 Trace")
 
         trace_up_action = trace_menu.addAction("⬆ Trace Up (Ctrl+U)")
@@ -5655,9 +5680,8 @@ class MainWindow(QMainWindow):
         graph_action.setToolTip("Show full dependency graph")
         graph_action.triggered.connect(self.show_dependency_graph)
 
-        menu.addSeparator()
-
-        # === Copy Actions ===
+    def _build_copy_menu(self, menu: QMenu, single_target: bool, selected_targets: list) -> None:
+        """Build the Copy submenu."""
         copy_menu = menu.addMenu("📋 Copy")
 
         copy_target_action = copy_menu.addAction("Copy Target Name (Ctrl+C)")
@@ -5669,8 +5693,41 @@ class MainWindow(QMainWindow):
             copy_path_action.setToolTip("Copy the full path of the current run")
             copy_path_action.triggered.connect(lambda: self._copy_run_path())
 
+    # ========== Right-click Menu ==========
+
+    def show_context_menu(self, position):
+        """Show context menu on right-click with icons and grouping."""
+        index = self.tree.indexAt(position)
+        if not index.isValid():
+            return
+
+        # Ensure the item is selected
+        selection_model = self.tree.selectionModel()
+        if not selection_model.isSelected(index):
+            selection_model.select(index, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
+
+        menu = QMenu()
+        menu.setStyleSheet(STYLES['menu'])
+
+        # Get selected targets for context
+        selected_targets = self.get_selected_targets()
+        single_target = len(selected_targets) == 1
+
+        # Build menu sections
+        self._build_execute_menu(menu)
+        menu.addSeparator()
+        self._build_file_menu(menu)
+        menu.addSeparator()
+        self._build_tune_menu(menu, selected_targets)
+        menu.addSeparator()
+        self._build_params_menu(menu)
+        menu.addSeparator()
+        self._build_trace_menu(menu)
+        menu.addSeparator()
+        self._build_copy_menu(menu, single_target, selected_targets)
+
         # Execute menu
-        action = menu.exec_(self.tree.viewport().mapToGlobal(position))
+        menu.exec_(self.tree.viewport().mapToGlobal(position))
 
     def _copy_run_path(self):
         """Copy the current run path to clipboard"""

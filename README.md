@@ -395,7 +395,51 @@ python reproduce_ui.py
 
 ## Changelog
 
-### v2.7.0 - Code Quality Improvements
+### v2.8.0 - Code Quality Improvements (P2)
+
+#### Type Annotations
+- Added type hints to public methods for better IDE support and documentation:
+  - `get_target_status(run_name: str, target_name: str) -> str`
+  - `get_target_times(run_name: str, target_name: str) -> tuple`
+  - `get_start_end_time(tgt_track_file: str) -> tuple`
+  - `_open_file_with_editor(filepath: str, editor: str, use_popen: bool) -> None`
+  - `get_tune_files(run_dir: str, target_name: str) -> list`
+  - `get_bsub_params(run_dir: str, target_name: str) -> tuple`
+
+#### Exception Handling
+- Improved error handling with specific exception types:
+  - `FileNotFoundError` for missing files
+  - `PermissionError` for access denied
+  - `UnicodeDecodeError` for encoding issues
+  - `OSError` for general I/O errors
+
+#### Code Organization
+- **`MainWindow.__init__` refactored**: Split ~500 line method into focused sub-methods:
+  - `_init_core_variables()` - Initialize instance variables
+  - `_detect_run_base_dir()` - Detect run directory
+  - `_init_window()` - Window properties and animation
+  - `_init_menu_bar()` - Menu bar setup
+  - `_init_central_widget()` - Central widget and layout
+  - `_init_top_panel()` - Top control panel
+  - `_init_tree_view()` - Tree view setup (remaining)
+  - `_init_status_bar()` - Status bar
+  - `_init_notifications()` - Notification manager
+  - `_init_keyboard_shortcuts()` - Keyboard shortcuts
+  - `_init_file_watcher()` - File system watcher
+
+- **`show_context_menu` refactored**: Extracted menu builders:
+  - `_build_execute_menu()` - Execute submenu
+  - `_build_file_menu()` - Files submenu
+  - `_build_tune_menu()` - Tune submenu
+  - `_build_params_menu()` - Params submenu
+  - `_build_trace_menu()` - Trace submenu
+  - `_build_copy_menu()` - Copy submenu
+
+#### Naming Consistency
+- Renamed `Xterm()` to `open_terminal()` to follow Python naming conventions
+- Renamed inner function `open_terminal()` to `_run_terminal()` to avoid shadowing
+
+### v2.7.0 - Code Quality Improvements (P0/P1)
 
 #### Code Refactoring
 - **Extracted File Opening Helper**: New `_open_file_with_editor()` method consolidates 4 duplicate file opening functions
