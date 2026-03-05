@@ -116,6 +116,85 @@ NOTIFICATION_TYPES = {
     "error": {"color": "#dc3545", "icon": "✗", "duration": 7000}
 }
 
+# ========== Timing Constants ==========
+DEBOUNCE_DELAY_MS = 300
+BACKUP_TIMER_INTERVAL_MS = 10000
+ANIMATION_DURATION_MS = 200
+FADE_IN_DURATION_MS = 600
+
+# ========== UI Dimension Constants ==========
+WINDOW_WIDTH = 1200
+WINDOW_HEIGHT = 800
+MAX_NOTIFICATIONS = 5
+NOTIFICATION_SPACING = 10
+NOTIFICATION_MARGIN_BOTTOM = 80
+NOTIFICATION_MARGIN_RIGHT = 20
+
+# ========== Styles ==========
+STYLES = {
+    'button_primary': """
+        QPushButton {
+            background-color: #1976d2;
+            border: none;
+            border-radius: 6px;
+            padding: 6px 14px;
+            font-weight: 500;
+            font-size: 12px;
+            color: #ffffff;
+        }
+        QPushButton:hover { background-color: #1565c0; }
+        QPushButton:pressed { background-color: #0d47a1; }
+    """,
+    'button_default': """
+        QPushButton {
+            background-color: #ffffff;
+            border: 1px solid #d0d0d0;
+            border-radius: 6px;
+            padding: 6px 14px;
+            font-weight: 500;
+            font-size: 12px;
+            color: #333333;
+        }
+        QPushButton:hover { background-color: #f5f5f5; border: 1px solid #1976d2; color: #1976d2; }
+        QPushButton:pressed { background-color: #e3f2fd; border: 1px solid #1976d2; }
+    """,
+    'button_warning': """
+        QPushButton {
+            background-color: #ffffff;
+            border: 1px solid #ffcdd2;
+            border-radius: 6px;
+            padding: 6px 14px;
+            font-weight: 500;
+            font-size: 12px;
+            color: #c62828;
+        }
+        QPushButton:hover { background-color: #ffebee; border: 1px solid #ef5350; }
+        QPushButton:pressed { background-color: #ffcdd2; }
+    """,
+    'menu': """
+        QMenu {
+            background-color: white;
+            border: 1px solid #cccccc;
+            border-radius: 6px;
+            padding: 4px 0px;
+        }
+        QMenu::item { padding: 6px 30px 6px 10px; border-radius: 0px; }
+        QMenu::item:selected { background-color: #e6f7ff; }
+        QMenu::separator { height: 1px; background: #e0e0e0; margin: 4px 10px; }
+    """,
+    'button_close': """
+        QPushButton {
+            border: none;
+            border-radius: 10px;
+            color: #999999;
+            font-weight: bold;
+            background: transparent;
+            font-size: 16px;
+        }
+        QPushButton:hover { background-color: #ef5350; color: white; }
+    """,
+}
+
 from PyQt5.QtCore import (QPropertyAnimation, QEasingCurve, Qt, QTimer, QObject,
                           QEvent, QModelIndex, QRect, pyqtSignal, QItemSelectionModel,
                           QPointF, QLineF, QFileSystemWatcher, QSize, QPoint,
@@ -143,6 +222,7 @@ class FilterHeaderView(QHeaderView):
     """Custom header with embedded filter input for target column"""
 
     filter_changed = pyqtSignal(str)
+    level_double_clicked = pyqtSignal()
 
     def __init__(self, orientation, parent=None, filter_column=1):
         super().__init__(orientation, parent)
@@ -154,7 +234,10 @@ class FilterHeaderView(QHeaderView):
         self.sectionDoubleClicked.connect(self._on_double_click)
 
     def _on_double_click(self, logical_index):
-        if logical_index == self.filter_column:
+        if logical_index == 0:
+            # Double-clicked on level column - toggle tree expansion
+            self.level_double_clicked.emit()
+        elif logical_index == self.filter_column:
             self._toggle_filter()
 
     def _toggle_filter(self):
@@ -389,8 +472,6 @@ class TuneComboBoxDelegate(QStyledItemDelegate):
                 selection-color: #545F71;
             }
         """)
-        combo.setAutoFillBackground(True)
-        return combo
         combo.setAutoFillBackground(True)
         return combo
 
@@ -1154,7 +1235,7 @@ class NotificationWidget(QFrame):
         """Start the entrance animation"""
         self.setWindowOpacity(0.0)
         self._fade_anim = QPropertyAnimation(self, b"windowOpacity")
-        self._fade_anim.setDuration(200)
+        self._fade_anim.setDuration(ANIMATION_DURATION_MS)
         self._fade_anim.setStartValue(0.0)
         self._fade_anim.setEndValue(1.0)
         self._fade_anim.setEasingCurve(QEasingCurve.OutCubic)
@@ -1163,7 +1244,7 @@ class NotificationWidget(QFrame):
     def fade_out(self):
         """Start fade out animation"""
         self._fade_anim = QPropertyAnimation(self, b"windowOpacity")
-        self._fade_anim.setDuration(200)
+        self._fade_anim.setDuration(ANIMATION_DURATION_MS)
         self._fade_anim.setStartValue(1.0)
         self._fade_anim.setEndValue(0.0)
         self._fade_anim.setEasingCurve(QEasingCurve.InCubic)
@@ -1201,10 +1282,10 @@ class NotificationManager(QObject):
         self._initialized = True
         self._notifications = []
         self._parent = parent
-        self._max_notifications = 5
-        self._spacing = 10
-        self._margin_bottom = 80
-        self._margin_right = 20
+        self._max_notifications = MAX_NOTIFICATIONS
+        self._spacing = NOTIFICATION_SPACING
+        self._margin_bottom = NOTIFICATION_MARGIN_BOTTOM
+        self._margin_right = NOTIFICATION_MARGIN_RIGHT
 
     def show_notification(self, title, message, notification_type="info", duration=None):
         """Show a notification"""
@@ -2765,11 +2846,11 @@ class MainWindow(QMainWindow):
             self.run_base_dir = "."
         super().__init__()
         self.setWindowTitle("XMeta Console")
-        self.resize(1200, 800)
-        # Fade‑in animation for the window
+        self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
+        # Fade-in animation for the window
         self.setWindowOpacity(0.0)
         self.fade_anim = QPropertyAnimation(self, b"windowOpacity")
-        self.fade_anim.setDuration(600)
+        self.fade_anim.setDuration(FADE_IN_DURATION_MS)
         self.fade_anim.setStartValue(0.0)
         self.fade_anim.setEndValue(1.0)
         self.fade_anim.setEasingCurve(QEasingCurve.InOutCubic)
@@ -3140,6 +3221,7 @@ class MainWindow(QMainWindow):
         self.header = FilterHeaderView(Qt.Horizontal, self.tree, filter_column=1)
         self.tree.setHeader(self.header)
         self.header.filter_changed.connect(self.filter_tree)
+        self.header.level_double_clicked.connect(self.toggle_tree_expansion)
 
         # Set the custom delegate
         self.delegate = BorderItemDelegate(self.tree)
@@ -3287,11 +3369,11 @@ class MainWindow(QMainWindow):
         # Setup initial watch on current run's status directory
         self.setup_status_watcher()
 
-        # Backup timer with longer interval (10 seconds) as fallback
+        # Backup timer with longer interval as fallback
         # This handles cases where file watcher might miss events
         self.backup_timer = QTimer()
         self.backup_timer.timeout.connect(self.change_run)
-        self.backup_timer.start(10000)  # 10 seconds
+        self.backup_timer.start(BACKUP_TIMER_INTERVAL_MS)
 
         # Debounce timer to batch rapid file changes
         self.debounce_timer = QTimer()
@@ -5018,18 +5100,18 @@ class MainWindow(QMainWindow):
     def on_status_directory_changed(self, path):
         """Called when the status directory contents change (file added/removed)."""
         logger.debug(f"Status directory changed: {path}")
-        
-        # Use debounce timer to batch rapid changes (300ms delay)
+
+        # Use debounce timer to batch rapid changes
         if not self.debounce_timer.isActive():
-            self.debounce_timer.start(300)
-    
+            self.debounce_timer.start(DEBOUNCE_DELAY_MS)
+
     def on_status_file_changed(self, path):
         """Called when a watched file is modified."""
         logger.debug(f"Status file changed: {path}")
-        
+
         # Use debounce timer to batch rapid changes
         if not self.debounce_timer.isActive():
-            self.debounce_timer.start(300)
+            self.debounce_timer.start(DEBOUNCE_DELAY_MS)
 
     def change_run(self):
         """Refresh status timer callback - updates status/time for all visible targets"""
@@ -5130,6 +5212,30 @@ class MainWindow(QMainWindow):
 
     # ========== File Viewers ==========
 
+    def _open_file_with_editor(self, filepath, editor='gvim', use_popen=False):
+        """Open file with editor in background thread.
+
+        Args:
+            filepath: Path to the file to open.
+            editor: Editor command to use (default: gvim).
+            use_popen: If True, use Popen for background execution; otherwise use run with timeout.
+        """
+        def open_file():
+            try:
+                if use_popen:
+                    subprocess.Popen([editor, filepath])
+                else:
+                    subprocess.run([editor, filepath], check=True, timeout=5)
+            except subprocess.TimeoutExpired:
+                pass  # Editor runs in background, timeout is expected
+            except subprocess.CalledProcessError as e:
+                logger.error(f"{editor} returned error code {e.returncode}")
+            except FileNotFoundError:
+                logger.error(f"{editor} not found in PATH")
+            except Exception as e:
+                logger.error(f"Error opening file {filepath}: {e}")
+        self._executor.submit(open_file)
+
     def handle_csh(self):
         """Open shell file for selected target (runs in background thread)"""
         selected_targets = self._exit_search_mode_and_get_targets()
@@ -5139,19 +5245,7 @@ class MainWindow(QMainWindow):
         shell_file = os.path.join(self.combo_sel, 'make_targets', f"{target}.csh")
 
         if os.path.exists(shell_file):
-            def open_file():
-                try:
-                    subprocess.run(['gvim', shell_file], check=True, timeout=5)
-                except subprocess.TimeoutExpired:
-                    pass  # gvim runs in background, timeout is expected
-                except subprocess.CalledProcessError as e:
-                    logger.error(f"gvim returned error code {e.returncode}")
-                except FileNotFoundError:
-                    logger.error("gvim not found in PATH")
-                except Exception as e:
-                    logger.error(f"Error opening csh: {e}")
-
-            self._executor.submit(open_file)
+            self._open_file_with_editor(shell_file)
         else:
             logger.warning(f"Shell file not found: {shell_file}")
 
@@ -5164,20 +5258,12 @@ class MainWindow(QMainWindow):
         log_file = os.path.join(self.combo_sel, 'logs', f"{target}.log")
         log_file_gz = f"{log_file}.gz"
 
-        def open_file():
-            try:
-                if os.path.exists(log_file):
-                    subprocess.Popen(['gvim', log_file])
-                elif os.path.exists(log_file_gz):
-                    subprocess.Popen(['gvim', log_file_gz])
-                else:
-                    logger.warning(f"Log file not found: {log_file}")
-            except FileNotFoundError:
-                logger.error("gvim not found in PATH")
-            except Exception as e:
-                logger.error(f"Error opening log: {e}")
-
-        self._executor.submit(open_file)
+        if os.path.exists(log_file):
+            self._open_file_with_editor(log_file, use_popen=True)
+        elif os.path.exists(log_file_gz):
+            self._open_file_with_editor(log_file_gz, use_popen=True)
+        else:
+            logger.warning(f"Log file not found: {log_file}")
 
     def handle_cmd(self):
         """Open command file for selected target (runs in background thread)"""
@@ -5188,19 +5274,7 @@ class MainWindow(QMainWindow):
         cmd_file = os.path.join(self.combo_sel, 'cmds', f"{target}.cmd")
 
         if os.path.exists(cmd_file):
-            def open_file():
-                try:
-                    subprocess.run(['gvim', cmd_file], check=True, timeout=5)
-                except subprocess.TimeoutExpired:
-                    pass  # gvim runs in background, timeout is expected
-                except subprocess.CalledProcessError as e:
-                    logger.error(f"gvim returned error code {e.returncode}")
-                except FileNotFoundError:
-                    logger.error("gvim not found in PATH")
-                except Exception as e:
-                    logger.error(f"Error opening cmd: {e}")
-
-            self._executor.submit(open_file)
+            self._open_file_with_editor(cmd_file)
         else:
             logger.warning(f"Command file not found: {cmd_file}")
 
@@ -5353,19 +5427,7 @@ class MainWindow(QMainWindow):
 
     def _open_tune_file(self, tune_file):
         """Open a tune file with gvim (runs in background thread)"""
-        def open_file():
-            try:
-                subprocess.run(['gvim', tune_file], check=True, timeout=5)
-            except subprocess.TimeoutExpired:
-                pass  # gvim runs in background
-            except subprocess.CalledProcessError as e:
-                logger.error(f"gvim returned error code {e.returncode}")
-            except FileNotFoundError:
-                logger.error("gvim not found in PATH")
-            except Exception as e:
-                logger.error(f"Error opening tune: {e}")
-
-        self._executor.submit(open_file)
+        self._open_file_with_editor(tune_file)
 
     def copy_tune_to_runs(self):
         """Copy tune file to selected runs"""

@@ -6,8 +6,9 @@ A PyQt5-based GUI monitoring tool for tracking task execution status and depende
 
 ```
 new-gui/
-├── reproduce_ui.py    # Main application file (~5590 lines)
+├── reproduce_ui.py    # Main application file (~5600 lines)
 ├── README.md          # This documentation file
+├── CLAUDE.md          # Project guidelines for Claude Code
 ├── .cursorrules       # Cursor editor rules configuration
 ├── .gitignore         # Git ignore rules
 └── .claude/           # Claude Code configuration
@@ -393,6 +394,25 @@ python reproduce_ui.py
 - gvim (optional, for opening tune files)
 
 ## Changelog
+
+### v2.7.0 - Code Quality Improvements
+
+#### Code Refactoring
+- **Extracted File Opening Helper**: New `_open_file_with_editor()` method consolidates 4 duplicate file opening functions
+  - Unified error handling for gvim and other editors
+  - Reduced code duplication by ~56 lines
+- **Module-Level Constants**: Extracted magic numbers to named constants
+  - Timing: `DEBOUNCE_DELAY_MS`, `BACKUP_TIMER_INTERVAL_MS`, `ANIMATION_DURATION_MS`, `FADE_IN_DURATION_MS`
+  - UI Dimensions: `WINDOW_WIDTH`, `WINDOW_HEIGHT`, `MAX_NOTIFICATIONS`, `NOTIFICATION_SPACING`, etc.
+- **Style Dictionary**: Added `STYLES` dictionary for reusable button and menu styles
+  - `button_primary`, `button_default`, `button_warning`, `menu`, `button_close`
+- **Dead Code Removal**: Removed unreachable code in `TuneComboBoxDelegate.createEditor()`
+
+#### Project Guidelines
+- Added `CLAUDE.md` with project conventions:
+  - Single-file architecture for `reproduce_ui.py`
+  - No Chinese characters in code
+  - English-only comments, docstrings, and variable names
 
 ### v2.6.0 - UI Refinements
 
