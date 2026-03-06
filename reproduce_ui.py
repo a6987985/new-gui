@@ -2837,11 +2837,6 @@ class MainWindow(QMainWindow):
         self._init_menu_bar()
         self._init_central_widget()
         self._init_top_panel()
-        self._init_tree_view()
-        self._init_status_bar()
-        self._init_notifications()
-        self._init_keyboard_shortcuts()
-        self._init_file_watcher()
 
         # Expand tree initially
         self.tree.expandAll()
@@ -2898,6 +2893,7 @@ class MainWindow(QMainWindow):
                 border-bottom: 1px solid #e0e0e0;
                 padding: 4px 8px;
                 font-size: 13px;
+                font-weight: bold;
             }
             QMenuBar::item {
                 background-color: transparent;
@@ -3171,10 +3167,11 @@ class MainWindow(QMainWindow):
 
         # Tab Bar (Modern clean look)
         self.tab_bar = QWidget()
-        self.tab_bar.setStyleSheet("""
+        self._default_tab_bar_style = """
             background-color: #f5f5f5;
             border-bottom: 1px solid #e0e0e0;
-        """)
+        """
+        self.tab_bar.setStyleSheet(self._default_tab_bar_style)
         tab_layout = QHBoxLayout(self.tab_bar)
         tab_layout.setContentsMargins(12, 6, 12, 6)
         tab_layout.setSpacing(2)
@@ -3194,17 +3191,25 @@ class MainWindow(QMainWindow):
         tab_inner_layout.setContentsMargins(14, 8, 10, 8)
         tab_inner_layout.setSpacing(8)
 
+        # Apply background color from environment variable if set
+        bg_color = os.environ.get('XMETA_BACKGROUND', '').strip()
+        if bg_color:
+            self.tab_bar.setStyleSheet(f"""
+                background-color: {bg_color};
+                border-bottom: 1px solid #e0e0e0;
+            """)
+
         self.tab_label = ClickableLabel("") # Initial empty, will be set by update_ui_from_selection
         self.tab_label.doubleClicked.connect(self.toggle_tree_expansion)
         self.tab_label.setToolTip("Double-click to Expand/Collapse All")
         self.tab_label.setStyleSheet("border: none; font-weight: 600; color: #1976d2; font-size: 13px; background: transparent;")
 
-        close_btn = QPushButton("×")
-        close_btn.setFixedSize(20, 20)
-        close_btn.setCursor(Qt.PointingHandCursor)
-        close_btn.setToolTip("Close Tab")
-        close_btn.clicked.connect(self.close_tree_view)
-        close_btn.setStyleSheet("""
+        self.tab_close_btn = QPushButton("×")
+        self.tab_close_btn.setFixedSize(20, 20)
+        self.tab_close_btn.setCursor(Qt.PointingHandCursor)
+        self.tab_close_btn.setToolTip("Close Tab")
+        self.tab_close_btn.clicked.connect(self.close_tree_view)
+        self.tab_close_btn.setStyleSheet("""
             QPushButton {
                 border: none;
                 border-radius: 10px;
@@ -3220,7 +3225,7 @@ class MainWindow(QMainWindow):
         """)
 
         tab_inner_layout.addWidget(self.tab_label)
-        tab_inner_layout.addWidget(close_btn)
+        tab_inner_layout.addWidget(self.tab_close_btn)
         
         tab_layout.addWidget(self.tab_widget)
         tab_layout.addStretch()
@@ -3548,6 +3553,7 @@ class MainWindow(QMainWindow):
                 border-bottom: 1px solid {theme['border_color']};
                 padding: 4px 8px;
                 font-size: 13px;
+                font-weight: bold;
             }}
             QMenuBar::item {{
                 background-color: transparent;
@@ -3669,11 +3675,14 @@ class MainWindow(QMainWindow):
                 if item:
                     self.show_all_children(item)
             self.tree.setUpdatesEnabled(True)
-            
+
             # Reset label style and text
             current_run = self.combo.currentText()
             self.tab_label.setText(current_run)
             self.tab_label.setStyleSheet("border: none; font-weight: bold; color: #333; font-size: 13px;")
+            # Hide close button after returning to normal run state
+            if hasattr(self, 'tab_close_btn'):
+                self.tab_close_btn.hide()
             return
 
         # Otherwise hide the tree view (original behavior)
@@ -4092,6 +4101,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'tab_label'):
             self.tab_label.setText("All Status Overview")
             self.tab_label.setStyleSheet("border: none; font-weight: bold; color: #1976d2; font-size: 13px;")
+        # Show close button in All Status view
+        if hasattr(self, 'tab_close_btn'):
+            self.tab_close_btn.show()
         
         # Clear and reconfigure model for All Status view
         self.tree.setUpdatesEnabled(False)
@@ -4437,6 +4449,9 @@ class MainWindow(QMainWindow):
             # Update tab label to reflect selected run
             if hasattr(self, 'tab_label'):
                 self.tab_label.setText(current_run)
+            # Hide close button in normal run state
+            if hasattr(self, 'tab_close_btn'):
+                self.tab_close_btn.hide()
 
             # Build status cache BEFORE populating data (batch I/O optimization)
             self._build_status_cache(current_run)
@@ -4474,6 +4489,7 @@ class MainWindow(QMainWindow):
                         border-bottom: 1px solid #e0e0e0;
                         padding: 4px 8px;
                         font-size: 13px;
+                        font-weight: bold;
                     }}
                     QMenuBar::item {{
                         background-color: transparent;
@@ -5864,6 +5880,9 @@ class MainWindow(QMainWindow):
         label_text = f"Trace {direction}: {tar_sel}"
         self.tab_label.setText(label_text)
         self.tab_label.setStyleSheet("border: none; font-weight: bold; color: #d32f2f; font-size: 13px;") # Red color for trace mode
+        # Show close button in Trace mode
+        if hasattr(self, 'tab_close_btn'):
+            self.tab_close_btn.show()
         
         # 4. Ensure the selected target is visible and selected
         # (Optional: scroll to it)

@@ -1,6 +1,6 @@
 # XMeta Console GUI
 
-> **Last Updated**: 2026-03-05 19:00
+> **Last Updated**: 2026-03-07
 
 A PyQt5-based GUI monitoring tool for tracking task execution status and dependencies in EDA/chip design workflows.
 
@@ -396,6 +396,20 @@ python reproduce_ui.py
 - gvim (optional, for opening tune files)
 
 ## Changelog
+
+### v2.9.0 - UI Improvements
+
+#### Bug Fixes
+- **Removed non-existent method calls**: Fixed `AttributeError` by removing calls to undefined methods (`_init_tree_view`, `_init_status_bar`, `_init_notifications`, `_init_keyboard_shortcuts`, `_init_file_watcher`) - these were already integrated into `_init_top_panel`
+
+#### Tab Bar Improvements
+- **Smart Close Button Visibility**: Tab close button now hides in normal run state, only shows in Trace mode and All Status Overview
+- **XMETA_BACKGROUND Support**: Tab bar background now respects `XMETA_BACKGROUND` environment variable for consistent theming
+- **Tab widget background**: Kept white background for tab widget itself for visual contrast
+
+#### Menu Bar Enhancements
+- **Bold Font**: Menu bar items now use bold font weight for better visibility
+- Applied to all themes (light, dark, high contrast) and custom XMETA_BACKGROUND mode
 
 ### v2.8.0 - Code Quality Improvements (P2)
 
