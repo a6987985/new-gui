@@ -2853,6 +2853,11 @@ class MainWindow(QMainWindow):
         self._executor = ThreadPoolExecutor(max_workers=4)
         self.colors = {k: v["color"] for k, v in STATUS_CONFIG.items()}
 
+    def _get_xmeta_background_color(self):
+        """Return the configured XMETA background color, if any."""
+        bg_color = os.environ.get("XMETA_BACKGROUND", "").strip()
+        return bg_color or None
+
     def _detect_run_base_dir(self):
         """Detect the run base directory based on environment."""
         if os.path.exists("mock_runs"):
@@ -2867,6 +2872,7 @@ class MainWindow(QMainWindow):
         """Initialize window properties and animation."""
         self.setWindowTitle("XMeta Console")
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
+        window_bg = self._get_xmeta_background_color() or "#f5f5f5"
 
         # Fade-in animation for the window
         self.setWindowOpacity(0.0)
@@ -2878,9 +2884,9 @@ class MainWindow(QMainWindow):
         self.fade_anim.start()
 
         # Modern clean background
-        self.setStyleSheet("""
+        self.setStyleSheet(f"""
             QMainWindow {
-                background-color: #f5f5f5;
+                background-color: {window_bg};
             }
         """)
 
@@ -3162,9 +3168,6 @@ class MainWindow(QMainWindow):
         top_layout.addLayout(row1_layout)
         self._main_layout.addWidget(self.top_panel)
 
-        # Initialize top panel background from XMETA_BACKGROUND env variable
-        self._init_top_panel_background()
-
         # Tab Bar (Modern clean look)
         self.tab_bar = QWidget()
         self._default_tab_bar_style = """
@@ -3190,14 +3193,6 @@ class MainWindow(QMainWindow):
         tab_inner_layout = QHBoxLayout(self.tab_widget)
         tab_inner_layout.setContentsMargins(14, 8, 10, 8)
         tab_inner_layout.setSpacing(8)
-
-        # Apply background color from environment variable if set
-        bg_color = os.environ.get('XMETA_BACKGROUND', '').strip()
-        if bg_color:
-            self.tab_bar.setStyleSheet(f"""
-                background-color: {bg_color};
-                border-bottom: 1px solid #e0e0e0;
-            """)
 
         self.tab_label = ClickableLabel("") # Initial empty, will be set by update_ui_from_selection
         self.tab_label.doubleClicked.connect(self.toggle_tree_expansion)
@@ -3369,6 +3364,9 @@ class MainWindow(QMainWindow):
         # ========== Initialize Notification Manager ==========
         self._notification_manager = NotificationManager(self)
 
+        # Apply XMETA background after all container widgets exist.
+        self._init_top_panel_background()
+
         # ========== Setup Keyboard Shortcuts ==========
         self._setup_keyboard_shortcuts()
 
@@ -3493,6 +3491,8 @@ class MainWindow(QMainWindow):
         """Apply a theme to the application"""
         self.theme_manager.set_theme(theme_name)
         theme = self.theme_manager.get_theme()
+        bg_color = self._get_xmeta_background_color()
+        window_bg = bg_color or theme['window_bg']
 
         # Determine scrollbar colors based on theme
         if theme_name == "dark":
@@ -3519,7 +3519,7 @@ class MainWindow(QMainWindow):
         # Apply main window stylesheet
         self.setStyleSheet(f"""
             QMainWindow {{
-                background: {theme['window_bg']};
+                background: {window_bg};
             }}
             QTreeView {{
                 background: {theme['tree_bg']};
@@ -3610,6 +3610,8 @@ class MainWindow(QMainWindow):
         # Update status bar
         if hasattr(self, '_status_bar'):
             self._status_bar.update_theme(theme_name)
+        if bg_color:
+            self._init_top_panel_background()
 
         # Show notification
         theme_info = THEMES.get(theme_name, THEMES["light"])
@@ -4469,24 +4471,24 @@ class MainWindow(QMainWindow):
             self.update_status_bar()
 
     def _init_top_panel_background(self):
-        """Initialize top panel and menu bar background color from XMETA_BACKGROUND env variable."""
+        """Apply XMETA background overrides to container widgets when configured."""
         try:
-            # Get XMETA_BACKGROUND environment variable
-            bg_color = os.environ.get('XMETA_BACKGROUND', '').strip()
+            bg_color = self._get_xmeta_background_color()
 
             if bg_color:
-                # Use the color from environment variable for top panel
-                self.top_panel.setStyleSheet(f"""
-                    QWidget {{
-                        background-color: {bg_color};
-                        border-radius: 0px;
-                    }}
-                """)
-                # Use the color for menu bar (only change background-color)
+                theme = self.theme_manager.get_theme()
+
+                if self.centralWidget() is not None:
+                    self.centralWidget().setStyleSheet(f"background-color: {bg_color};")
+
+                self.top_panel.setStyleSheet(f"background-color: {bg_color}; border: none;")
+                if self.top_panel.graphicsEffect() is not None:
+                    self.top_panel.setGraphicsEffect(None)
+
                 self.menu_bar.setStyleSheet(f"""
                     QMenuBar {{
                         background-color: {bg_color};
-                        border-bottom: 1px solid #e0e0e0;
+                        border: none;
                         padding: 4px 8px;
                         font-size: 13px;
                         font-weight: bold;
@@ -4524,9 +4526,121 @@ class MainWindow(QMainWindow):
                         margin: 4px 12px;
                     }}
                 """)
-                logger.info(f"Set top panel and menu bar background to: {bg_color}")
+
+                if hasattr(self, 'tab_bar'):
+                    self.tab_bar.setStyleSheet(f"background-color: {bg_color}; border: none;")
+
+                if hasattr(self, 'tab_widget'):
+                    self.tab_widget.setStyleSheet(f"""
+                        QWidget {{
+                            background-color: {bg_color};
+                            border: none;
+                            border-top-left-radius: 8px;
+                            border-top-right-radius: 8px;
+                        }}
+                    """)
+
+                if hasattr(self, 'tree'):
+                    self.tree.setStyleSheet(f"""
+                        QTreeView {{
+                            background: rgba(255, 255, 255, 0.9);
+                            border: none;
+                            font-family: ".AppleSystemUIFont", "Helvetica Neue", "Arial", sans-serif;
+                            font-size: 14px;
+                            border-radius: 10px;
+                            padding: 5px;
+                        }}
+                        QTreeView::item {{
+                            height: 15px;
+                            padding: 6px 4px;
+                            border: none;
+                        }}
+                        QTreeView:focus {{
+                            outline: none;
+                        }}
+                        QHeaderView::section {{
+                            background: rgba(250,250,250,0.95);
+                            padding: 8px;
+                            border: none;
+                            font-weight: 600;
+                            color: {theme['text_color']};
+                        }}
+                        QTreeView::item:hover {{
+                            background: transparent;
+                        }}
+                        QTreeView::item:selected {{
+                            background: transparent;
+                            color: #000000 !important;
+                            outline: none;
+                        }}
+                        QTreeView::branch {{
+                            background: transparent;
+                            border: none;
+                        }}
+                        QTreeView::branch:has-siblings:!adjoins-item {{
+                            background: transparent;
+                        }}
+                        QTreeView::branch:has-siblings:adjoins-item {{
+                            background: transparent;
+                        }}
+                        QTreeView::branch:!has-children:!has-siblings:adjoins-item {{
+                            background: transparent;
+                        }}
+                        QTreeView::branch:has-children:!has-siblings:closed {{
+                            background: transparent;
+                            image: none;
+                        }}
+                        QTreeView::branch:has-children:!has-siblings:open {{
+                            background: transparent;
+                            image: none;
+                        }}
+                        QTreeView::branch:has-children:has-siblings:closed {{
+                            image: none;
+                        }}
+                        QTreeView::branch:has-children:has-siblings:open {{
+                            image: none;
+                        }}
+                        QTreeView::branch:closed:has-children {{
+                            border-image: none;
+                        }}
+                        QTreeView::branch:open:has-children {{
+                            border-image: none;
+                        }}
+                        QTreeView::branch:selected {{
+                            background: #C0C0BE !important;
+                        }}
+                        QTreeView::branch:has-siblings:!adjoins-item:selected {{
+                            background: #C0C0BE !important;
+                        }}
+                        QTreeView::branch:has-siblings:adjoins-item:selected {{
+                            background: #C0C0BE !important;
+                        }}
+                        QTreeView::branch:!has-children:!has-siblings:adjoins-item:selected {{
+                            background: #C0C0BE !important;
+                        }}
+                        QTreeView::branch:has-children:!has-siblings:closed:selected,
+                        QTreeView::branch:has-children:!has-siblings:open:selected {{
+                            background: #C0C0BE !important;
+                        }}
+                        QTreeView::branch:hover {{
+                            background: rgba(230,240,255,0.6) !important;
+                        }}
+                    """)
+
+                if hasattr(self, '_status_bar'):
+                    self._status_bar.setStyleSheet(f"""
+                        StatusBar {{
+                            background-color: {bg_color};
+                            border-top: none;
+                        }}
+                        QLabel {{
+                            color: {theme['text_color']};
+                            font-size: 12px;
+                        }}
+                    """)
+
+                logger.info(f"Applied XMETA background overrides: {bg_color}")
             else:
-                # Use default styles if no env variable
                 self.top_panel.setStyleSheet(f"""
                     QWidget {{
                         background: {self._default_top_panel_bg};

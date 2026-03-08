@@ -404,8 +404,8 @@ python reproduce_ui.py
 
 #### Tab Bar Improvements
 - **Smart Close Button Visibility**: Tab close button now hides in normal run state, only shows in Trace mode and All Status Overview
-- **XMETA_BACKGROUND Support**: Tab bar background now respects `XMETA_BACKGROUND` environment variable for consistent theming
-- **Tab widget background**: Kept white background for tab widget itself for visual contrast
+- **XMETA_BACKGROUND Support**: Main window containers now respect `XMETA_BACKGROUND` for consistent theming across top panel, tab bar, tab widget, and status bar
+- **White seam fix**: Removed hard-coded light borders and shadows that showed up as white separator lines in flow environments
 
 #### Menu Bar Enhancements
 - **Bold Font**: Menu bar items now use bold font weight for better visibility
@@ -487,8 +487,9 @@ python reproduce_ui.py
 - **Custom Delegate**: Implemented `HiddenRowDelegate` to properly hide current selection row
 
 #### Background Color Environment Variable
-- **XMETA_BACKGROUND**: Top panel and menu bar background color can be customized via `XMETA_BACKGROUND` environment variable
-- Colors are read once at GUI startup
+- **XMETA_BACKGROUND**: Main window container backgrounds can be customized via `XMETA_BACKGROUND`
+- Covered areas include the main window, top panel, menu bar, tab bar, tab widget, and status bar
+- Colors are applied at GUI startup and re-applied after theme changes
 - Falls back to default gradient if environment variable is not set
 
 ### v2.5.0 - Bug Fixes and UX Improvements
