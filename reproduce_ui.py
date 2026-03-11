@@ -651,18 +651,23 @@ class TreeViewEventFilter(QObject):
 class RoundedScrollBar(QScrollBar):
     """Custom ScrollBar with rounded corners on all sides - works across platforms"""
 
-    def __init__(self, orientation, parent=None):
+    def __init__(self, orientation, parent=None, show_step_buttons=False):
         super().__init__(orientation, parent)
         self._handle_color = QColor("#b0b0b0")
         self._handle_color_hover = QColor("#909090")
         self._handle_color_pressed = QColor("#707070")
         self._track_color = QColor("#f0f0f0")
+        self._button_color = QColor("#ececec")
+        self._arrow_color = QColor("#8b8b8b")
         self._border_radius = 7.0
         self._hover = False
         self._pressed = False
+        self._show_step_buttons = show_step_buttons
 
         # Enable mouse tracking for hover effects
         self.setMouseTracking(True)
+        # Ensure custom painting does not leave transparent pixels that reveal parent backgrounds.
+        self.setAttribute(Qt.WA_OpaquePaintEvent, True)
 
     def setColors(self, handle_color, handle_hover, handle_pressed, track_color):
         """Update scrollbar colors (for theme support)"""
@@ -670,51 +675,83 @@ class RoundedScrollBar(QScrollBar):
         self._handle_color_hover = QColor(handle_hover)
         self._handle_color_pressed = QColor(handle_pressed)
         self._track_color = QColor(track_color)
+        self._button_color = QColor(track_color).darker(104)
         self.update()
 
-    def _calculate_slider_rect(self):
-        """Manually calculate slider rectangle based on scrollbar properties"""
-        # Get scrollbar dimensions and range
+    def _style_subcontrol_rect(self, control):
+        """Return the style-calculated geometry for a scrollbar sub-control."""
+        option = QStyleOptionSlider()
+        self.initStyleOption(option)
+        return self.style().subControlRect(QStyle.CC_ScrollBar, option, control, self)
+
+    def _draw_step_button(self, painter, rect, direction):
+        """Draw a rounded step button with a simple triangular arrow."""
+        if not self._show_step_buttons or not rect.isValid() or rect.width() < 4 or rect.height() < 4:
+            return
+
+        button_rect = rect.adjusted(1, 1, -1, -1)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(self._button_color)
+        painter.drawRoundedRect(button_rect, self._border_radius, self._border_radius)
+
+        painter.setBrush(self._arrow_color)
+        center = button_rect.center()
         if self.orientation() == Qt.Vertical:
-            total_length = self.height()
-            slider_extent = self.pageStep()
+            if direction == "up":
+                points = QPolygonF([
+                    QPointF(center.x(), center.y() - 3),
+                    QPointF(center.x() - 4, center.y() + 2),
+                    QPointF(center.x() + 4, center.y() + 2),
+                ])
+            else:
+                points = QPolygonF([
+                    QPointF(center.x(), center.y() + 3),
+                    QPointF(center.x() - 4, center.y() - 2),
+                    QPointF(center.x() + 4, center.y() - 2),
+                ])
         else:
-            total_length = self.width()
-            slider_extent = self.pageStep()
-
-        # Get range
-        doc_size = self.maximum() - self.minimum() + self.pageStep()
-        if doc_size <= 0:
-            doc_size = 1
-
-        # Calculate slider size (minimum 20 pixels)
-        slider_size = max(20, int((slider_extent / doc_size) * total_length))
-
-        # Calculate slider position
-        value_range = self.maximum() - self.minimum()
-        if value_range <= 0:
-            slider_pos = 0
-        else:
-            slider_pos = int(((self.value() - self.minimum()) / value_range) * (total_length - slider_size))
-
-        # Create the slider rectangle
-        if self.orientation() == Qt.Vertical:
-            return QRect(0, slider_pos, self.width(), slider_size)
-        else:
-            return QRect(slider_pos, 0, slider_size, self.height())
+            if direction == "left":
+                points = QPolygonF([
+                    QPointF(center.x() - 3, center.y()),
+                    QPointF(center.x() + 2, center.y() - 4),
+                    QPointF(center.x() + 2, center.y() + 4),
+                ])
+            else:
+                points = QPolygonF([
+                    QPointF(center.x() + 3, center.y()),
+                    QPointF(center.x() - 2, center.y() - 4),
+                    QPointF(center.x() - 2, center.y() + 4),
+                ])
+        painter.drawPolygon(points)
 
     def paintEvent(self, event):
         """Custom paint event to draw rounded scrollbar - platform independent"""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
+        # Paint a solid base first to avoid theme background bleed-through around antialiased corners.
+        painter.fillRect(self.rect(), self._track_color)
 
-        # Fill track background
+        groove_rect = self._style_subcontrol_rect(QStyle.SC_ScrollBarGroove)
+        slider_rect = self._style_subcontrol_rect(QStyle.SC_ScrollBarSlider)
+        sub_line_rect = self._style_subcontrol_rect(QStyle.SC_ScrollBarSubLine)
+        add_line_rect = self._style_subcontrol_rect(QStyle.SC_ScrollBarAddLine)
+
         painter.setPen(Qt.NoPen)
-        painter.setBrush(self._track_color)
-        painter.drawRect(self.rect())
+        if groove_rect.isValid():
+            painter.setBrush(self._track_color)
+            groove_draw_rect = groove_rect.adjusted(1, 1, -1, -1)
+            painter.drawRoundedRect(groove_draw_rect, self._border_radius, self._border_radius)
 
-        # Get slider rectangle using manual calculation
-        slider_rect = self._calculate_slider_rect()
+        self._draw_step_button(
+            painter,
+            sub_line_rect,
+            "up" if self.orientation() == Qt.Vertical else "left",
+        )
+        self._draw_step_button(
+            painter,
+            add_line_rect,
+            "down" if self.orientation() == Qt.Vertical else "right",
+        )
 
         if not slider_rect.isValid() or slider_rect.width() < 2 or slider_rect.height() < 2:
             return
@@ -765,8 +802,12 @@ class ColorTreeView(QTreeView):
     def __init__(self, parent=None):
         super().__init__(parent)
         # Replace default scrollbars with rounded ones
-        self._v_scrollbar = RoundedScrollBar(Qt.Vertical, self)
-        self._h_scrollbar = RoundedScrollBar(Qt.Horizontal, self)
+        self._v_scrollbar = RoundedScrollBar(Qt.Vertical, self, show_step_buttons=True)
+        self._h_scrollbar = RoundedScrollBar(Qt.Horizontal, self, show_step_buttons=True)
+        self._v_scrollbar.setFixedWidth(16)
+        self._h_scrollbar.setFixedHeight(16)
+        self._v_scrollbar.setColors("#b5b5b5", "#9f9f9f", "#8b8b8b", "#f3f3f3")
+        self._h_scrollbar.setColors("#b5b5b5", "#9f9f9f", "#8b8b8b", "#f3f3f3")
         self.setVerticalScrollBar(self._v_scrollbar)
         self.setHorizontalScrollBar(self._h_scrollbar)
 
@@ -825,9 +866,11 @@ class BoundedComboBox(QComboBox):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setEditable(False) # Default to non-editable
+        self.setMaxVisibleItems(10)
         self._arrow_color = QColor("#555555")
         self._arrow_color_hover = QColor("#333333")
         self._delegate = None  # Custom delegate for hiding current row
+        self._popup_hidden_row = -1
 
         # Add search icon button
         self.search_btn = QPushButton(self)
@@ -850,6 +893,13 @@ class BoundedComboBox(QComboBox):
 
         # Connect signal to exit search mode on selection
         self.currentIndexChanged.connect(self.disable_search_mode)
+
+        self._popup_scrollbar = RoundedScrollBar(Qt.Vertical, self.view(), show_step_buttons=True)
+        self._popup_scrollbar.setFixedWidth(16)
+        self._popup_scrollbar.setColors("#b5b5b5", "#9f9f9f", "#8b8b8b", "#f3f3f3")
+        self.view().setVerticalScrollBar(self._popup_scrollbar)
+        self.view().setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        self.view().setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
     def setArrowColor(self, color):
         """Set the dropdown arrow color"""
@@ -982,43 +1032,38 @@ class BoundedComboBox(QComboBox):
     def showPopup(self):
         # Hide current item from popup and position popup tightly below combobox
         current_idx = self.currentIndex()
-        self._hidden_row = current_idx
-
-        # Create custom delegate that returns zero height for hidden row
-        class HiddenRowDelegate(QStyledItemDelegate):
-            def __init__(self, parent_combo):
-                super().__init__(parent_combo)
-                self.hidden_row = -1
-
-            def sizeHint(self, option, index):
-                size = super().sizeHint(option, index)
-                if index.row() == self.hidden_row:
-                    return QSize(size.width(), 0)
-                return size
-
-            def paint(self, painter, option, index):
-                if index.row() == self.hidden_row:
-                    return  # Don't paint hidden row
-                super().paint(painter, option, index)
-
-        # Set custom delegate
-        if not hasattr(self, '_delegate') or self._delegate is None:
-            self._delegate = HiddenRowDelegate(self)
-        self._delegate.hidden_row = current_idx
-        self.view().setItemDelegate(self._delegate)
+        if self._popup_hidden_row >= 0:
+            self.view().setRowHidden(self._popup_hidden_row, False)
+        self._popup_hidden_row = current_idx
+        if current_idx >= 0:
+            self.view().setRowHidden(current_idx, True)
 
         super().showPopup()
 
         # Get the popup after showing
         popup = self.view().parentWidget()
         if popup:
+            hidden_rows = 1 if current_idx >= 0 else 0
+            visible_rows = max(1, min(self.count() - hidden_rows, self.maxVisibleItems()))
+            row_height = self.view().sizeHintForRow(0)
+            if row_height <= 0:
+                row_height = 28
+            frame_width = popup.frameWidth() if hasattr(popup, "frameWidth") else 0
+            popup_width = self.width()
+            popup_height = visible_rows * row_height + frame_width * 2
+            popup.resize(popup_width, popup_height)
+
             # Position popup directly below combobox with no gap
             combo_bottom_left = self.mapToGlobal(self.rect().bottomLeft())
             popup.move(combo_bottom_left)
 
     def hidePopup(self):
-        # Reset hidden row
-        self._hidden_row = -1
+        # Restore the hidden popup row so future openings do not keep a gap
+        if self._popup_hidden_row >= 0:
+            self.view().setRowHidden(self._popup_hidden_row, False)
+            self._popup_hidden_row = -1
+            self.view().doItemsLayout()
+            self.view().viewport().update()
         super().hidePopup()
 
     def focusOutEvent(self, event):
@@ -1372,14 +1417,14 @@ class StatusBar(QFrame):
 
     def _setup_ui(self):
         """Setup the status bar UI"""
-        self.setFixedHeight(32)
+        self.setFixedHeight(34)
         self.setStyleSheet("""
             StatusBar {
-                background-color: #ffffff;
-                border-top: 1px solid #e0e0e0;
+                background-color: rgba(255, 255, 255, 0.95);
+                border-top: 1px solid #d8e2ec;
             }
             QLabel {
-                color: #666666;
+                color: #526071;
                 font-size: 12px;
             }
         """)
@@ -1390,7 +1435,7 @@ class StatusBar(QFrame):
 
         # Left side - Run info
         self._run_label = QLabel("Run: -")
-        self._run_label.setStyleSheet("color: #1976d2; font-weight: 500;")
+        self._run_label.setStyleSheet("color: #0f5fa8; font-weight: 600;")
         layout.addWidget(self._run_label)
 
         # Separator
@@ -1398,6 +1443,7 @@ class StatusBar(QFrame):
 
         # Task statistics
         self._stats_label = QLabel("Tasks: -")
+        self._stats_label.setStyleSheet("color: #314154; font-weight: 500;")
         layout.addWidget(self._stats_label)
 
         # Separator
@@ -1446,10 +1492,14 @@ class StatusBar(QFrame):
             if count > 0:
                 config = STATUS_CONFIG.get(status, {})
                 icon = config.get("icon", "")
-                color = config.get("color", "#87CEEB")
-                parts.append(f'<span style="color:{color}">{icon} {count}</span>')
+                bg_color = config.get("color", "#87CEEB")
+                text_color = config.get("text_color", "#223041")
+                parts.append(
+                    f'<span style="background-color:{bg_color}; color:{text_color};">'
+                    f'&nbsp;{icon} {count}&nbsp;</span>'
+                )
 
-        self._status_breakdown.setText(" | ".join(parts))
+        self._status_breakdown.setText("&nbsp;".join(parts))
 
     def update_connection(self, connected):
         """Update connection status"""
@@ -3007,11 +3057,13 @@ class MainWindow(QMainWindow):
         self.top_panel.setGraphicsEffect(shadow)
 
         top_layout = QVBoxLayout(self.top_panel)
-        top_layout.setContentsMargins(16, 6, 16, 6)
-        top_layout.setSpacing(4)
+        top_layout.setContentsMargins(16, 8, 16, 8)
+        top_layout.setSpacing(6)
 
         # Row 1 of Top Panel
         row1_layout = QHBoxLayout()
+        row1_layout.setContentsMargins(0, 0, 0, 0)
+        row1_layout.setSpacing(8)
 
         # Create combo box with bounded popup
         self.combo = BoundedComboBox()
@@ -3067,25 +3119,41 @@ class MainWindow(QMainWindow):
             }
         """)
 
+        # Compact search field for the main target list
+        search_input_style = """
+            QLineEdit {
+                background-color: rgba(255, 255, 255, 0.96);
+                border: 1px solid #cfd8e3;
+                border-radius: 6px;
+                padding: 6px 10px;
+                color: #223041;
+                font-size: 12px;
+            }
+            QLineEdit:focus {
+                background-color: #ffffff;
+                border: 1px solid #1976d2;
+            }
+        """
+
         # Buttons - Modern clean style
         btn_style = """
             QPushButton {
                 background-color: #ffffff;
-                border: 1px solid #d0d0d0;
+                border: 1px solid #cfd8e3;
                 border-radius: 6px;
-                padding: 6px 14px;
+                padding: 6px 12px;
                 font-weight: 500;
                 font-size: 12px;
-                color: #333333;
+                color: #314154;
             }
             QPushButton:hover {
-                background-color: #f5f5f5;
-                border: 1px solid #1976d2;
-                color: #1976d2;
+                background-color: #f7fbff;
+                border: 1px solid #7ba4d9;
+                color: #0f5fa8;
             }
             QPushButton:pressed {
-                background-color: #e3f2fd;
-                border: 1px solid #1976d2;
+                background-color: #e7f1fb;
+                border: 1px solid #5d8fcf;
             }
         """
 
@@ -3095,8 +3163,8 @@ class MainWindow(QMainWindow):
                 background-color: #1976d2;
                 border: none;
                 border-radius: 6px;
-                padding: 6px 14px;
-                font-weight: 500;
+                padding: 6px 12px;
+                font-weight: 600;
                 font-size: 12px;
                 color: #ffffff;
             }
@@ -3111,20 +3179,20 @@ class MainWindow(QMainWindow):
         # Warning button style (for stop, skip, invalid)
         warning_btn_style = """
             QPushButton {
-                background-color: #ffffff;
-                border: 1px solid #ffcdd2;
+                background-color: #fff8f8;
+                border: 1px solid #f3c5c5;
                 border-radius: 6px;
-                padding: 6px 14px;
-                font-weight: 500;
+                padding: 6px 12px;
+                font-weight: 600;
                 font-size: 12px;
-                color: #c62828;
+                color: #b42318;
             }
             QPushButton:hover {
-                background-color: #ffebee;
-                border: 1px solid #ef5350;
+                background-color: #ffefef;
+                border: 1px solid #e38b8b;
             }
             QPushButton:pressed {
-                background-color: #ffcdd2;
+                background-color: #ffdede;
             }
         """
 
@@ -3132,8 +3200,17 @@ class MainWindow(QMainWindow):
         self.buttons_row2 = ["term", "csh", "log", "cmd", "trace up", "trace dn"]
 
         row1_layout.addWidget(self.combo)
+
+        self.quick_search_input = QLineEdit()
+        self.quick_search_input.setPlaceholderText("Search targets")
+        self.quick_search_input.setClearButtonEnabled(True)
+        self.quick_search_input.setFixedWidth(220)
+        self.quick_search_input.setStyleSheet(search_input_style)
+        self.quick_search_input.textChanged.connect(self._on_top_search_changed)
+        row1_layout.addWidget(self.quick_search_input)
+
         row1_layout.addStretch()
-        row1_layout.addSpacing(24)
+        row1_layout.addSpacing(12)
 
         # Create buttons and connect to commands
         bt_runall = QPushButton("Run All")
@@ -3243,7 +3320,7 @@ class MainWindow(QMainWindow):
         # Set custom header with embedded filter for target column
         self.header = FilterHeaderView(Qt.Horizontal, self.tree, filter_column=1)
         self.tree.setHeader(self.header)
-        self.header.filter_changed.connect(self.filter_tree)
+        self.header.filter_changed.connect(self._on_header_filter_changed)
         self.header.level_double_clicked.connect(self.toggle_tree_expansion)
 
         # Set the custom delegate
@@ -3260,27 +3337,28 @@ class MainWindow(QMainWindow):
         self.tree.setSelectionBehavior(QTreeView.SelectRows) # Ensure full row selection/hover
         self.tree.setStyleSheet("""
             QTreeView {
-                background: rgba(255, 255, 255, 0.9);
-                border: 1px solid rgba(0,0,0,0.1);
+                background: rgba(255, 255, 255, 0.96);
+                border: none;
                 font-family: ".AppleSystemUIFont", "Helvetica Neue", "Arial", sans-serif;
-                font-size: 14px;
+                font-size: 13px;
                 border-radius: 10px;
-                padding: 5px;
+                padding: 6px 4px 4px 4px;
             }
             QTreeView::item {
-                height: 15px;
-                padding: 6px 4px;
+                height: 17px;
+                padding: 7px 5px;
                 border: none;
             }
             QTreeView:focus {
                 outline: none;
             }
             QHeaderView::section {
-                background: rgba(250,250,250,0.95);
-                padding: 8px;
-                border: 1px solid #e0e0e0;
+                background: rgba(247,249,252,0.98);
+                padding: 8px 10px;
+                border: none;
+                border-bottom: 1px solid rgba(148, 163, 184, 0.35);
                 font-weight: 600;
-                color: #444444;
+                color: #475569;
             }
             QTreeView::item:hover {
                 background: transparent;
@@ -3473,8 +3551,39 @@ class MainWindow(QMainWindow):
 
     def _focus_search(self):
         """Focus the search input - shows the embedded filter in header"""
-        if hasattr(self, 'header'):
+        if hasattr(self, 'quick_search_input'):
+            self.quick_search_input.setFocus()
+            self.quick_search_input.selectAll()
+        elif hasattr(self, 'header'):
             self.header.show_filter()
+
+    def _set_quick_search_text(self, text):
+        """Update the persistent search field without triggering another filter pass."""
+        if hasattr(self, 'quick_search_input'):
+            was_blocked = self.quick_search_input.blockSignals(True)
+            self.quick_search_input.setText(text)
+            self.quick_search_input.blockSignals(was_blocked)
+
+    def _set_header_filter_text_silent(self, text):
+        """Update the header search state without emitting filter_changed again."""
+        if not hasattr(self, 'header'):
+            return
+
+        self.header._filter_text = text
+        if self.header.filter_edit:
+            was_blocked = self.header.filter_edit.blockSignals(True)
+            self.header.filter_edit.setText(text)
+            self.header.filter_edit.blockSignals(was_blocked)
+
+    def _on_top_search_changed(self, text):
+        """Keep the header search state in sync with the visible search field."""
+        self._set_header_filter_text_silent(text)
+        self.filter_tree(text)
+
+    def _on_header_filter_changed(self, text):
+        """Mirror header search edits back to the visible search field."""
+        self._set_quick_search_text(text)
+        self.filter_tree(text)
 
     def _refresh_view(self):
         """Refresh the current view"""
@@ -3535,13 +3644,13 @@ class MainWindow(QMainWindow):
             QTreeView {{
                 background: {theme['tree_bg']};
                 color: {theme['text_color']};
-                border: 1px solid {theme['border_color']};
+                border: none;
                 border-radius: 10px;
-                padding: 5px;
+                padding: 6px 4px 4px 4px;
             }}
             QTreeView::item {{
-                height: 15px;
-                padding: 6px 4px;
+                height: 17px;
+                padding: 7px 5px;
                 border: none;
             }}
             QTreeView::item:hover {{
@@ -3552,9 +3661,10 @@ class MainWindow(QMainWindow):
                 color: {theme['text_color']};
             }}
             QHeaderView::section {{
-                background: rgba(250,250,250,0.95);
-                padding: 8px;
-                border: 1px solid {theme['border_color']};
+                background: {theme['panel_bg']};
+                padding: 8px 10px;
+                border: none;
+                border-bottom: 1px solid {theme['border_color']};
                 font-weight: 600;
                 color: {theme['text_color']};
             }}
@@ -3826,8 +3936,9 @@ class MainWindow(QMainWindow):
 
             # Clear search to restore full tree
             if hasattr(self, 'header'):
-                self.header.set_filter_text("")
+                self._set_header_filter_text_silent("")
                 self.header.hide_filter()
+            self._set_quick_search_text("")
             self.is_search_mode = False
             self.model.clear()
             self.populate_data()
@@ -4563,13 +4674,13 @@ class MainWindow(QMainWindow):
                             background: rgba(255, 255, 255, 0.9);
                             border: none;
                             font-family: ".AppleSystemUIFont", "Helvetica Neue", "Arial", sans-serif;
-                            font-size: 14px;
+                            font-size: 13px;
                             border-radius: 10px;
-                            padding: 5px;
+                            padding: 6px 4px 4px 4px;
                         }}
                         QTreeView::item {{
-                            height: 15px;
-                            padding: 6px 4px;
+                            height: 17px;
+                            padding: 7px 5px;
                             border: none;
                         }}
                         QTreeView:focus {{
@@ -4577,8 +4688,9 @@ class MainWindow(QMainWindow):
                         }}
                         QHeaderView::section {{
                             background: rgba(250,250,250,0.95);
-                            padding: 8px;
+                            padding: 8px 10px;
                             border: none;
+                            border-bottom: 1px solid rgba(148, 163, 184, 0.35);
                             font-weight: 600;
                             color: {theme['text_color']};
                         }}
