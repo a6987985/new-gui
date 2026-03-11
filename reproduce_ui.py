@@ -2872,7 +2872,8 @@ class MainWindow(QMainWindow):
         """Initialize window properties and animation."""
         self.setWindowTitle("XMeta Console")
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
-        window_bg = self._get_xmeta_background_color() or "#f5f5f5"
+        self.window_bg = self._get_xmeta_background_color() or "#f5f5f5"
+        window_bg = self.window_bg
 
         # Fade-in animation for the window
         self.setWindowOpacity(0.0)
@@ -2885,9 +2886,9 @@ class MainWindow(QMainWindow):
 
         # Modern clean background
         self.setStyleSheet(f"""
-            QMainWindow {
+            QMainWindow {{
                 background-color: {window_bg};
-            }
+            }}
         """)
 
     def _init_menu_bar(self):
@@ -2897,13 +2898,13 @@ class MainWindow(QMainWindow):
             QMenuBar {
                 background-color: #ffffff;
                 border-bottom: 1px solid #e0e0e0;
-                padding: 4px 8px;
+                padding: 2px 8px;
                 font-size: 13px;
                 font-weight: bold;
             }
             QMenuBar::item {
                 background-color: transparent;
-                padding: 6px 14px;
+                padding: 4px 14px;
                 border-radius: 4px;
                 color: #333333;
             }
@@ -3006,8 +3007,8 @@ class MainWindow(QMainWindow):
         self.top_panel.setGraphicsEffect(shadow)
 
         top_layout = QVBoxLayout(self.top_panel)
-        top_layout.setContentsMargins(16, 12, 16, 12)
-        top_layout.setSpacing(8)
+        top_layout.setContentsMargins(16, 6, 16, 6)
+        top_layout.setSpacing(4)
 
         # Row 1 of Top Panel
         row1_layout = QHBoxLayout()
@@ -3170,29 +3171,39 @@ class MainWindow(QMainWindow):
 
         # Tab Bar (Modern clean look)
         self.tab_bar = QWidget()
-        self._default_tab_bar_style = """
-            background-color: #f5f5f5;
-            border-bottom: 1px solid #e0e0e0;
+        self.tab_bar.setObjectName("tabBar")
+        # Derive a slightly darker shade from the window background
+        _tab_bg_color = QColor(self.window_bg).darker(120)
+        _tab_bg_hex = _tab_bg_color.name()
+        self._default_tab_bar_style = f"""
+            #tabBar {{
+                background-color: {_tab_bg_hex};
+                border-bottom: 1px solid #d0d0d0;
+            }}
         """
         self.tab_bar.setStyleSheet(self._default_tab_bar_style)
         tab_layout = QHBoxLayout(self.tab_bar)
-        tab_layout.setContentsMargins(12, 6, 12, 6)
+        tab_layout.setContentsMargins(12, 2, 12, 2)
         tab_layout.setSpacing(2)
 
         # Custom Tab Widget (Container for label + close button)
         self.tab_widget = QWidget()
-        self.tab_widget.setStyleSheet("""
-            QWidget {
-                background-color: #ffffff;
-                border: 1px solid #e0e0e0;
+        self.tab_widget.setObjectName("tabWidget")
+        # Use a slightly lighter shade than tab bar for the active tab
+        _tab_widget_bg = QColor(self.window_bg).lighter(108)
+        _tab_widget_bg_hex = _tab_widget_bg.name()
+        self.tab_widget.setStyleSheet(f"""
+            #tabWidget {{
+                background-color: {_tab_widget_bg_hex};
+                border: 1px solid #d0d0d0;
                 border-bottom: none;
                 border-top-left-radius: 8px;
                 border-top-right-radius: 8px;
-            }
+            }}
         """)
         tab_inner_layout = QHBoxLayout(self.tab_widget)
-        tab_inner_layout.setContentsMargins(14, 8, 10, 8)
-        tab_inner_layout.setSpacing(8)
+        tab_inner_layout.setContentsMargins(14, 4, 10, 4)
+        tab_inner_layout.setSpacing(6)
 
         self.tab_label = ClickableLabel("") # Initial empty, will be set by update_ui_from_selection
         self.tab_label.doubleClicked.connect(self.toggle_tree_expansion)
@@ -4528,12 +4539,18 @@ class MainWindow(QMainWindow):
                 """)
 
                 if hasattr(self, 'tab_bar'):
-                    self.tab_bar.setStyleSheet(f"background-color: {bg_color}; border: none;")
+                    self.tab_bar.setStyleSheet(f"""
+                        #tabBar {{
+                            background-color: {bg_color};
+                            border: none;
+                        }}
+                    """)
 
                 if hasattr(self, 'tab_widget'):
+                    tab_widget_bg = QColor(bg_color).lighter(108).name()
                     self.tab_widget.setStyleSheet(f"""
-                        QWidget {{
-                            background-color: {bg_color};
+                        #tabWidget {{
+                            background-color: {tab_widget_bg};
                             border: none;
                             border-top-left-radius: 8px;
                             border-top-right-radius: 8px;
