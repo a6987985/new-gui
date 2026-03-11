@@ -2949,6 +2949,23 @@ class MainWindow(QMainWindow):
             }}
         """)
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._position_top_action_buttons()
+
+    def _position_top_action_buttons(self):
+        """Float the top action buttons independently from the main row layout."""
+        if not hasattr(self, '_top_button_container') or not hasattr(self, 'top_panel'):
+            return
+
+        container = self._top_button_container
+        container.adjustSize()
+        right_margin = 16
+        x_pos = self.top_panel.width() - right_margin - container.sizeHint().width()
+        y_pos = 0
+        container.move(max(0, x_pos), y_pos)
+        container.raise_()
+
     def _init_menu_bar(self):
         """Initialize the menu bar."""
         self.menu_bar = self.menuBar()
@@ -3049,10 +3066,11 @@ class MainWindow(QMainWindow):
     def _init_top_panel(self):
         """Initialize the top control panel."""
         self.top_panel = QWidget()
+        self.top_panel.setObjectName("topPanel")
         self.top_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self._default_top_panel_bg = "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #f8f9fa, stop:1 #e9ecef)"
         self.top_panel.setStyleSheet("""
-            QWidget {
+            #topPanel {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #f8f9fa, stop:1 #e9ecef);
                 border-radius: 0px;
@@ -3193,36 +3211,50 @@ class MainWindow(QMainWindow):
 
         row1_layout.addWidget(self.combo)
 
+        button_container = QWidget(self.top_panel)
+        button_container.setAttribute(Qt.WA_TranslucentBackground, True)
+        button_container.setStyleSheet("background: transparent; border: none;")
+        button_layout = QHBoxLayout(button_container)
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.setSpacing(8)
+
         # Create buttons and connect to commands
         bt_runall = QPushButton("Run All")
         bt_runall.setStyleSheet(action_btn_style)
         bt_runall.clicked.connect(lambda: self.start('XMeta_run all'))
-        row1_layout.addWidget(bt_runall)
+        button_layout.addWidget(bt_runall)
 
         bt_run = QPushButton("Run")
         bt_run.setStyleSheet(action_btn_style)
         bt_run.clicked.connect(lambda: self.start('XMeta_run'))
-        row1_layout.addWidget(bt_run)
+        button_layout.addWidget(bt_run)
 
         bt_stop = QPushButton("Stop")
         bt_stop.setStyleSheet(warning_btn_style)
         bt_stop.clicked.connect(lambda: self.start('XMeta_stop'))
-        row1_layout.addWidget(bt_stop)
+        button_layout.addWidget(bt_stop)
 
         bt_skip = QPushButton("Skip")
         bt_skip.setStyleSheet(warning_btn_style)
         bt_skip.clicked.connect(lambda: self.start('XMeta_skip'))
-        row1_layout.addWidget(bt_skip)
+        button_layout.addWidget(bt_skip)
 
         bt_unskip = QPushButton("Unskip")
         bt_unskip.setStyleSheet(btn_style)
         bt_unskip.clicked.connect(lambda: self.start('XMeta_unskip'))
-        row1_layout.addWidget(bt_unskip)
+        button_layout.addWidget(bt_unskip)
 
         bt_invalid = QPushButton("Invalid")
         bt_invalid.setStyleSheet(warning_btn_style)
         bt_invalid.clicked.connect(lambda: self.start('XMeta_invalid'))
-        row1_layout.addWidget(bt_invalid)
+        button_layout.addWidget(bt_invalid)
+
+        button_container.adjustSize()
+        self._top_button_container = button_container
+        self._top_button_placeholder = QWidget()
+        self._top_button_placeholder.setStyleSheet("background: transparent; border: none;")
+        self._top_button_placeholder.setFixedWidth(button_container.sizeHint().width())
+        row1_layout.addWidget(self._top_button_placeholder)
 
         top_layout.addLayout(row1_layout)
         self._main_layout.addWidget(self.top_panel)
@@ -3294,6 +3326,7 @@ class MainWindow(QMainWindow):
         tab_layout.addWidget(self.tab_widget)
         tab_layout.addStretch()
         row1_layout.insertWidget(1, self.tab_bar, 1)
+        QTimer.singleShot(0, self._position_top_action_buttons)
 
         # Tree View
         self.tree = ColorTreeView()
@@ -3320,14 +3353,14 @@ class MainWindow(QMainWindow):
             QTreeView {
                 background: rgba(255, 255, 255, 0.96);
                 border: none;
-                font-family: ".AppleSystemUIFont", "Helvetica Neue", "Arial", sans-serif;
-                font-size: 13px;
+                font-family: "Segoe UI", "Helvetica Neue", "Arial", sans-serif;
+                font-size: 10pt;
                 border-radius: 10px;
                 padding: 6px 4px 4px 4px;
             }
             QTreeView::item {
                 height: 17px;
-                padding: 7px 5px;
+                padding: 5px 6px;
                 border: none;
             }
             QTreeView:focus {
@@ -3335,9 +3368,11 @@ class MainWindow(QMainWindow):
             }
             QHeaderView::section {
                 background: rgba(247,249,252,0.98);
-                padding: 8px 10px;
+                padding: 7px 12px;
                 border: none;
                 border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+                font-family: "Segoe UI", "Helvetica Neue", "Arial", sans-serif;
+                font-size: 10pt;
                 font-weight: 600;
                 color: #475569;
             }
@@ -3439,6 +3474,9 @@ class MainWindow(QMainWindow):
 
         # ========== Setup Keyboard Shortcuts ==========
         self._setup_keyboard_shortcuts()
+
+        # Align the initial window width with the main-view column defaults.
+        self._apply_initial_window_width()
 
         # Initial UI Update
         self.on_run_changed()
@@ -3627,11 +3665,13 @@ class MainWindow(QMainWindow):
                 color: {theme['text_color']};
                 border: none;
                 border-radius: 10px;
+                font-family: "Segoe UI", "Helvetica Neue", "Arial", sans-serif;
+                font-size: 10pt;
                 padding: 6px 4px 4px 4px;
             }}
             QTreeView::item {{
                 height: 17px;
-                padding: 7px 5px;
+                padding: 5px 6px;
                 border: none;
             }}
             QTreeView::item:hover {{
@@ -3643,9 +3683,11 @@ class MainWindow(QMainWindow):
             }}
             QHeaderView::section {{
                 background: {theme['panel_bg']};
-                padding: 8px 10px;
+                padding: 7px 12px;
                 border: none;
                 border-bottom: 1px solid {theme['border_color']};
+                font-family: "Segoe UI", "Helvetica Neue", "Arial", sans-serif;
+                font-size: 10pt;
                 font-weight: 600;
                 color: {theme['text_color']};
             }}
@@ -4214,12 +4256,6 @@ class MainWindow(QMainWindow):
         self.model.clear()
         self.model.setHorizontalHeaderLabels(["Run Directory", "Latest Target", "Status", "Time Stamp"])
         
-        # Set column widths for this view
-        self.tree.setColumnWidth(0, 350)  # Run Directory
-        self.tree.setColumnWidth(1, 400)  # Latest Target
-        self.tree.setColumnWidth(2, 100)  # Status
-        self.tree.setColumnWidth(3, 180)  # Time Stamp
-        
         # Status to Color Mapping (use global constant)
         color_map = STATUS_COLORS
         
@@ -4297,7 +4333,93 @@ class MainWindow(QMainWindow):
             self.model.appendRow(row_items)
         
         self.tree.setUpdatesEnabled(True)
+        self._apply_all_status_column_widths()
         logger.debug(f"show_all_status completed, showing {len(runs)} runs")
+
+    def _apply_all_status_column_widths(self):
+        """Use adaptive widths for the four-column all-status overview."""
+        if not hasattr(self, 'tree') or not hasattr(self, 'model'):
+            return
+        if self.model.columnCount() < 4:
+            return
+
+        header = self.tree.header()
+        if header is None:
+            return
+
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+
+        self.tree.resizeColumnToContents(0)
+        self.tree.resizeColumnToContents(2)
+        self.tree.resizeColumnToContents(3)
+
+        header_min_widths = self._get_header_min_widths()
+        for col in range(4):
+            min_width = header_min_widths.get(col, 0)
+            if min_width > 0:
+                self.tree.setColumnWidth(col, max(self.tree.columnWidth(col), min_width))
+
+    def _get_header_min_widths(self):
+        """Calculate per-column minimum widths to fully show header text."""
+        if not hasattr(self, 'tree') or not hasattr(self, 'model'):
+            return {}
+
+        header = self.tree.header()
+        if header is None:
+            return {}
+
+        header_font = header.font()
+        font_metrics = QFontMetrics(header_font)
+        min_widths = {}
+
+        for col in range(self.model.columnCount()):
+            header_text = self.model.headerData(col, Qt.Horizontal) or ""
+            text_based_min = font_metrics.horizontalAdvance(str(header_text)) + 30
+            style_based_min = header.sectionSizeFromContents(col).width() + 8
+            min_widths[col] = max(text_based_min, style_based_min)
+
+        return min_widths
+
+    def _get_main_view_default_column_widths(self):
+        """Return the default width plan for the main tree view."""
+        font_metrics = self.tree.fontMetrics()
+        status_values = ["finish", "running", "failed", "skip", "scheduled", "pending"]
+        status_width = max(font_metrics.horizontalAdvance(status) for status in status_values) + 20
+
+        time_format = "YYYY-MM-DD HH:MM:SS"
+        time_width = font_metrics.horizontalAdvance(time_format) + 20
+
+        return {
+            0: 80,
+            1: 400,
+            2: status_width,
+            3: 120,
+            4: time_width,
+            5: time_width,
+            6: 100,
+            7: 60,
+            8: 80,
+        }
+
+    def _get_main_view_default_window_width(self):
+        """Estimate the startup window width from the main-view column defaults."""
+        column_widths = self._get_main_view_default_column_widths()
+        tree_content_width = sum(column_widths.values())
+        scrollbar_width = self.tree.verticalScrollBar().sizeHint().width()
+        frame_width = self.tree.frameWidth() * 2
+        return tree_content_width + scrollbar_width + frame_width
+
+    def _apply_initial_window_width(self):
+        """Resize the startup window to match the main-view default tree width."""
+        desired_width = max(
+            self._get_main_view_default_window_width(),
+            self.minimumSizeHint().width(),
+        )
+        self.resize(desired_width, WINDOW_HEIGHT)
 
     def restore_normal_view(self):
         """Restore the normal single-run TreeView from All Status view."""
@@ -4584,7 +4706,7 @@ class MainWindow(QMainWindow):
                 if self.centralWidget() is not None:
                     self.centralWidget().setStyleSheet(f"background-color: {bg_color};")
 
-                self.top_panel.setStyleSheet(f"background-color: {bg_color}; border: none;")
+                self.top_panel.setStyleSheet(f"#topPanel {{ background-color: {bg_color}; border: none; }}")
                 if self.top_panel.graphicsEffect() is not None:
                     self.top_panel.setGraphicsEffect(None)
 
@@ -4654,14 +4776,14 @@ class MainWindow(QMainWindow):
                         QTreeView {{
                             background: rgba(255, 255, 255, 0.9);
                             border: none;
-                            font-family: ".AppleSystemUIFont", "Helvetica Neue", "Arial", sans-serif;
-                            font-size: 13px;
+                            font-family: "Segoe UI", "Helvetica Neue", "Arial", sans-serif;
+                            font-size: 10pt;
                             border-radius: 10px;
                             padding: 6px 4px 4px 4px;
                         }}
                         QTreeView::item {{
                             height: 17px;
-                            padding: 7px 5px;
+                            padding: 5px 6px;
                             border: none;
                         }}
                         QTreeView:focus {{
@@ -4669,9 +4791,11 @@ class MainWindow(QMainWindow):
                         }}
                         QHeaderView::section {{
                             background: rgba(250,250,250,0.95);
-                            padding: 8px 10px;
+                            padding: 7px 12px;
                             border: none;
                             border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+                            font-family: "Segoe UI", "Helvetica Neue", "Arial", sans-serif;
+                            font-size: 10pt;
                             font-weight: 600;
                             color: {theme['text_color']};
                         }}
@@ -6266,34 +6390,19 @@ class MainWindow(QMainWindow):
 
     def set_column_widths(self):
         """Set column widths to user preferences"""
-        self.tree.setColumnWidth(0, 80)  # level
-        self.tree.setColumnWidth(1, 400) # target
+        header = self.tree.header()
+        default_widths = self._get_main_view_default_column_widths()
+        header_min_widths = self._get_header_min_widths()
+        if header is not None:
+            header.setStretchLastSection(False)
+            for col in range(self.model.columnCount()):
+                header.setSectionResizeMode(col, QHeaderView.Interactive)
+            if self.model.columnCount() > 1:
+                header.setSectionResizeMode(1, QHeaderView.Stretch)
 
-        # Calculate status column width based on the widest status text
-        # All possible status values
-        status_values = ["finish", "running", "failed", "skip", "scheduled", "pending"]
-        font_metrics = self.tree.fontMetrics()
-        max_status_width = 0
-        for status in status_values:
-            width = font_metrics.horizontalAdvance(status)
-            max_status_width = max(max_status_width, width)
-        status_width = max_status_width + 20  # Add padding
-
-        self.tree.setColumnWidth(2, status_width)  # status
-        self.tree.setColumnWidth(3, 120)  # tune
-
-        # Calculate time column width based on character length
-        # Time format: "YYYY-MM-DD HH:MM:SS" (19 characters)
-        time_format = "YYYY-MM-DD HH:MM:SS"
-        time_width = font_metrics.horizontalAdvance(time_format) + 20  # Add padding
-
-        self.tree.setColumnWidth(4, time_width)  # start time
-        self.tree.setColumnWidth(5, time_width)  # end time
-
-        # New columns for bsub parameters
-        self.tree.setColumnWidth(6, 100)  # queue
-        self.tree.setColumnWidth(7, 60)   # cores
-        self.tree.setColumnWidth(8, 80)   # memory
+        for column, width in default_widths.items():
+            min_width = header_min_widths.get(column, 0)
+            self.tree.setColumnWidth(column, max(width, min_width))
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
