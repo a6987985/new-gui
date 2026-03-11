@@ -393,8 +393,8 @@ class BorderItemDelegate(QStyledItemDelegate):
         opt.state &= ~QStyle.State_Selected
         opt.state &= ~QStyle.State_MouseOver
 
-        # Apply bold font when hovering or selected
-        if is_hover or is_selected:
+        # Keep hover stable: only selected rows use bold text.
+        if is_selected:
             font = opt.font
             font.setBold(True)
             opt.font = font
@@ -2693,13 +2693,21 @@ class CopyTuneDialog(QDialog):
 
 class SelectTuneDialog(QDialog):
     """Dialog for selecting a tune file from multiple options."""
-    def __init__(self, target_name, tune_files, parent=None):
+    def __init__(
+        self,
+        target_name,
+        tune_files,
+        parent=None,
+        title_prefix="Select Tune",
+        instruction_text="Select a tune file:",
+    ):
         super().__init__(parent)
         self.target_name = target_name
         self.tune_files = tune_files  # List of (suffix, full_path)
         self.selected_tune = None
+        self.instruction_text = instruction_text
 
-        self.setWindowTitle(f"Select Tune: {target_name}")
+        self.setWindowTitle(f"{title_prefix}: {target_name}")
         self.setMinimumWidth(350)
         self.setup_ui()
 
@@ -2707,7 +2715,7 @@ class SelectTuneDialog(QDialog):
         layout = QVBoxLayout(self)
 
         # Instructions
-        instruction_label = QLabel("Select a tune file:")
+        instruction_label = QLabel(self.instruction_text)
         layout.addWidget(instruction_label)
 
         # Create buttons for each tune file
@@ -3119,22 +3127,6 @@ class MainWindow(QMainWindow):
             }
         """)
 
-        # Compact search field for the main target list
-        search_input_style = """
-            QLineEdit {
-                background-color: rgba(255, 255, 255, 0.96);
-                border: 1px solid #cfd8e3;
-                border-radius: 6px;
-                padding: 6px 10px;
-                color: #223041;
-                font-size: 12px;
-            }
-            QLineEdit:focus {
-                background-color: #ffffff;
-                border: 1px solid #1976d2;
-            }
-        """
-
         # Buttons - Modern clean style
         btn_style = """
             QPushButton {
@@ -3200,17 +3192,6 @@ class MainWindow(QMainWindow):
         self.buttons_row2 = ["term", "csh", "log", "cmd", "trace up", "trace dn"]
 
         row1_layout.addWidget(self.combo)
-
-        self.quick_search_input = QLineEdit()
-        self.quick_search_input.setPlaceholderText("Search targets")
-        self.quick_search_input.setClearButtonEnabled(True)
-        self.quick_search_input.setFixedWidth(220)
-        self.quick_search_input.setStyleSheet(search_input_style)
-        self.quick_search_input.textChanged.connect(self._on_top_search_changed)
-        row1_layout.addWidget(self.quick_search_input)
-
-        row1_layout.addStretch()
-        row1_layout.addSpacing(12)
 
         # Create buttons and connect to commands
         bt_runall = QPushButton("Run All")
@@ -3309,10 +3290,10 @@ class MainWindow(QMainWindow):
 
         tab_inner_layout.addWidget(self.tab_label)
         tab_inner_layout.addWidget(self.tab_close_btn)
-        
+
         tab_layout.addWidget(self.tab_widget)
         tab_layout.addStretch()
-        self._main_layout.addWidget(self.tab_bar)
+        row1_layout.insertWidget(1, self.tab_bar, 1)
 
         # Tree View
         self.tree = ColorTreeView()
@@ -3800,9 +3781,8 @@ class MainWindow(QMainWindow):
             self.tree.setUpdatesEnabled(True)
 
             # Reset label style and text
-            current_run = self.combo.currentText()
-            self.tab_label.setText(current_run)
-            self.tab_label.setStyleSheet("border: none; font-weight: bold; color: #333; font-size: 13px;")
+            self.tab_label.setText("Main View")
+            self.tab_label.setStyleSheet("border: none; font-weight: bold; color: #333; font-size: 13px; background: transparent;")
             # Hide close button after returning to normal run state
             if hasattr(self, 'tab_close_btn'):
                 self.tab_close_btn.hide()
@@ -4224,7 +4204,7 @@ class MainWindow(QMainWindow):
         # Update tab label to reflect current view
         if hasattr(self, 'tab_label'):
             self.tab_label.setText("All Status Overview")
-            self.tab_label.setStyleSheet("border: none; font-weight: bold; color: #1976d2; font-size: 13px;")
+            self.tab_label.setStyleSheet("border: none; font-weight: bold; color: #1976d2; font-size: 13px; background: transparent;")
         # Show close button in All Status view
         if hasattr(self, 'tab_close_btn'):
             self.tab_close_btn.show()
@@ -4570,9 +4550,10 @@ class MainWindow(QMainWindow):
         logger.info(f"Run changed to: {self.combo_sel}")
 
         if current_run:
-            # Update tab label to reflect selected run
+            # Update tab label for normal run view
             if hasattr(self, 'tab_label'):
-                self.tab_label.setText(current_run)
+                self.tab_label.setText("Main View")
+                self.tab_label.setStyleSheet("border: none; font-weight: 600; color: #1976d2; font-size: 13px; background: transparent;")
             # Hide close button in normal run state
             if hasattr(self, 'tab_close_btn'):
                 self.tab_close_btn.hide()
@@ -5636,6 +5617,150 @@ class MainWindow(QMainWindow):
         """Check if target has any tune file"""
         return len(self.get_tune_files(run_dir, target_name)) > 0
 
+    def get_tune_candidates_from_cmd(self, run_dir: str, target_name: str) -> list:
+        """Parse tunesource entries from cmds/<target>.cmd.
+
+        Args:
+            run_dir: Path to run directory.
+            target_name: Name of selected target.
+
+        Returns:
+            List of (display_name, full_path) tuples for tune files that can be created.
+        """
+        cmd_file = os.path.join(run_dir, "cmds", f"{target_name}.cmd")
+        if not os.path.exists(cmd_file):
+            return []
+
+        candidates = []
+        seen_paths = set()
+        used_names = set()
+        pattern = re.compile(
+            r'^\s*tunesource\s+(?:"([^"]+)"|\'([^\']+)\'|(\S+))',
+            re.IGNORECASE,
+        )
+
+        try:
+            with open(cmd_file, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    match = pattern.match(line)
+                    if not match:
+                        continue
+
+                    raw_path = next((group for group in match.groups() if group), "").strip()
+                    if not raw_path:
+                        continue
+
+                    full_path = (
+                        raw_path
+                        if os.path.isabs(raw_path)
+                        else os.path.normpath(os.path.join(run_dir, raw_path))
+                    )
+                    if not full_path.endswith(".tcl"):
+                        continue
+
+                    normalized_path = os.path.normpath(full_path)
+                    if normalized_path in seen_paths:
+                        continue
+
+                    display_name = os.path.basename(normalized_path) or raw_path
+                    if display_name in used_names:
+                        if os.path.isabs(raw_path):
+                            display_name = normalized_path
+                        else:
+                            display_name = raw_path
+
+                    candidates.append((display_name, normalized_path))
+                    seen_paths.add(normalized_path)
+                    used_names.add(display_name)
+        except Exception as e:
+            logger.error(f"Failed to parse tunesource entries from {cmd_file}: {e}")
+            return []
+
+        return sorted(candidates, key=lambda item: item[0].lower())
+
+    def _refresh_tune_cells_for_target(self, target_name: str) -> None:
+        """Refresh tune column text and UserRole data for one target in tree model."""
+        if not self.combo_sel or not hasattr(self, "model") or self.model is None:
+            return
+
+        tune_files = self.get_tune_files(self.combo_sel, target_name)
+        tune_display = ", ".join([suffix for suffix, _ in tune_files]) if tune_files else ""
+
+        def update_cells(target_item, tune_item):
+            if not target_item or not tune_item:
+                return
+            if target_item.text() != target_name:
+                return
+            tune_item.setText(tune_display)
+            tune_item.setData(tune_files, Qt.UserRole)
+
+        for row_idx in range(self.model.rowCount()):
+            update_cells(self.model.item(row_idx, 1), self.model.item(row_idx, 3))
+            level_item = self.model.item(row_idx, 0)
+            if not level_item or not level_item.hasChildren():
+                continue
+            for child_row in range(level_item.rowCount()):
+                update_cells(level_item.child(child_row, 1), level_item.child(child_row, 3))
+
+    def create_tune(self):
+        """Create a tune file from tunesource entries in cmds/<target>.cmd and open it."""
+        selected_targets = self._exit_search_mode_and_get_targets()
+        if not self.combo_sel or len(selected_targets) != 1:
+            QMessageBox.information(self, "Info", "Select exactly one target to create tune.")
+            return
+
+        target = selected_targets[0]
+        candidates = self.get_tune_candidates_from_cmd(self.combo_sel, target)
+        if not candidates:
+            QMessageBox.information(
+                self,
+                "Info",
+                f"No tunesource entries found in cmds/{target}.cmd",
+            )
+            return
+
+        dialog = SelectTuneDialog(
+            target,
+            candidates,
+            self,
+            title_prefix="Create Tune",
+            instruction_text="Select a tune file name to create:",
+        )
+        if dialog.exec_() != QDialog.Accepted:
+            return
+
+        selected_tune = dialog.get_selected_tune()
+        if not selected_tune:
+            return
+
+        tune_file = selected_tune[1]
+        try:
+            os.makedirs(os.path.dirname(tune_file), exist_ok=True)
+            if not os.path.exists(tune_file):
+                with open(tune_file, "w", encoding="utf-8") as f:
+                    f.write("")
+                self.show_notification(
+                    "Tune",
+                    f"Created tune file: {os.path.basename(tune_file)}",
+                    "success",
+                )
+            else:
+                self.show_notification(
+                    "Tune",
+                    f"Tune file already exists: {os.path.basename(tune_file)}",
+                    "info",
+                )
+
+            self._refresh_tune_cells_for_target(target)
+            self._open_tune_file(tune_file)
+        except Exception as e:
+            logger.error(f"Failed to create tune file {tune_file}: {e}")
+            QMessageBox.warning(
+                self,
+                "Warning",
+                f"Failed to create tune file:\n{tune_file}\n\n{e}",
+            )
+
     # ========== BSUB Parameter Methods ==========
 
     def get_bsub_params(self, run_dir: str, target_name: str) -> tuple:
@@ -5893,9 +6018,10 @@ class MainWindow(QMainWindow):
     def _build_tune_menu(self, menu: QMenu, selected_targets: list) -> None:
         """Build the Tune submenu."""
         tune_menu = menu.addMenu("🎵 Tune")
+        single_target = len(selected_targets) == 1
 
         # Check if selected target has tune file
-        if selected_targets and self.combo_sel:
+        if single_target and self.combo_sel:
             tune_display = self.get_tune_display(self.combo_sel, selected_targets[0])
             if tune_display:
                 tune_action = tune_menu.addAction(f"📝 Open Tune ({tune_display})")
@@ -5905,6 +6031,11 @@ class MainWindow(QMainWindow):
             tune_action = tune_menu.addAction("📝 Open Tune")
         tune_action.setToolTip("Open tune file for selected target")
         tune_action.triggered.connect(self.handle_tune)
+
+        create_tune_action = tune_menu.addAction("➕ Create Tune")
+        create_tune_action.setToolTip("Create tune file from cmds/<target>.cmd tunesource entries")
+        create_tune_action.triggered.connect(self.create_tune)
+        create_tune_action.setEnabled(single_target)
 
         copy_tune_action = tune_menu.addAction("📋 Copy Tune To...")
         copy_tune_action.setToolTip("Copy tune file to other runs")
@@ -6122,7 +6253,7 @@ class MainWindow(QMainWindow):
         direction = "Up" if inout == 'in' else "Down"
         label_text = f"Trace {direction}: {tar_sel}"
         self.tab_label.setText(label_text)
-        self.tab_label.setStyleSheet("border: none; font-weight: bold; color: #d32f2f; font-size: 13px;") # Red color for trace mode
+        self.tab_label.setStyleSheet("border: none; font-weight: bold; color: #d32f2f; font-size: 13px; background: transparent;") # Red color for trace mode
         # Show close button in Trace mode
         if hasattr(self, 'tab_close_btn'):
             self.tab_close_btn.show()
