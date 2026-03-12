@@ -1090,6 +1090,22 @@ class ClickableLabel(QLabel):
         super().mouseDoubleClickEvent(event)
 
 
+class StatusBadgeLabel(QLabel):
+    """Small status badge that emits the status key on double click."""
+
+    statusDoubleClicked = pyqtSignal(str)
+
+    def __init__(self, status_key, text, parent=None):
+        super().__init__(text, parent)
+        self._status_key = status_key
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("Double-click to filter targets by this status")
+
+    def mouseDoubleClickEvent(self, event):
+        self.statusDoubleClicked.emit(self._status_key)
+        super().mouseDoubleClickEvent(event)
+
+
 # ========== Theme Manager ==========
 class ThemeManager:
     """Manages application themes (Light/Dark/High Contrast)"""
@@ -1410,6 +1426,7 @@ class NotificationManager(QObject):
 # ========== Status Bar ==========
 class StatusBar(QFrame):
     """Custom status bar with task statistics and connection status"""
+    status_filter_requested = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1449,9 +1466,12 @@ class StatusBar(QFrame):
         # Separator
         layout.addWidget(self._create_separator())
 
-        # Status breakdown
-        self._status_breakdown = QLabel("")
-        layout.addWidget(self._status_breakdown)
+        # Status breakdown badges
+        self._status_breakdown_widget = QWidget()
+        self._status_breakdown_layout = QHBoxLayout(self._status_breakdown_widget)
+        self._status_breakdown_layout.setContentsMargins(0, 2, 0, 2)
+        self._status_breakdown_layout.setSpacing(6)
+        layout.addWidget(self._status_breakdown_widget)
 
         layout.addStretch()
 
@@ -1485,21 +1505,28 @@ class StatusBar(QFrame):
         total = stats.get("total", 0)
         self._stats_label.setText(f"Tasks: {total}")
 
-        # Build status breakdown
-        parts = []
+        # Build status breakdown badges
+        while self._status_breakdown_layout.count():
+            item = self._status_breakdown_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
         for status in ["finish", "running", "failed", "skip", "scheduled", "pending"]:
             count = stats.get(status, 0)
-            if count > 0:
-                config = STATUS_CONFIG.get(status, {})
-                icon = config.get("icon", "")
-                bg_color = config.get("color", "#87CEEB")
-                text_color = config.get("text_color", "#223041")
-                parts.append(
-                    f'<span style="background-color:{bg_color}; color:{text_color};">'
-                    f'&nbsp;{icon} {count}&nbsp;</span>'
-                )
-
-        self._status_breakdown.setText("&nbsp;".join(parts))
+            config = STATUS_CONFIG.get(status, {})
+            icon = config.get("icon", "")
+            bg_color = config.get("color", "#87CEEB")
+            text_color = config.get("text_color", "#223041")
+            badge = StatusBadgeLabel(status, f"{icon} {count}")
+            badge.setFixedHeight(18)
+            badge.setAlignment(Qt.AlignCenter)
+            badge.setStyleSheet(
+                f"QLabel {{ background-color: {bg_color}; color: {text_color}; "
+                "border-radius: 4px; padding: 0px 6px; }}"
+            )
+            badge.statusDoubleClicked.connect(self.status_filter_requested.emit)
+            self._status_breakdown_layout.addWidget(badge)
 
     def update_connection(self, connected):
         """Update connection status"""
@@ -2910,6 +2937,143 @@ class MainWindow(QMainWindow):
         self.search_selected_targets = []
         self._executor = ThreadPoolExecutor(max_workers=4)
         self.colors = {k: v["color"] for k, v in STATUS_CONFIG.items()}
+        self._tune_files_cache = {}
+        self._bsub_params_cache = {}
+        self._main_view_snapshot = None
+
+    def _run_target_cache_key(self, run_dir: str, target_name: str) -> tuple:
+        """Build a stable cache key for per-target run data."""
+        return (os.path.abspath(run_dir), target_name)
+
+    def _invalidate_tune_cache(self, run_dir: str = None, target_name: str = None) -> None:
+        """Invalidate tune-file cache entries."""
+        if run_dir is None and target_name is None:
+            self._tune_files_cache.clear()
+            return
+
+        run_key = os.path.abspath(run_dir) if run_dir else None
+        keys_to_remove = []
+        for key_run, key_target in self._tune_files_cache.keys():
+            if run_key and key_run != run_key:
+                continue
+            if target_name and key_target != target_name:
+                continue
+            keys_to_remove.append((key_run, key_target))
+
+        for key in keys_to_remove:
+            self._tune_files_cache.pop(key, None)
+
+    def _invalidate_bsub_cache(self, run_dir: str = None, target_name: str = None) -> None:
+        """Invalidate bsub-parameter cache entries."""
+        if run_dir is None and target_name is None:
+            self._bsub_params_cache.clear()
+            return
+
+        run_key = os.path.abspath(run_dir) if run_dir else None
+        keys_to_remove = []
+        for key_run, key_target in self._bsub_params_cache.keys():
+            if run_key and key_run != run_key:
+                continue
+            if target_name and key_target != target_name:
+                continue
+            keys_to_remove.append((key_run, key_target))
+
+        for key in keys_to_remove:
+            self._bsub_params_cache.pop(key, None)
+
+    def _invalidate_main_view_snapshot(self) -> None:
+        """Drop the in-memory main-view snapshot."""
+        self._main_view_snapshot = None
+
+    def _serialize_tree_row(self, row_index: int, parent_item=None) -> dict:
+        """Serialize one tree row into plain Python data."""
+        if parent_item is None:
+            get_item = lambda col: self.model.item(row_index, col)
+            parent_index = self.model.index(row_index, 0)
+        else:
+            get_item = lambda col: parent_item.child(row_index, col)
+            parent_index = parent_item.child(row_index, 0).index()
+
+        values = []
+        tune_files = []
+        for col in range(self.model.columnCount()):
+            item = get_item(col)
+            values.append(item.text() if item else "")
+            if col == 3 and item is not None:
+                tune_files = item.data(Qt.UserRole) or []
+
+        children = []
+        level_item = get_item(0)
+        if level_item and level_item.hasChildren():
+            for child_row in range(level_item.rowCount()):
+                children.append(self._serialize_tree_row(child_row, level_item))
+
+        return {
+            "values": values,
+            "tune_files": list(tune_files),
+            "children": children,
+            "expanded": self.tree.isExpanded(parent_index),
+        }
+
+    def _capture_main_view_snapshot(self) -> None:
+        """Capture the current main-view tree for fast restore."""
+        current_run = self.combo.currentText()
+        if not current_run or current_run == "No runs found":
+            return
+
+        rows = []
+        for row in range(self.model.rowCount()):
+            rows.append(self._serialize_tree_row(row))
+
+        self._main_view_snapshot = {
+            "run": current_run,
+            "rows": rows,
+            "scroll": self.tree.verticalScrollBar().value(),
+        }
+
+    def _restore_main_view_snapshot(self) -> bool:
+        """Restore the cached main-view snapshot if available."""
+        current_run = self.combo.currentText()
+        snapshot = self._main_view_snapshot
+        if not snapshot or snapshot.get("run") != current_run:
+            return False
+
+        def build_row_items(row_data):
+            row_items = []
+            values = row_data.get("values", [])
+            tune_files = row_data.get("tune_files", [])
+            status_value = (values[2] if len(values) > 2 else "").lower()
+            color = QColor(STATUS_COLORS.get(status_value, "#87CEEB"))
+
+            for col_idx, value in enumerate(values):
+                item = QStandardItem(value)
+                item.setEditable(col_idx == 3)
+                item.setForeground(QBrush(Qt.black))
+                if col_idx == 3:
+                    item.setData(tune_files, Qt.UserRole)
+                item.setBackground(QBrush(color))
+                row_items.append(item)
+
+            level_item = row_items[0] if row_items else None
+            if level_item is not None:
+                for child_data in row_data.get("children", []):
+                    level_item.appendRow(build_row_items(child_data))
+            return row_items
+
+        self.tree.setUpdatesEnabled(False)
+        self.model.clear()
+        self.model.setHorizontalHeaderLabels(["level", "target", "status", "tune", "start time", "end time", "queue", "cores", "memory"])
+        self.set_column_widths()
+
+        for row_data in snapshot.get("rows", []):
+            self.model.appendRow(build_row_items(row_data))
+
+        for row, row_data in enumerate(snapshot.get("rows", [])):
+            self.tree.setExpanded(self.model.index(row, 0), row_data.get("expanded", True))
+
+        self.tree.verticalScrollBar().setValue(snapshot.get("scroll", 0))
+        self.tree.setUpdatesEnabled(True)
+        return True
 
     def _get_xmeta_background_color(self):
         """Return the configured XMETA background color, if any."""
@@ -3464,6 +3628,7 @@ class MainWindow(QMainWindow):
 
         # ========== Add Status Bar ==========
         self._status_bar = StatusBar(self)
+        self._status_bar.status_filter_requested.connect(self.on_status_badge_double_clicked)
         self._main_layout.addWidget(self._status_bar)
 
         # ========== Initialize Notification Manager ==========
@@ -3775,43 +3940,50 @@ class MainWindow(QMainWindow):
         current_run = self.combo.currentText()
         self._status_bar.update_run(current_run)
 
-        # Count tasks by status
-        stats = {"total": 0, "finish": 0, "running": 0, "failed": 0, "skip": 0, "scheduled": 0, "pending": 0}
-
-        for row in range(self.model.rowCount()):
-            level_item = self.model.item(row, 0)
-            if level_item:
-                # Count parent
-                status_item = self.model.item(row, 2)
-                if status_item:
-                    status = (status_item.text() or "").lower()
-                    stats["total"] += 1
-                    if status in stats:
-                        stats[status] += 1
-
-                # Count children
-                if level_item.hasChildren():
-                    for child_row in range(level_item.rowCount()):
-                        child_status_item = level_item.child(child_row, 2)
-                        if child_status_item:
-                            status = (child_status_item.text() or "").lower()
-                            stats["total"] += 1
-                            if status in stats:
-                                stats[status] += 1
+        # Always compute stats from the full run graph, not current filtered model.
+        stats = self._compute_full_run_stats(current_run)
 
         self._status_bar.update_stats(stats)
 
         # Update connection status (always connected for file system)
         self._status_bar.update_connection(True)
 
+    def _compute_full_run_stats(self, run_name):
+        """Compute status statistics from the complete target set of a run."""
+        stats = {"total": 0, "finish": 0, "running": 0, "failed": 0, "skip": 0, "scheduled": 0, "pending": 0}
+        if not run_name or run_name == "No runs found":
+            return stats
+
+        targets_by_level = self.parse_dependency_file(run_name)
+        if not targets_by_level:
+            return stats
+
+        for _, targets in sorted(targets_by_level.items()):
+            for target_name in targets:
+                status = (self.get_target_status(run_name, target_name) or "").lower()
+                stats["total"] += 1
+                if status in stats:
+                    stats[status] += 1
+        return stats
+
     def close_tree_view(self):
-        """Close the tree view (or clear trace filter)"""
+        """Close the tree view (or clear active filtered view)."""
         # If we are in All Status view, restore normal view
         if hasattr(self, 'is_all_status_view') and self.is_all_status_view:
             self.restore_normal_view()
             return
-        
-        # If we are in trace mode (label starts with "Trace"), just clear the filter
+
+        # If a status in-place filter is active, rebuild main view.
+        if hasattr(self, 'tab_label') and self.tab_label.text().startswith("Status: "):
+            self.tab_label.setText("Main View")
+            self.tab_label.setStyleSheet("border: none; font-weight: bold; color: #333; font-size: 13px; background: transparent;")
+            if hasattr(self, 'tab_close_btn'):
+                self.tab_close_btn.hide()
+            if not self._restore_main_view_snapshot():
+                self.populate_data(force_rebuild=True)
+            return
+
+        # If a trace in-place filter is active, clear the filter by unhiding rows.
         if hasattr(self, 'tab_label') and self.tab_label.text().startswith("Trace"):
             # Clear filter by showing all rows
             self.tree.setUpdatesEnabled(False)
@@ -4209,6 +4381,102 @@ class MainWindow(QMainWindow):
                 parent_index = item.index()
                 self.tree.setRowHidden(i, parent_index, False)
                 self.show_all_children(child)
+
+    def _filter_tree_by_status_flat(self, status):
+        """Show status-filtered targets using main-view tree hierarchy."""
+        status_key = (status or "").strip().lower()
+        if not status_key:
+            return 0
+
+        if not hasattr(self, 'cached_targets_by_level') or not self.cached_targets_by_level:
+            current_run = self.combo.currentText()
+            if current_run and current_run != "No runs found":
+                self.cached_targets_by_level = self.parse_dependency_file(current_run)
+
+        if not self.cached_targets_by_level:
+            return 0
+
+        self.tree.setUpdatesEnabled(False)
+        self.model.clear()
+        self.model.setHorizontalHeaderLabels(["level", "target", "status", "tune", "start time", "end time", "queue", "cores", "memory"])
+        self.set_column_widths()
+
+        current_run = self.combo.currentText()
+        matched_count = 0
+
+        def build_row(level_text, target_name):
+            target_status = (self.get_target_status(current_run, target_name) or "").lower()
+            tune_files = self.get_tune_files(self.combo_sel, target_name)
+            tune_display = ", ".join([suffix for suffix, _ in tune_files]) if tune_files else ""
+            start_time, end_time = self.get_target_times(current_run, target_name)
+            queue, cores, memory = self.get_bsub_params(self.combo_sel, target_name)
+
+            row_items = []
+            values = [level_text, target_name, target_status, tune_display, start_time, end_time, queue, cores, memory]
+            for col_idx, value in enumerate(values):
+                item = QStandardItem(value)
+                item.setEditable(col_idx == 3)
+                item.setForeground(QBrush(Qt.black))
+                if col_idx == 3:
+                    item.setData(tune_files, Qt.UserRole)
+                row_items.append(item)
+
+            color_code = STATUS_COLORS.get(target_status, "#87CEEB")
+            color = QColor(color_code)
+            for item in row_items:
+                item.setBackground(QBrush(color))
+            return row_items
+
+        for level in sorted(self.cached_targets_by_level.keys()):
+            level_targets = self.cached_targets_by_level[level]
+            if not level_targets:
+                continue
+
+            matched_targets = []
+            for target_name in level_targets:
+                target_status = (self.get_target_status(current_run, target_name) or "").lower()
+                if target_status == status_key:
+                    matched_targets.append(target_name)
+
+            if not matched_targets:
+                continue
+
+            parent_row = build_row(str(level), matched_targets[0])
+            self.model.appendRow(parent_row)
+            matched_count += 1
+
+            parent_level_item = parent_row[0]
+            for child_target in matched_targets[1:]:
+                child_row = build_row("", child_target)
+                parent_level_item.appendRow(child_row)
+                matched_count += 1
+
+        self.tree.setUpdatesEnabled(True)
+        self.tree.expandAll()
+        return matched_count
+
+    def _apply_status_filter(self, status, update_tab=True):
+        """Apply in-place status filter to the target tree."""
+        if not (hasattr(self, 'tab_label') and self.tab_label.text().startswith("Status: ")):
+            self._capture_main_view_snapshot()
+
+        matched_count = self._filter_tree_by_status_flat(status)
+        if matched_count <= 0:
+            self.show_notification("Status Filter", f"No targets with status: {status}", "info")
+            return
+
+        if update_tab and hasattr(self, 'tab_label'):
+            self.tab_label.setText(f"Status: {status}")
+            self.tab_label.setStyleSheet("border: none; font-weight: bold; color: #333; font-size: 13px; background: transparent;")
+            if hasattr(self, 'tab_close_btn'):
+                self.tab_close_btn.show()
+
+    def on_status_badge_double_clicked(self, status):
+        """Handle status badge double-click from the bottom status bar."""
+        if self.is_all_status_view:
+            self.show_notification("Status Filter", "Status badge filter is available in main target view only", "info")
+            return
+        self._apply_status_filter(status, update_tab=True)
 
     def scan_runs(self):
         """Scan the run base directory for valid run directories.
@@ -4664,6 +4932,8 @@ class MainWindow(QMainWindow):
         if current_run == "No runs found":
             return
 
+        self._invalidate_main_view_snapshot()
+
         # Reset All Status view flag when switching runs
         self.is_all_status_view = False
 
@@ -5061,13 +5331,14 @@ class MainWindow(QMainWindow):
             return self._status_cache.get('times', {}).get(target_name, ("", ""))
         return ("", "")
 
-    def populate_data(self):
+    def populate_data(self, force_rebuild=False):
         # Use global STATUS_COLORS constant
         def get_color(status):
             return STATUS_COLORS.get(status.lower(), "#87CEEB") # Default to SkyBlue if unknown
 
         # Optimization: If model is already populated, just refresh status in-place
-        if self.model.rowCount() > 0:
+        # unless caller explicitly asks for a full rebuild.
+        if self.model.rowCount() > 0 and not force_rebuild:
             current_run = self.combo.currentText()
             if not current_run: return
 
@@ -5284,8 +5555,9 @@ class MainWindow(QMainWindow):
         
         # Check if Trace Filter is active
         is_trace_mode = hasattr(self, 'tab_label') and self.tab_label.text().startswith("Trace")
+        is_status_mode = hasattr(self, 'tab_label') and self.tab_label.text().startswith("Status: ")
         
-        if not has_search_filter and not is_trace_mode:
+        if not has_search_filter and not is_trace_mode and not is_status_mode:
             # Expand all only if no filter
             self.tree.expandAll()
             # Restore scroll position
@@ -5313,6 +5585,12 @@ class MainWindow(QMainWindow):
                         
                         # Apply filter
                         self.filter_tree_by_targets(set(related_targets))
+                elif is_status_mode:
+                    status = self.tab_label.text().replace("Status: ", "", 1).strip().lower()
+                    if status:
+                        self._apply_status_filter(status, update_tab=False)
+                        if hasattr(self, 'tab_close_btn'):
+                            self.tab_close_btn.show()
                 
                 elif has_search_filter:
                     # Re-apply search filter
@@ -5709,24 +5987,36 @@ class MainWindow(QMainWindow):
         Returns:
             List of (suffix, full_path) tuples, sorted by suffix.
         """
-        import glob as glob_module
+        cache_key = self._run_target_cache_key(run_dir, target_name)
+        cached = self._tune_files_cache.get(cache_key)
+        if cached is not None:
+            return list(cached)
+
         tune_dir = os.path.join(run_dir, 'tune', target_name)
         if not os.path.exists(tune_dir):
+            self._tune_files_cache[cache_key] = []
             return []
 
-        # Find all files matching pattern: {target}.{suffix}.tcl
-        pattern = os.path.join(tune_dir, f"{target_name}.*.tcl")
         tune_files = []
+        prefix = f"{target_name}."
+        suffix = ".tcl"
 
-        for filepath in glob_module.glob(pattern):
-            filename = os.path.basename(filepath)
-            # Extract suffix: {target}.{suffix}.tcl -> {suffix}
-            parts = filename.split('.')
-            if len(parts) >= 3:  # target.suffix.tcl
-                suffix = '.'.join(parts[1:-1])  # Handle cases like pre.opt.tcl
-                tune_files.append((suffix, filepath))
+        try:
+            for filename in os.listdir(tune_dir):
+                if not filename.startswith(prefix) or not filename.endswith(suffix):
+                    continue
+                parts = filename.split('.')
+                if len(parts) < 3:
+                    continue
+                filepath = os.path.join(tune_dir, filename)
+                tune_suffix = '.'.join(parts[1:-1])
+                tune_files.append((tune_suffix, filepath))
+        except OSError as e:
+            logger.error(f"Error reading tune directory {tune_dir}: {e}")
 
-        return sorted(tune_files)
+        tune_files = sorted(tune_files)
+        self._tune_files_cache[cache_key] = tune_files
+        return list(tune_files)
 
     def get_tune_display(self, run_dir, target_name):
         """Get tune display string for tree view.
@@ -5875,6 +6165,7 @@ class MainWindow(QMainWindow):
                     "info",
                 )
 
+            self._invalidate_tune_cache(self.combo_sel, target)
             self._refresh_tune_cells_for_target(target)
             self._open_tune_file(tune_file)
         except Exception as e:
@@ -5897,9 +6188,16 @@ class MainWindow(QMainWindow):
         Returns:
             Tuple of (queue, cores, memory), each can be 'N/A' if not found.
         """
+        cache_key = self._run_target_cache_key(run_dir, target_name)
+        cached = self._bsub_params_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         csh_file = os.path.join(run_dir, 'make_targets', f"{target_name}.csh")
         if not os.path.exists(csh_file):
-            return ('N/A', 'N/A', 'N/A')
+            value = ('N/A', 'N/A', 'N/A')
+            self._bsub_params_cache[cache_key] = value
+            return value
 
         try:
             with open(csh_file, 'r') as f:
@@ -5917,10 +6215,14 @@ class MainWindow(QMainWindow):
             mem_match = re.search(r'rusage\[mem=(\d+)\]', content)
             memory = mem_match.group(1) if mem_match else 'N/A'
 
-            return (queue, cores, memory)
+            value = (queue, cores, memory)
+            self._bsub_params_cache[cache_key] = value
+            return value
         except Exception as e:
             logger.error(f"Error parsing bsub params for {target_name}: {e}")
-            return ('N/A', 'N/A', 'N/A')
+            value = ('N/A', 'N/A', 'N/A')
+            self._bsub_params_cache[cache_key] = value
+            return value
 
     def save_bsub_param(self, run_dir, target_name, param_type, new_value):
         """Save a single bsub parameter to the csh file.
@@ -5967,6 +6269,7 @@ class MainWindow(QMainWindow):
             with open(csh_file, 'w') as f:
                 f.write(content)
 
+            self._invalidate_bsub_cache(run_dir, target_name)
             logger.info(f"Updated {param_type} to {new_value} for {target_name}")
             return True
 
@@ -6058,6 +6361,7 @@ class MainWindow(QMainWindow):
                         # Copy file (overwrite if exists)
                         shutil.copy2(source_tune, dest_tune)
                         logger.info(f"Copied tune to: {dest_tune}")
+                        self._invalidate_tune_cache(run_dir, target)
                         total_success += 1
                     except Exception as e:
                         logger.error(f"Failed to copy tune to {run}: {e}")
