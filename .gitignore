@@ -30,3 +30,6 @@ Thumbs.db
 
 # Local test data (if any)
 mock_runs/
+
+# Local patch bundle export state
+tools/.patch_bundle_state/

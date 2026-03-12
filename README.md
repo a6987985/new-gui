@@ -8,11 +8,13 @@ A PyQt5-based GUI monitoring tool for tracking task execution status and depende
 
 ```
 new-gui/
-├── reproduce_ui.py    # Main application file (~5600 lines)
+├── reproduce_ui.py    # Main application file (~6700 lines)
 ├── README.md          # This documentation file
 ├── CLAUDE.md          # Project guidelines for Claude Code
 ├── .cursorrules       # Cursor editor rules configuration
 ├── .gitignore         # Git ignore rules
+├── tools/export_patch_bundle.py  # Export patch/full bundles as text chunks
+├── tools/import_patch_bundle.py  # Rebuild, verify, and apply text chunks
 └── .claude/           # Claude Code configuration
 ```
 
@@ -388,6 +390,64 @@ The tree view displays the following columns:
 ```bash
 python reproduce_ui.py
 ```
+
+### Cross-Network Patch Bundle Workflow
+
+Use this workflow when you need to move `reproduce_ui.py` updates into an isolated intranet environment.
+
+#### 1. Export a bundle on the internet-facing machine
+
+First export will automatically generate a full bundle and initialize the local baseline snapshot:
+
+```bash
+python tools/export_patch_bundle.py --output /tmp/new-gui-bundle.txt
+```
+
+Later exports will generate patch bundles against the last exported baseline by default:
+
+```bash
+python tools/export_patch_bundle.py --output /tmp/new-gui-bundle.txt
+```
+
+If the intranet copy drifted or you want to reset the baseline, force a full bundle:
+
+```bash
+python tools/export_patch_bundle.py --full --output /tmp/new-gui-bundle.txt
+```
+
+Notes:
+- Bundle transfer state is stored locally under `tools/.patch_bundle_state/`
+- Chunk size defaults to 4000 characters and can be overridden with `--chunk-size`
+- Export output is plain text, suitable for manual copy/paste between isolated networks
+
+#### 2. Transfer the generated text chunks
+
+Copy the contents of `/tmp/new-gui-bundle.txt` through your approved text channel and paste them into a temporary file on the intranet machine, for example `/tmp/new-gui-bundle.txt`.
+
+#### 3. Import the bundle on the intranet machine
+
+Run the importer from the project root, or point it at the root with `--root`:
+
+```bash
+python tools/import_patch_bundle.py --input /tmp/new-gui-bundle.txt --root /path/to/new-gui
+```
+
+The importer will:
+- Rebuild the bundle from text chunks
+- Verify chunk and bundle hashes
+- Refuse patch application if the current file hash does not match the expected baseline
+- Create a timestamped backup before overwriting an existing file
+- Verify the final file hash after apply
+
+You can also pipe chunk text through stdin:
+
+```bash
+cat /tmp/new-gui-bundle.txt | python tools/import_patch_bundle.py --root /path/to/new-gui
+```
+
+#### 4. Recovery path
+
+If patch mode fails with a baseline drift message, export again with `--full` and import that full bundle to re-establish the shared baseline.
 
 ## Requirements
 
