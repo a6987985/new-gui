@@ -1,15 +1,20 @@
 """Helpers for run-oriented view switching and all-status rows."""
 
 import os
+from typing import Dict, List, Optional
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QBrush, QColor, QStandardItem
 
 
 ALL_STATUS_HEADERS = ["Run Directory", "Latest Target", "Status", "Time Stamp"]
+RunSelectionState = Dict[str, str]
+OverviewRow = Dict[str, str]
+StatusColors = Dict[str, str]
+RowItems = List[QStandardItem]
 
 
-def build_run_selection_state(current_run: str, run_base_dir: str):
+def build_run_selection_state(current_run: str, run_base_dir: str) -> Optional[RunSelectionState]:
     """Return the resolved run selection state for a combo-box value."""
     if not current_run or current_run == "No runs found":
         return None
@@ -26,14 +31,14 @@ def reset_all_status_model(model) -> None:
     model.setHorizontalHeaderLabels(ALL_STATUS_HEADERS)
 
 
-def build_all_status_row_items(overview_row: dict, status_colors: dict) -> list:
+def build_all_status_row_items(overview_row: OverviewRow, status_colors: StatusColors) -> RowItems:
     """Build one all-status overview row."""
     run_name = overview_row.get("run_name", "")
     latest_target = overview_row.get("latest_target", "")
     latest_status = overview_row.get("latest_status", "")
     latest_timestamp = overview_row.get("latest_timestamp", "")
 
-    row_items = []
+    row_items: RowItems = []
     for value in [run_name, latest_target, latest_status, latest_timestamp]:
         item = QStandardItem(value)
         item.setEditable(False)

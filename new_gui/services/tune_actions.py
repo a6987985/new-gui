@@ -7,6 +7,11 @@ from typing import Dict, List, Tuple
 from new_gui.config.settings import logger
 
 
+TuneFileEntry = Tuple[str, str]
+CopyError = Tuple[str, str, str]
+CopyResult = Dict[str, object]
+
+
 def ensure_tune_file(tune_file: str) -> bool:
     """Ensure a tune file exists, creating parent directories as needed."""
     os.makedirs(os.path.dirname(tune_file), exist_ok=True)
@@ -19,15 +24,15 @@ def ensure_tune_file(tune_file: str) -> bool:
 
 
 def copy_tune_files_to_runs(
-    selected_tunes: List[Tuple[str, str]],
+    selected_tunes: List[TuneFileEntry],
     selected_runs: List[str],
     run_base_dir: str,
     target_name: str,
-) -> Dict[str, object]:
+) -> CopyResult:
     """Copy selected tune files to selected runs and report results."""
     total_success = 0
     copied_paths: List[str] = []
-    errors: List[Tuple[str, str, str]] = []
+    errors: List[CopyError] = []
 
     for suffix, source_tune in selected_tunes:
         for run in selected_runs:

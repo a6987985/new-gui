@@ -1,7 +1,16 @@
 """Helpers for preserving and restoring search-driven tree state."""
 
+from typing import Callable, Dict, List, Sequence
 
-def build_search_context(is_search_mode: bool, search_text: str, selected_targets=None) -> dict:
+
+SearchContext = Dict[str, object]
+
+
+def build_search_context(
+    is_search_mode: bool,
+    search_text: str,
+    selected_targets: Sequence[str] = (),
+) -> SearchContext:
     """Capture the current search-related state."""
     return {
         "is_search_mode": bool(is_search_mode),
@@ -11,11 +20,11 @@ def build_search_context(is_search_mode: bool, search_text: str, selected_target
 
 
 def refresh_after_action(
-    search_context: dict,
+    search_context: SearchContext,
     current_run: str,
-    build_status_cache,
-    rebuild_main_tree,
-    filter_tree,
+    build_status_cache: Callable[[str], None],
+    rebuild_main_tree: Callable[[], None],
+    filter_tree: Callable[[str], None],
 ) -> None:
     """Refresh the tree after an action and restore search filtering if needed."""
     if current_run and current_run != "No runs found":
@@ -28,11 +37,11 @@ def refresh_after_action(
 
 
 def exit_search_mode(
-    search_context: dict,
-    clear_search_ui,
-    rebuild_main_tree,
-    select_targets_in_tree,
-) -> list:
+    search_context: SearchContext,
+    clear_search_ui: Callable[[], None],
+    rebuild_main_tree: Callable[[], None],
+    select_targets_in_tree: Callable[[List[str]], None],
+) -> List[str]:
     """Exit search mode, rebuild the main tree, and restore selected targets."""
     selected_targets = list(search_context.get("selected_targets", []))
     if not search_context.get("is_search_mode"):

@@ -1,6 +1,6 @@
 # XMeta Console GUI
 
-> **Last Updated**: 2026-03-07
+> **Last Updated**: 2026-03-13
 
 A PyQt5-based GUI monitoring tool for tracking task execution status and dependencies in EDA/chip design workflows.
 
@@ -11,7 +11,12 @@ new-gui/
 ├── new_gui/
 │   ├── reproduce_ui.py  # Main application file
 │   ├── config/
+│   ├── services/
 │   └── ui/
+├── work_scr/         # Project docs, split roadmap, and maintenance notes
+│   ├── reproduce_ui_execution_roadmap.md
+│   ├── reproduce_ui_to_1000_blueprint.md
+│   └── new_gui_maintenance_boundaries.md
 ├── README.md          # This documentation file
 ├── CLAUDE.md          # Project guidelines for Claude Code
 ├── .cursorrules       # Cursor editor rules configuration
@@ -20,6 +25,14 @@ new-gui/
 ├── tools/import_patch_bundle.py  # Rebuild, verify, and apply text chunks
 └── .claude/           # Claude Code configuration
 ```
+
+## Architecture And Maintenance Docs
+
+For the post-split codebase, use these documents as the primary references:
+
+- `work_scr/new_gui_maintenance_boundaries.md`: stable ownership rules and "do not split further" boundaries
+- `work_scr/reproduce_ui_execution_roadmap.md`: executed slice history and current split status
+- `work_scr/reproduce_ui_to_1000_blueprint.md`: original line-budget blueprint that drove the split
 
 ## Technology Stack
 
@@ -249,7 +262,7 @@ The run dropdown (BoundedComboBox) provides:
 
 | Class | Description |
 |-------|-------------|
-| `MainWindow` | Main application window (~2800 lines) |
+| `MainWindow` | Main application window and runtime composition root (~953 lines in `reproduce_ui.py`) |
 | `ThemeManager` | Singleton managing application themes |
 | `StatusAnimator` | Singleton managing status animations (pulse effect) |
 | `NotificationWidget` | Individual notification popup |
@@ -396,7 +409,7 @@ python new_gui/reproduce_ui.py
 
 ### Cross-Network Patch Bundle Workflow
 
-Use this workflow when you need to move `new_gui/reproduce_ui.py` updates into an isolated intranet environment.
+Use this workflow when you need to move `new_gui/` directory updates into an isolated intranet environment.
 
 #### 1. Export a bundle on the internet-facing machine
 

@@ -2,12 +2,23 @@
 
 import os
 import subprocess
+from typing import Dict, Sequence
 
 
 SYNC_REFRESH_ACTIONS = {"XMeta_unskip", "XMeta_skip"}
+SYNC_ACTION_TIMEOUT_SECONDS = 30
+ASYNC_ACTION_TIMEOUT_SECONDS = 300
+
+ActionRequest = Dict[str, object]
+ActionResult = Dict[str, object]
 
 
-def build_action_request(run_base_dir: str, current_run: str, action: str, selected_targets) -> dict:
+def build_action_request(
+    run_base_dir: str,
+    current_run: str,
+    action: str,
+    selected_targets: Sequence[str],
+) -> ActionRequest:
     """Build the shell command and execution settings for a flow action."""
     run_dir = os.path.join(run_base_dir, current_run)
     if action == "XMeta_run all":
@@ -22,11 +33,11 @@ def build_action_request(run_base_dir: str, current_run: str, action: str, selec
         "command": command,
         "log_message": log_message,
         "run_sync": run_sync,
-        "timeout": 30 if run_sync else 300,
+        "timeout": SYNC_ACTION_TIMEOUT_SECONDS if run_sync else ASYNC_ACTION_TIMEOUT_SECONDS,
     }
 
 
-def execute_shell_command(command: str, timeout: int) -> dict:
+def execute_shell_command(command: str, timeout: int) -> ActionResult:
     """Execute a shell command and return decoded output metadata."""
     process = subprocess.Popen(
         command,

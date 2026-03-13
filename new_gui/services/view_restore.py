@@ -1,7 +1,16 @@
 """Helpers for restoring filtered main-tree views after a rebuild."""
 
+from typing import Callable, Dict, Optional
 
-def build_restore_plan(tab_label_text: str, header_filter_text: str, scroll_value: int) -> dict:
+
+RestorePlan = Dict[str, object]
+
+
+def build_restore_plan(
+    tab_label_text: str,
+    header_filter_text: str,
+    scroll_value: int,
+) -> RestorePlan:
     """Build a restore plan for the current main-tree presentation mode."""
     tab_text = (tab_label_text or "").strip()
     search_text = header_filter_text or ""
@@ -38,13 +47,13 @@ def build_restore_plan(tab_label_text: str, header_filter_text: str, scroll_valu
 
 
 def apply_restore_plan(
-    plan: dict,
-    get_retrace_target,
-    filter_tree_by_targets,
-    apply_status_filter,
-    filter_tree,
-    set_scroll_value,
-    show_status_close_button=None,
+    plan: RestorePlan,
+    get_retrace_target: Callable[[str, str], list],
+    filter_tree_by_targets: Callable[[set], None],
+    apply_status_filter: Callable[[str], None],
+    filter_tree: Callable[[str], None],
+    set_scroll_value: Callable[[int], None],
+    show_status_close_button: Optional[Callable[[], None]] = None,
 ) -> str:
     """Replay the filtered view described by a restore plan."""
     mode = (plan or {}).get("mode", "main")

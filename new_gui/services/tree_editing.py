@@ -1,5 +1,7 @@
 """Helpers for editable tree interactions."""
 
+from typing import Dict, Optional
+
 from PyQt5.QtCore import Qt
 
 
@@ -9,8 +11,10 @@ EDITABLE_BSUB_COLUMNS = {
     8: "memory",
 }
 
+BsubEditContext = Dict[str, object]
 
-def get_all_status_run_name(model, index):
+
+def get_all_status_run_name(model, index) -> str:
     """Return the run name for an all-status row, if available."""
     if index is None or not index.isValid():
         return ""
@@ -18,7 +22,7 @@ def get_all_status_run_name(model, index):
     return model.data(run_name_index) or ""
 
 
-def build_bsub_edit_context(model, index):
+def build_bsub_edit_context(model, index) -> Optional[BsubEditContext]:
     """Extract editable bsub cell context from a tree index."""
     if index is None or not index.isValid():
         return None
@@ -46,7 +50,7 @@ def build_bsub_edit_context(model, index):
     }
 
 
-def validate_bsub_value(param_type: str, new_value: str):
+def validate_bsub_value(param_type: str, new_value: str) -> Optional[str]:
     """Validate a user-entered bsub value and return an error message or None."""
     if param_type == "cores" and not new_value.isdigit():
         return "Cores must be a number."

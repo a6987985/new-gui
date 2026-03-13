@@ -1,5 +1,7 @@
 """Helpers for building and refreshing main tree rows."""
 
+from typing import Dict, List, Optional, Sequence, Tuple
+
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QBrush, QColor, QStandardItem
 
@@ -18,6 +20,10 @@ MAIN_TREE_HEADERS = [
 
 DEFAULT_STATUS_COLOR = "#87CEEB"
 
+TuneFileEntry = Tuple[str, str]
+StatusColors = Dict[str, str]
+RowItems = List[QStandardItem]
+
 
 def set_main_tree_headers(model) -> None:
     """Apply the standard headers used by the main target tree."""
@@ -35,15 +41,15 @@ def build_target_row_items(
     level_text,
     target_name: str,
     status_value: str,
-    tune_files,
+    tune_files: Sequence[TuneFileEntry],
     start_time: str,
     end_time: str,
     queue: str,
     cores: str,
     memory: str,
-    status_colors: dict,
-    tune_display: str = None,
-) -> list:
+    status_colors: StatusColors,
+    tune_display: Optional[str] = None,
+) -> RowItems:
     """Build one main-tree row with the standard columns and styling."""
     normalized_tune_files = list(tune_files or [])
     if tune_display is None:
@@ -62,7 +68,7 @@ def build_target_row_items(
     ]
 
     color = QColor(status_colors.get(values[2].lower(), DEFAULT_STATUS_COLOR))
-    row_items = []
+    row_items: RowItems = []
     for col_idx, value in enumerate(values):
         item = QStandardItem(value)
         item.setEditable(col_idx == 3)
@@ -74,14 +80,20 @@ def build_target_row_items(
     return row_items
 
 
-def get_row_items(model, row_index: int, parent_item=None) -> list:
+def get_row_items(model, row_index: int, parent_item=None) -> RowItems:
     """Return all items for a model row."""
     if parent_item is None:
         return [model.item(row_index, col) for col in range(model.columnCount())]
     return [parent_item.child(row_index, col) for col in range(model.columnCount())]
 
 
-def update_target_row_items(row_items: list, status_value: str, start_time: str, end_time: str, status_colors: dict) -> None:
+def update_target_row_items(
+    row_items: RowItems,
+    status_value: str,
+    start_time: str,
+    end_time: str,
+    status_colors: StatusColors,
+) -> None:
     """Refresh status, colors, and times for an existing main-tree row."""
     if len(row_items) < len(MAIN_TREE_HEADERS):
         return

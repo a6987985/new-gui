@@ -1,11 +1,19 @@
 """Tree/view state helpers for MainWindow."""
 
-from PyQt5.QtCore import QModelIndex, Qt, QItemSelectionModel
+from typing import Callable, Dict, List, Sequence, Set, Tuple
+
+from PyQt5.QtCore import QItemSelectionModel, QModelIndex, Qt
 
 from new_gui.services import tree_rows
 
 
-def serialize_tree_row(model, tree, row_index: int, parent_item=None) -> dict:
+SerializedRow = Dict[str, object]
+SnapshotData = Dict[str, object]
+TargetNames = Sequence[str]
+RowKey = Tuple[int, int]
+
+
+def serialize_tree_row(model, tree, row_index: int, parent_item=None) -> SerializedRow:
     """Serialize one tree row into plain Python data."""
     if parent_item is None:
         get_item = lambda col: model.item(row_index, col)
@@ -14,7 +22,7 @@ def serialize_tree_row(model, tree, row_index: int, parent_item=None) -> dict:
         get_item = lambda col: parent_item.child(row_index, col)
         parent_index = parent_item.child(row_index, 0).index()
 
-    values = []
+    values: List[str] = []
     tune_files = []
     for col in range(model.columnCount()):
         item = get_item(col)
@@ -22,7 +30,7 @@ def serialize_tree_row(model, tree, row_index: int, parent_item=None) -> dict:
         if col == 3 and item is not None:
             tune_files = item.data(Qt.UserRole) or []
 
-    children = []
+    children: List[SerializedRow] = []
     level_item = get_item(0)
     if level_item and level_item.hasChildren():
         for child_row in range(level_item.rowCount()):
@@ -36,9 +44,9 @@ def serialize_tree_row(model, tree, row_index: int, parent_item=None) -> dict:
     }
 
 
-def capture_main_view_snapshot(model, tree, current_run: str) -> dict:
+def capture_main_view_snapshot(model, tree, current_run: str) -> SnapshotData:
     """Capture the current main-view tree for fast restore."""
-    rows = []
+    rows: List[SerializedRow] = []
     for row in range(model.rowCount()):
         rows.append(serialize_tree_row(model, tree, row))
 
@@ -49,12 +57,19 @@ def capture_main_view_snapshot(model, tree, current_run: str) -> dict:
     }
 
 
-def restore_main_view_snapshot(model, tree, snapshot: dict, current_run: str, status_colors: dict, set_column_widths) -> bool:
+def restore_main_view_snapshot(
+    model,
+    tree,
+    snapshot: SnapshotData,
+    current_run: str,
+    status_colors: Dict[str, str],
+    set_column_widths: Callable[[], None],
+) -> bool:
     """Restore the cached main-view snapshot if available."""
     if not snapshot or snapshot.get("run") != current_run:
         return False
 
-    def build_row_items(row_data):
+    def build_row_items(row_data: SerializedRow):
         values = row_data.get("values", [])
         tune_files = row_data.get("tune_files", [])
         padded_values = list(values[:len(tree_rows.MAIN_TREE_HEADERS)])
@@ -95,14 +110,14 @@ def restore_main_view_snapshot(model, tree, snapshot: dict, current_run: str, st
     return True
 
 
-def get_selected_targets(tree, model) -> list:
+def get_selected_targets(tree, model) -> List[str]:
     """Return currently selected targets from tree view."""
     selected_indexes = tree.selectionModel().selectedIndexes()
     if not selected_indexes:
         return []
 
-    targets = []
-    seen_rows = set()
+    targets: List[str] = []
+    seen_rows: Set[RowKey] = set()
 
     for index in selected_indexes:
         if index.column() != 1:
@@ -125,7 +140,7 @@ def get_selected_targets(tree, model) -> list:
     return targets
 
 
-def select_targets_in_tree(tree, model, target_names) -> None:
+def select_targets_in_tree(tree, model, target_names: TargetNames) -> None:
     """Select targets in the tree by their names."""
     if not target_names:
         return
@@ -161,7 +176,7 @@ def show_all_children(tree, item) -> None:
             show_all_children(tree, child)
 
 
-def filter_tree_by_targets(tree, model, targets_to_show) -> None:
+def filter_tree_by_targets(tree, model, targets_to_show: Set[str]) -> None:
     """Filter tree to show only specific targets."""
     def check_visibility(item):
         if item.parent():
