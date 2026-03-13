@@ -13,7 +13,7 @@ import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 
 PART_BEGIN = "-----BEGIN NEWGUI BUNDLE PART-----"
@@ -71,7 +71,7 @@ def parse_parts(raw_text: str) -> List[Dict[str, str]]:
     return parsed_parts
 
 
-def rebuild_bundle(parts: List[Dict[str, str]]) -> Dict[str, str]:
+def rebuild_bundle(parts: List[Dict[str, str]]) -> Dict[str, object]:
     """Validate and reconstruct bundle payload."""
     bundle_ids = {part.get("bundle_id") for part in parts}
     if len(bundle_ids) != 1:
@@ -213,6 +213,171 @@ def backup_file(target_path: Path) -> Path:
     return backup_path
 
 
+def ensure_within_root(repo_root: Path, target_path: Path) -> None:
+    """Ensure a target path is contained by the requested root."""
+    if repo_root not in target_path.parents and target_path != repo_root:
+        raise SystemExit(f"Target path escapes the requested root: {target_path}")
+
+
+def validate_v1_bundle(bundle: Dict[str, object]) -> None:
+    """Validate legacy single-file bundle format."""
+    required_keys = {"bundle_id", "mode", "target_path", "target_hash", "payload"}
+    missing = required_keys - set(bundle.keys())
+    if missing:
+        raise SystemExit(f"Bundle metadata is missing required keys: {', '.join(sorted(missing))}")
+
+
+def validate_v2_bundle(bundle: Dict[str, object]) -> None:
+    """Validate multi-file bundle format."""
+    required_keys = {"bundle_id", "mode", "target_path", "entries", "manifest"}
+    missing = required_keys - set(bundle.keys())
+    if missing:
+        raise SystemExit(f"Bundle metadata is missing required keys: {', '.join(sorted(missing))}")
+    if not isinstance(bundle["entries"], list) or not bundle["entries"]:
+        raise SystemExit("Bundle entries must be a non-empty list.")
+    if not isinstance(bundle["manifest"], dict):
+        raise SystemExit("Bundle manifest must be a dictionary.")
+
+
+def apply_v1_bundle(bundle: Dict[str, object], repo_root: Path) -> int:
+    """Apply the legacy single-file bundle format."""
+    validate_v1_bundle(bundle)
+
+    target_path = (repo_root / str(bundle["target_path"])).resolve()
+    ensure_within_root(repo_root, target_path)
+
+    mode = str(bundle["mode"])
+    if mode not in {"patch", "full"}:
+        raise SystemExit(f"Unsupported bundle mode: {mode}")
+
+    current_text = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
+    current_hash = sha256_text(current_text) if target_path.exists() else ""
+    target_hash = str(bundle["target_hash"])
+
+    if current_hash == target_hash:
+        print(f"Bundle {bundle['bundle_id']} is already applied for {target_path}.")
+        return 0
+
+    if mode == "patch":
+        if not target_path.exists():
+            raise SystemExit(f"Patch mode requires an existing target file: {target_path}")
+        base_hash = str(bundle.get("base_hash", ""))
+        if current_hash != base_hash:
+            raise SystemExit(
+                "Baseline drift detected. "
+                f"Current hash={current_hash or '<missing>'}, expected base hash={base_hash}."
+            )
+        new_text = apply_unified_diff(current_text, str(bundle["payload"]))
+    else:
+        new_text = str(bundle["payload"])
+
+    new_hash = sha256_text(new_text)
+    if new_hash != target_hash:
+        raise SystemExit(
+            "Applied content hash mismatch. "
+            f"Expected {target_hash}, got {new_hash}."
+        )
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    backup_path = backup_file(target_path) if target_path.exists() else None
+    target_path.write_text(new_text, encoding="utf-8")
+
+    print(f"Applied bundle {bundle['bundle_id']} to {target_path}")
+    if backup_path is not None:
+        print(f"Backup created at {backup_path}")
+    print(f"Result hash: {new_hash}")
+    return 0
+
+
+def apply_v2_bundle(bundle: Dict[str, object], repo_root: Path) -> int:
+    """Apply the multi-file bundle format."""
+    validate_v2_bundle(bundle)
+
+    bundle_id = str(bundle["bundle_id"])
+    entries = bundle["entries"]
+    manifest = bundle["manifest"]
+
+    operations: List[Tuple[Dict[str, object], Path, str, str]] = []
+    backup_paths: List[Path] = []
+
+    for entry in entries:
+        relpath = str(entry["path"])
+        target_path = (repo_root / relpath).resolve()
+        ensure_within_root(repo_root, target_path)
+
+        current_text = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
+        current_hash = sha256_text(current_text) if target_path.exists() else ""
+        entry_mode = str(entry["entry_mode"])
+
+        if entry_mode == "delete":
+            base_hash = str(entry.get("base_hash", ""))
+            if not target_path.exists():
+                current_hash = ""
+            if base_hash and current_hash != base_hash:
+                raise SystemExit(
+                    "Baseline drift detected for delete entry. "
+                    f"Path={relpath}, current hash={current_hash or '<missing>'}, expected={base_hash}."
+                )
+            operations.append((entry, target_path, current_text, current_hash))
+            continue
+
+        if entry_mode == "patch":
+            base_hash = str(entry.get("base_hash", ""))
+            if not target_path.exists():
+                raise SystemExit(f"Patch entry requires an existing target file: {target_path}")
+            if current_hash != base_hash:
+                raise SystemExit(
+                    "Baseline drift detected for patch entry. "
+                    f"Path={relpath}, current hash={current_hash}, expected={base_hash}."
+                )
+            new_text = apply_unified_diff(current_text, str(entry["payload"]))
+        elif entry_mode == "full":
+            new_text = str(entry["payload"])
+        else:
+            raise SystemExit(f"Unsupported entry mode: {entry_mode}")
+
+        target_hash = str(entry["target_hash"])
+        new_hash = sha256_text(new_text)
+        if new_hash != target_hash:
+            raise SystemExit(
+                "Applied content hash mismatch. "
+                f"Path={relpath}, expected {target_hash}, got {new_hash}."
+            )
+        operations.append((entry, target_path, new_text, new_hash))
+
+    for entry, target_path, payload, _ in operations:
+        if target_path.exists():
+            backup_paths.append(backup_file(target_path))
+
+        if str(entry["entry_mode"]) == "delete":
+            if target_path.exists():
+                target_path.unlink()
+            continue
+
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text(str(payload), encoding="utf-8")
+
+    for relpath, expected_hash in manifest.items():
+        target_path = (repo_root / relpath).resolve()
+        ensure_within_root(repo_root, target_path)
+        if not target_path.exists():
+            raise SystemExit(f"Manifest verification failed, file missing after apply: {target_path}")
+        actual_hash = sha256_text(target_path.read_text(encoding="utf-8"))
+        if actual_hash != expected_hash:
+            raise SystemExit(
+                "Manifest verification failed. "
+                f"Path={relpath}, expected {expected_hash}, got {actual_hash}."
+            )
+
+    print(f"Applied bundle {bundle_id} with {len(entries)} file entries")
+    if backup_paths:
+        print(f"Backups created: {len(backup_paths)}")
+        for backup_path in backup_paths:
+            print(f"Backup created at {backup_path}")
+    print(f"Manifest files verified: {len(manifest)}")
+    return 0
+
+
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -228,61 +393,14 @@ def main() -> int:
     parts = parse_parts(raw_text)
     bundle = rebuild_bundle(parts)
 
-    required_keys = {"bundle_id", "mode", "target_path", "target_hash", "payload"}
-    missing = required_keys - set(bundle.keys())
-    if missing:
-        raise SystemExit(f"Bundle metadata is missing required keys: {', '.join(sorted(missing))}")
-
     repo_root = Path(args.root).resolve()
     if repo_root.exists() and not repo_root.is_dir():
         raise SystemExit(f"--root must be a project directory, not a file: {repo_root}")
-    target_path = (repo_root / bundle["target_path"]).resolve()
-    if repo_root not in target_path.parents and target_path != repo_root:
-        raise SystemExit(f"Target path escapes the requested root: {target_path}")
 
-    mode = bundle["mode"]
-    if mode not in {"patch", "full"}:
-        raise SystemExit(f"Unsupported bundle mode: {mode}")
-
-    current_text = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
-    current_hash = sha256_text(current_text) if target_path.exists() else ""
-    target_hash = bundle["target_hash"]
-
-    if current_hash == target_hash:
-        print(f"Bundle {bundle['bundle_id']} is already applied for {target_path}.")
-        return 0
-
-    if mode == "patch":
-        if not target_path.exists():
-            raise SystemExit(f"Patch mode requires an existing target file: {target_path}")
-        base_hash = bundle.get("base_hash", "")
-        if current_hash != base_hash:
-            raise SystemExit(
-                "Baseline drift detected. "
-                f"Current hash={current_hash or '<missing>'}, expected base hash={base_hash}."
-            )
-        new_text = apply_unified_diff(current_text, bundle["payload"])
-    else:
-        new_text = bundle["payload"]
-
-    new_hash = sha256_text(new_text)
-    if new_hash != target_hash:
-        raise SystemExit(
-            "Applied content hash mismatch. "
-            f"Expected {target_hash}, got {new_hash}."
-        )
-
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    backup_path = None
-    if target_path.exists():
-        backup_path = backup_file(target_path)
-    target_path.write_text(new_text, encoding="utf-8")
-
-    print(f"Applied bundle {bundle['bundle_id']} to {target_path}")
-    if backup_path is not None:
-        print(f"Backup created at {backup_path}")
-    print(f"Result hash: {new_hash}")
-    return 0
+    bundle_version = int(bundle.get("bundle_version", 1))
+    if bundle_version <= 1:
+        return apply_v1_bundle(bundle, repo_root)
+    return apply_v2_bundle(bundle, repo_root)
 
 
 if __name__ == "__main__":

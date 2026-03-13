@@ -2,10 +2,10 @@
 
 ## Code Architecture
 
-### Single-File Strategy
-- This project uses a **single-file architecture** for `reproduce_ui.py`
-- All UI components, models, and business logic should remain in one file
-- This is intentional for simplicity and ease of deployment
+### Package Strategy
+- The main entry file is `new_gui/reproduce_ui.py`
+- The project now uses a package-based structure under `new_gui/`
+- UI components, dialogs, and helper modules may be split into dedicated files under that package
 
 ## Code Style
 

@@ -9,20 +9,27 @@ import difflib
 import gzip
 import hashlib
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, Iterable, List, Tuple
 from uuid import uuid4
 
 
 STATE_DIR_NAME = ".patch_bundle_state"
 STATE_FILE_NAME = "export_state.json"
-BASELINE_FILE_NAME = "reproduce_ui.baseline.py"
-DEFAULT_TARGET = "reproduce_ui.py"
+SNAPSHOT_ROOT_NAME = "baseline_snapshots"
+DEFAULT_TARGET = "new_gui"
 DEFAULT_CHUNK_SIZE = 4000
 PART_BEGIN = "-----BEGIN NEWGUI BUNDLE PART-----"
 PART_END = "-----END NEWGUI BUNDLE PART-----"
+IGNORED_DIR_NAMES = {"__pycache__"}
+IGNORED_FILE_NAMES = {".DS_Store"}
+IGNORED_SUFFIXES = {".pyc"}
+
+
+TextMap = Dict[str, str]
 
 
 def sha256_text(text: str) -> str:
@@ -61,6 +68,76 @@ def save_state(state_file: Path, state: Dict[str, str]) -> None:
     write_text_file(state_file, json.dumps(state, indent=2, sort_keys=True) + "\n")
 
 
+def target_slug(target_relpath: str) -> str:
+    """Return a filesystem-safe token for a target path."""
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "_", target_relpath.strip("/"))
+    return slug or "root"
+
+
+def should_include_file(path: Path) -> bool:
+    """Return True when a file should be included in the bundle scope."""
+    if any(part in IGNORED_DIR_NAMES for part in path.parts):
+        return False
+    if path.name in IGNORED_FILE_NAMES:
+        return False
+    if path.suffix in IGNORED_SUFFIXES:
+        return False
+    return True
+
+
+def collect_scope_texts(scope_path: Path, repo_root: Path) -> TextMap:
+    """Collect all text files under a target file or directory."""
+    if not scope_path.exists():
+        raise SystemExit(f"Target path not found: {scope_path}")
+
+    collected: TextMap = {}
+    if scope_path.is_file():
+        relpath = scope_path.relative_to(repo_root).as_posix()
+        collected[relpath] = read_text_file(scope_path)
+        return collected
+
+    for path in sorted(scope_path.rglob("*")):
+        if not path.is_file() or not should_include_file(path):
+            continue
+        relpath = path.relative_to(repo_root).as_posix()
+        collected[relpath] = read_text_file(path)
+
+    if not collected:
+        raise SystemExit(f"Target scope contains no exportable files: {scope_path}")
+    return collected
+
+
+def load_snapshot_texts(snapshot_root: Path) -> TextMap:
+    """Load all snapshot files as a relative-path map."""
+    if not snapshot_root.exists():
+        return {}
+
+    collected: TextMap = {}
+    for path in sorted(snapshot_root.rglob("*")):
+        if not path.is_file() or not should_include_file(path):
+            continue
+        relpath = path.relative_to(snapshot_root).as_posix()
+        collected[relpath] = read_text_file(path)
+    return collected
+
+
+def reset_snapshot(snapshot_root: Path, texts: TextMap) -> None:
+    """Rewrite the on-disk snapshot for the target scope."""
+    if snapshot_root.exists():
+        for path in sorted(snapshot_root.rglob("*"), reverse=True):
+            if path.is_file():
+                path.unlink()
+            elif path.is_dir():
+                try:
+                    path.rmdir()
+                except OSError:
+                    pass
+    snapshot_root.mkdir(parents=True, exist_ok=True)
+
+    for relpath, content in texts.items():
+        write_text_file(snapshot_root / relpath, content)
+
+
 def build_unified_diff(target_relpath: str, baseline_text: str, current_text: str) -> str:
     """Generate unified diff text."""
     diff_lines = difflib.unified_diff(
@@ -73,46 +150,87 @@ def build_unified_diff(target_relpath: str, baseline_text: str, current_text: st
     return "".join(diff_lines)
 
 
-def build_bundle(
-    target_relpath: str,
-    baseline_text: str | None,
-    current_text: str,
-    force_full: bool,
-) -> Dict[str, str]:
-    """Build bundle metadata and payload."""
-    created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    bundle_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:8]
-    target_hash = sha256_text(current_text)
+def build_entry(relpath: str, baseline_text: str | None, current_text: str | None, force_full: bool) -> Dict[str, str]:
+    """Build a single file entry for a bundle."""
+    if current_text is None:
+        return {
+            "path": relpath,
+            "entry_mode": "delete",
+            "base_hash": sha256_text(baseline_text or ""),
+            "target_hash": "",
+            "payload": "",
+        }
 
+    target_hash = sha256_text(current_text)
     if force_full or baseline_text is None:
         return {
-            "bundle_version": 1,
-            "bundle_id": bundle_id,
-            "created_at": created_at,
-            "mode": "full",
-            "target_path": target_relpath,
-            "base_hash": "",
+            "path": relpath,
+            "entry_mode": "full",
+            "base_hash": "" if baseline_text is None else sha256_text(baseline_text),
             "target_hash": target_hash,
             "payload": current_text,
         }
 
-    diff_text = build_unified_diff(target_relpath, baseline_text, current_text)
+    diff_text = build_unified_diff(relpath, baseline_text, current_text)
     if not diff_text:
-        raise SystemExit("No changes detected against the last exported baseline.")
+        raise ValueError(f"No changes detected for {relpath}")
 
     return {
-        "bundle_version": 1,
-        "bundle_id": bundle_id,
-        "created_at": created_at,
-        "mode": "patch",
-        "target_path": target_relpath,
+        "path": relpath,
+        "entry_mode": "patch",
         "base_hash": sha256_text(baseline_text),
         "target_hash": target_hash,
         "payload": diff_text,
     }
 
 
-def encode_bundle(bundle: Dict[str, str]) -> Dict[str, str]:
+def build_entries(target_texts: TextMap, baseline_texts: TextMap, force_full: bool) -> List[Dict[str, str]]:
+    """Build bundle entries for all changed files in scope."""
+    all_paths = sorted(set(target_texts) | set(baseline_texts))
+    entries: List[Dict[str, str]] = []
+
+    for relpath in all_paths:
+        baseline_text = baseline_texts.get(relpath)
+        current_text = target_texts.get(relpath)
+
+        if not force_full and baseline_text == current_text:
+            continue
+
+        if force_full and current_text is None:
+            continue
+
+        try:
+            entries.append(build_entry(relpath, baseline_text, current_text, force_full))
+        except ValueError:
+            continue
+
+    return entries
+
+
+def build_bundle(target_relpath: str, target_texts: TextMap, baseline_texts: TextMap, force_full: bool) -> Dict[str, object]:
+    """Build bundle metadata and payload."""
+    created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    bundle_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:8]
+    mode = "full" if force_full or not baseline_texts else "patch"
+    entries = build_entries(target_texts, baseline_texts, mode == "full")
+
+    if not entries:
+        raise SystemExit("No changes detected against the last exported baseline.")
+
+    manifest = {path: sha256_text(text) for path, text in sorted(target_texts.items())}
+    return {
+        "bundle_version": 2,
+        "bundle_id": bundle_id,
+        "created_at": created_at,
+        "mode": mode,
+        "target_path": target_relpath,
+        "entry_count": len(entries),
+        "manifest": manifest,
+        "entries": entries,
+    }
+
+
+def encode_bundle(bundle: Dict[str, object]) -> Dict[str, str]:
     """Serialize, compress, and encode bundle."""
     bundle_json = json.dumps(bundle, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     compressed = gzip.compress(bundle_json.encode("utf-8"))
@@ -124,7 +242,7 @@ def encode_bundle(bundle: Dict[str, str]) -> Dict[str, str]:
     }
 
 
-def chunk_payload(bundle: Dict[str, str], encoded_payload: str, compressed_sha256: str, chunk_size: int) -> str:
+def chunk_payload(bundle: Dict[str, object], encoded_payload: str, compressed_sha256: str, chunk_size: int) -> str:
     """Render chunked text blocks for manual transfer."""
     parts = [encoded_payload[i:i + chunk_size] for i in range(0, len(encoded_payload), chunk_size)]
     rendered_parts: List[str] = []
@@ -154,7 +272,7 @@ def chunk_payload(bundle: Dict[str, str], encoded_payload: str, compressed_sha25
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", default=DEFAULT_TARGET, help="Target file to export")
+    parser.add_argument("--target", default=DEFAULT_TARGET, help="Target file or directory to export")
     parser.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE, help="Chunk size in characters")
     parser.add_argument("--full", action="store_true", help="Force a full bundle instead of a patch bundle")
     parser.add_argument("--output", help="Write chunked bundle text to a file instead of stdout")
@@ -168,20 +286,18 @@ def main() -> int:
     target_path = (repo_root / args.target).resolve()
     target_relpath = target_path.relative_to(repo_root).as_posix()
 
-    if not target_path.exists():
-        raise SystemExit(f"Target file not found: {target_path}")
     if args.chunk_size <= 0:
         raise SystemExit("--chunk-size must be a positive integer")
 
     state_dir = repo_root / "tools" / STATE_DIR_NAME
     state_file = state_dir / STATE_FILE_NAME
-    baseline_file = state_dir / BASELINE_FILE_NAME
+    snapshot_root = state_dir / SNAPSHOT_ROOT_NAME / target_slug(target_relpath)
 
     state = load_state(state_file)
-    current_text = read_text_file(target_path)
-    baseline_text = read_text_file(baseline_file) if baseline_file.exists() else None
+    target_texts = collect_scope_texts(target_path, repo_root)
+    baseline_texts = load_snapshot_texts(snapshot_root)
 
-    bundle = build_bundle(target_relpath, baseline_text, current_text, args.full)
+    bundle = build_bundle(target_relpath, target_texts, baseline_texts, args.full)
     encoded = encode_bundle(bundle)
     chunk_text = chunk_payload(bundle, encoded["encoded_payload"], encoded["compressed_sha256"], args.chunk_size)
 
@@ -192,23 +308,23 @@ def main() -> int:
     else:
         sys.stdout.write(chunk_text)
 
-    write_text_file(baseline_file, current_text)
+    reset_snapshot(snapshot_root, target_texts)
     state.update(
         {
-            "bundle_version": 1,
+            "bundle_version": bundle["bundle_version"],
             "last_bundle_id": bundle["bundle_id"],
             "last_exported_at": bundle["created_at"],
             "last_mode": bundle["mode"],
             "last_target_path": target_relpath,
-            "last_target_hash": bundle["target_hash"],
-            "last_base_hash": bundle["base_hash"],
+            "last_entry_count": bundle["entry_count"],
+            "last_manifest_size": len(bundle["manifest"]),
         }
     )
     save_state(state_file, state)
 
     summary = (
         f"bundle_id={bundle['bundle_id']} mode={bundle['mode']} "
-        f"target={bundle['target_path']} target_hash={bundle['target_hash']} "
+        f"target={bundle['target_path']} entries={bundle['entry_count']} "
         f"compressed_sha256={encoded['compressed_sha256']}"
     )
     print(summary, file=sys.stderr)

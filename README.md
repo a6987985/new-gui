@@ -8,7 +8,10 @@ A PyQt5-based GUI monitoring tool for tracking task execution status and depende
 
 ```
 new-gui/
-├── reproduce_ui.py    # Main application file (~6700 lines)
+├── new_gui/
+│   ├── reproduce_ui.py  # Main application file
+│   ├── config/
+│   └── ui/
 ├── README.md          # This documentation file
 ├── CLAUDE.md          # Project guidelines for Claude Code
 ├── .cursorrules       # Cursor editor rules configuration
@@ -388,12 +391,12 @@ The tree view displays the following columns:
 ## Usage
 
 ```bash
-python reproduce_ui.py
+python new_gui/reproduce_ui.py
 ```
 
 ### Cross-Network Patch Bundle Workflow
 
-Use this workflow when you need to move `reproduce_ui.py` updates into an isolated intranet environment.
+Use this workflow when you need to move `new_gui/reproduce_ui.py` updates into an isolated intranet environment.
 
 #### 1. Export a bundle on the internet-facing machine
 
@@ -530,7 +533,7 @@ If patch mode fails with a baseline drift message, export again with `--full` an
 
 #### Project Guidelines
 - Added `CLAUDE.md` with project conventions:
-  - Single-file architecture for `reproduce_ui.py`
+  - Main entry file: `new_gui/reproduce_ui.py`
   - No Chinese characters in code
   - English-only comments, docstrings, and variable names
 

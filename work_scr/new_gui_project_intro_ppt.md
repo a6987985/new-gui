@@ -7,7 +7,7 @@
 Function Overview And User Operation Guide
 
 - Project: `new-gui`
-- Main entry: `reproduce_ui.py`
+- Main entry: `new_gui/reproduce_ui.py`
 - Target usage: daily run monitoring and target operation
 
 Speaker notes:
