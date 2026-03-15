@@ -1,8 +1,9 @@
 """Helpers for executing flow actions and preserving refresh behavior."""
 
 import os
+import shlex
 import subprocess
-from typing import Dict, Sequence
+from typing import Dict, List, Sequence
 
 
 SYNC_REFRESH_ACTIONS = {"XMeta_unskip", "XMeta_skip"}
@@ -19,31 +20,36 @@ def build_action_request(
     action: str,
     selected_targets: Sequence[str],
 ) -> ActionRequest:
-    """Build the shell command and execution settings for a flow action."""
+    """Build the execution request for a flow action."""
     run_dir = os.path.join(run_base_dir, current_run)
+    argv: List[str] = shlex.split(action)
+    if action != "XMeta_run all":
+        argv.extend(selected_targets)
+
+    command = f"cd {shlex.quote(run_dir)} && {shlex.join(argv)}"
     if action == "XMeta_run all":
-        command = f"cd {run_dir} && {action}"
         log_message = f"{current_run}, {action}."
     else:
-        command = f"cd {run_dir} && {action} " + " ".join(selected_targets)
         log_message = f"{current_run}, {action} {' '.join(selected_targets)}."
 
     run_sync = action in SYNC_REFRESH_ACTIONS
     return {
         "command": command,
+        "argv": argv,
+        "cwd": run_dir,
         "log_message": log_message,
         "run_sync": run_sync,
         "timeout": SYNC_ACTION_TIMEOUT_SECONDS if run_sync else ASYNC_ACTION_TIMEOUT_SECONDS,
     }
 
 
-def execute_shell_command(command: str, timeout: int) -> ActionResult:
-    """Execute a shell command and return decoded output metadata."""
+def execute_shell_command(argv: Sequence[str], timeout: int, cwd: str) -> ActionResult:
+    """Execute a command and return decoded output metadata."""
     process = subprocess.Popen(
-        command,
-        shell=True,
+        list(argv),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        cwd=cwd,
     )
 
     try:

@@ -11,85 +11,6 @@ from PyQt5.QtWidgets import (
 )
 
 
-class CopyTuneDialog(QDialog):
-    """Dialog for copying tune file to multiple runs."""
-    def __init__(self, source_run, target_name, available_runs, parent=None):
-        super().__init__(parent)
-        self.source_run = source_run
-        self.target_name = target_name
-        self.available_runs = available_runs
-        self.selected_runs = []
-        self.checkboxes = {}
-
-        self.setWindowTitle(f"Copy Tune: {target_name}")
-        self.setMinimumWidth(400)
-        self.setup_ui()
-
-    def setup_ui(self):
-        layout = QVBoxLayout(self)
-
-        # Source info
-        source_label = QLabel(f"Source: {self.source_run}")
-        source_label.setStyleSheet("font-weight: bold; color: #4A90D9;")
-        layout.addWidget(source_label)
-
-        # Instructions
-        instruction_label = QLabel("Select runs to copy tune file to:")
-        layout.addWidget(instruction_label)
-
-        # Create scrollable area for run list
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setMinimumHeight(250)
-
-        scroll_widget = QWidget()
-        scroll_layout = QVBoxLayout(scroll_widget)
-
-        # Add checkboxes for each run (exclude source run)
-        for run in sorted(self.available_runs):
-            if run != self.source_run:
-                cb = QCheckBox(run)
-                self.checkboxes[run] = cb
-                scroll_layout.addWidget(cb)
-
-        scroll_layout.addStretch()
-        scroll.setWidget(scroll_widget)
-        layout.addWidget(scroll)
-
-        # Select/Deselect buttons
-        btn_layout = QHBoxLayout()
-        select_all_btn = QPushButton("Select All")
-        select_all_btn.clicked.connect(self.select_all)
-        deselect_all_btn = QPushButton("Deselect All")
-        deselect_all_btn.clicked.connect(self.deselect_all)
-        btn_layout.addWidget(select_all_btn)
-        btn_layout.addWidget(deselect_all_btn)
-        layout.addLayout(btn_layout)
-
-        # OK/Cancel buttons
-        btn_box = QHBoxLayout()
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.clicked.connect(self.reject)
-        copy_btn = QPushButton("Copy")
-        copy_btn.clicked.connect(self.accept)
-        copy_btn.setStyleSheet("background-color: #4A90D9; color: white;")
-        btn_box.addStretch()
-        btn_box.addWidget(cancel_btn)
-        btn_box.addWidget(copy_btn)
-        layout.addLayout(btn_box)
-
-    def select_all(self):
-        for cb in self.checkboxes.values():
-            cb.setChecked(True)
-
-    def deselect_all(self):
-        for cb in self.checkboxes.values():
-            cb.setChecked(False)
-
-    def get_selected_runs(self):
-        return [run for run, cb in self.checkboxes.items() if cb.isChecked()]
-
-
 class SelectTuneDialog(QDialog):
     """Dialog for selecting a tune file from multiple options."""
     def __init__(
@@ -270,6 +191,5 @@ class CopyTuneSelectDialog(QDialog):
 
     def get_selected_runs(self):
         return [run for run, cb in self.run_checkboxes.items() if cb.isChecked()]
-
 
 

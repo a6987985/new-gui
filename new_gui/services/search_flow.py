@@ -10,12 +10,14 @@ def build_search_context(
     is_search_mode: bool,
     search_text: str,
     selected_targets: Sequence[str] = (),
+    scroll_value: int = 0,
 ) -> SearchContext:
     """Capture the current search-related state."""
     return {
         "is_search_mode": bool(is_search_mode),
         "search_text": search_text or "",
         "selected_targets": list(selected_targets or []),
+        "scroll_value": int(scroll_value or 0),
     }
 
 
@@ -25,6 +27,7 @@ def refresh_after_action(
     build_status_cache: Callable[[str], None],
     rebuild_main_tree: Callable[[], None],
     filter_tree: Callable[[str], None],
+    set_scroll_value: Callable[[int], None],
 ) -> None:
     """Refresh the tree after an action and restore search filtering if needed."""
     if current_run and current_run != "No runs found":
@@ -34,6 +37,8 @@ def refresh_after_action(
 
     if search_context.get("is_search_mode") and search_context.get("search_text"):
         filter_tree(search_context["search_text"])
+
+    set_scroll_value(search_context.get("scroll_value", 0))
 
 
 def exit_search_mode(

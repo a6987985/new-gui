@@ -24,7 +24,7 @@ from new_gui.config.settings import (
 class NotificationWidget(QFrame):
     """A single notification widget that shows at the corner of the screen."""
 
-    clicked = pyqtSignal()
+    dismiss_requested = pyqtSignal()
 
     def __init__(self, title, message, notification_type="info", parent=None):
         super().__init__(parent)
@@ -140,13 +140,12 @@ class NotificationWidget(QFrame):
 
     def _on_close(self):
         """Handle close button click."""
-        self.fade_out()
+        self.dismiss_requested.emit()
 
     def mousePressEvent(self, event):
         """Handle click on notification."""
         if event.button() == Qt.LeftButton:
-            self.clicked.emit()
-            self.fade_out()
+            self.dismiss_requested.emit()
         super().mousePressEvent(event)
 
 
@@ -183,7 +182,7 @@ class NotificationManager(QObject):
             duration = config["duration"]
 
         notification = NotificationWidget(title, message, notification_type, self._parent)
-        notification.clicked.connect(lambda: self._remove_notification(notification))
+        notification.dismiss_requested.connect(lambda: self._dismiss_notification(notification))
 
         self._position_notification(notification)
         self._notifications.append(notification)
@@ -219,11 +218,6 @@ class NotificationManager(QObject):
             notification.fade_out()
             self._notifications.remove(notification)
             self._reposition_all()
-
-    def _remove_notification(self, notification):
-        """Remove a notification from the list."""
-        if notification in self._notifications:
-            self._notifications.remove(notification)
 
     def _reposition_all(self):
         """Reposition all visible notifications."""

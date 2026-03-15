@@ -39,6 +39,7 @@ def refresh_after_action(window, search_context) -> None:
         window._build_status_cache,
         window._rebuild_main_tree_now,
         window.filter_tree,
+        window.tree.verticalScrollBar().setValue,
     )
 
 
@@ -75,9 +76,10 @@ def log_action_result(window, command: str, result: dict, include_returncode: bo
 
 def start(window, action) -> None:
     """Execute a flow action and refresh the view when needed."""
-    selected_targets, search_context = window._get_selected_targets_keep_search()
+    selected_targets = window.get_selected_action_targets()
+    search_context = window._build_search_context(selected_targets)
 
-    if not selected_targets:
+    if action != "XMeta_run all" and not selected_targets:
         logger.warning(f"No targets selected for action: {action}")
         return
 
@@ -92,16 +94,18 @@ def start(window, action) -> None:
 
     if action_request["run_sync"]:
         result = action_flow.execute_shell_command(
-            action_request["command"],
+            action_request["argv"],
             action_request["timeout"],
+            action_request["cwd"],
         )
         window._log_action_result(action_request["command"], result)
         window._refresh_after_action(search_context)
     else:
         def run_command():
             result = action_flow.execute_shell_command(
-                action_request["command"],
+                action_request["argv"],
                 action_request["timeout"],
+                action_request["cwd"],
             )
             window._log_action_result(
                 action_request["command"],

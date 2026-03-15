@@ -1,6 +1,6 @@
 """Tree/view state helpers for MainWindow."""
 
-from typing import Callable, Dict, List, Sequence, Set, Tuple
+from typing import Callable, Dict, List, Sequence, Set
 
 from PyQt5.QtCore import QItemSelectionModel, QModelIndex, Qt
 
@@ -10,7 +10,6 @@ from new_gui.services import tree_rows
 SerializedRow = Dict[str, object]
 SnapshotData = Dict[str, object]
 TargetNames = Sequence[str]
-RowKey = Tuple[int, int]
 
 
 def serialize_tree_row(model, tree, row_index: int, parent_item=None) -> SerializedRow:
@@ -32,6 +31,7 @@ def serialize_tree_row(model, tree, row_index: int, parent_item=None) -> Seriali
 
     children: List[SerializedRow] = []
     level_item = get_item(0)
+    target_item = get_item(1)
     if level_item and level_item.hasChildren():
         for child_row in range(level_item.rowCount()):
             children.append(serialize_tree_row(model, tree, child_row, level_item))
@@ -39,6 +39,9 @@ def serialize_tree_row(model, tree, row_index: int, parent_item=None) -> Seriali
     return {
         "values": values,
         "tune_files": list(tune_files),
+        "row_kind": tree_rows.get_row_kind(target_item),
+        "target_name": tree_rows.get_row_target_name(target_item),
+        "descendant_targets": tree_rows.get_row_targets(target_item),
         "children": children,
         "expanded": tree.isExpanded(parent_index),
     }
@@ -72,23 +75,33 @@ def restore_main_view_snapshot(
     def build_row_items(row_data: SerializedRow):
         values = row_data.get("values", [])
         tune_files = row_data.get("tune_files", [])
+        row_kind = row_data.get("row_kind", tree_rows.ROW_KIND_TARGET)
+        descendant_targets = row_data.get("descendant_targets", [])
         padded_values = list(values[:len(tree_rows.MAIN_TREE_HEADERS)])
         if len(padded_values) < len(tree_rows.MAIN_TREE_HEADERS):
             padded_values.extend([""] * (len(tree_rows.MAIN_TREE_HEADERS) - len(padded_values)))
 
-        row_items = tree_rows.build_target_row_items(
-            padded_values[0],
-            padded_values[1],
-            padded_values[2],
-            tune_files,
-            padded_values[4],
-            padded_values[5],
-            padded_values[6],
-            padded_values[7],
-            padded_values[8],
-            status_colors,
-            tune_display=padded_values[3],
-        )
+        if row_kind not in (tree_rows.ROW_KIND_GROUP, tree_rows.ROW_KIND_LEVEL):
+            row_items = tree_rows.build_target_row_items(
+                padded_values[0],
+                row_data.get("target_name") or padded_values[1],
+                padded_values[2],
+                tune_files,
+                padded_values[4],
+                padded_values[5],
+                padded_values[6],
+                padded_values[7],
+                padded_values[8],
+                status_colors,
+                tune_display=padded_values[3],
+            )
+        else:
+            row_items = tree_rows.build_container_row_items(
+                padded_values[0],
+                padded_values[1],
+                row_kind or tree_rows.ROW_KIND_GROUP,
+                descendant_targets=descendant_targets,
+            )
 
         level_item = row_items[0] if row_items else None
         if level_item is not None:
@@ -112,32 +125,60 @@ def restore_main_view_snapshot(
 
 def get_selected_targets(tree, model) -> List[str]:
     """Return currently selected targets from tree view."""
-    selected_indexes = tree.selectionModel().selectedIndexes()
+    selection_model = tree.selectionModel()
+    if selection_model is None:
+        return []
+
+    selected_indexes = selection_model.selectedRows(1)
     if not selected_indexes:
         return []
 
     targets: List[str] = []
-    seen_rows: Set[RowKey] = set()
-
+    seen_targets: Set[str] = set()
     for index in selected_indexes:
-        if index.column() != 1:
+        item = model.itemFromIndex(index)
+        target_name = tree_rows.get_row_target_name(item)
+        if not target_name or target_name in seen_targets:
             continue
-
-        row_key = (index.row(), index.parent().row() if index.parent().isValid() else -1)
-        if row_key in seen_rows:
-            continue
-        seen_rows.add(row_key)
-
-        if index.parent().isValid():
-            target_index = model.index(index.row(), 1, index.parent())
-        else:
-            target_index = model.index(index.row(), 1)
-
-        target = model.data(target_index)
-        if target:
-            targets.append(target)
+        seen_targets.add(target_name)
+        targets.append(target_name)
 
     return targets
+
+
+def get_selected_action_targets(tree, model) -> List[str]:
+    """Return actionable target names for the current tree selection.
+
+    Leaf target rows contribute their own target name.
+    Synthetic group rows contribute all descendant leaf targets so batch
+    execute actions can operate on the full group.
+    """
+    selection_model = tree.selectionModel()
+    if selection_model is None:
+        return []
+
+    selected_indexes = selection_model.selectedRows(1)
+    if not selected_indexes:
+        return []
+
+    action_targets: List[str] = []
+    seen_targets: Set[str] = set()
+    for index in selected_indexes:
+        item = model.itemFromIndex(index)
+        row_kind = tree_rows.get_row_kind(item)
+        if row_kind == tree_rows.ROW_KIND_GROUP:
+            candidate_targets = tree_rows.get_row_targets(item)
+        else:
+            target_name = tree_rows.get_row_target_name(item)
+            candidate_targets = [target_name] if target_name else []
+
+        for target_name in candidate_targets:
+            if not target_name or target_name in seen_targets:
+                continue
+            seen_targets.add(target_name)
+            action_targets.append(target_name)
+
+    return action_targets
 
 
 def select_targets_in_tree(tree, model, target_names: TargetNames) -> None:
@@ -149,21 +190,32 @@ def select_targets_in_tree(tree, model, target_names: TargetNames) -> None:
     selection_model = tree.selectionModel()
     selection_model.clearSelection()
 
-    for row in range(model.rowCount()):
-        target_index = model.index(row, 1)
-        target_name = model.data(target_index)
+    first_match = None
 
-        if target_name in target_set:
-            selection_model.select(target_index, QItemSelectionModel.Select | QItemSelectionModel.Rows)
-            tree.scrollTo(target_index)
+    def walk_rows(parent_item=None):
+        nonlocal first_match
+        row_count = parent_item.rowCount() if parent_item is not None else model.rowCount()
+        for row in range(row_count):
+            row_items = tree_rows.get_row_items(model, row, parent_item)
+            target_item = row_items[1] if len(row_items) > 1 else None
+            target_name = tree_rows.get_row_target_name(target_item)
+            if target_name in target_set and target_item is not None:
+                target_index = target_item.index()
+                selection_model.select(target_index, QItemSelectionModel.Select | QItemSelectionModel.Rows)
+                parent_index = target_index.parent()
+                while parent_index.isValid():
+                    tree.expand(parent_index)
+                    parent_index = parent_index.parent()
+                if first_match is None:
+                    first_match = target_index
 
-        level_item = model.item(row, 0)
-        if level_item and level_item.hasChildren():
-            for child_row in range(level_item.rowCount()):
-                child_target_index = model.index(child_row, 1, level_item.index())
-                child_target_name = model.data(child_target_index)
-                if child_target_name in target_set:
-                    selection_model.select(child_target_index, QItemSelectionModel.Select | QItemSelectionModel.Rows)
+            level_item = row_items[0] if row_items else None
+            if level_item and level_item.hasChildren():
+                walk_rows(level_item)
+
+    walk_rows()
+    if first_match is not None:
+        tree.scrollTo(first_match)
 
 
 def show_all_children(tree, item) -> None:
@@ -178,40 +230,30 @@ def show_all_children(tree, item) -> None:
 
 def filter_tree_by_targets(tree, model, targets_to_show: Set[str]) -> None:
     """Filter tree to show only specific targets."""
-    def check_visibility(item):
-        if item.parent():
-            target_col_idx = model.index(item.row(), 1, item.parent().index())
-            target_name = model.data(target_col_idx)
-            should_show = target_name in targets_to_show
-            tree.setRowHidden(item.row(), item.parent().index(), not should_show)
-            return should_show
-
-        target_col_idx = model.index(item.row(), 1)
-        target_name = model.data(target_col_idx)
-        parent_match = target_name in targets_to_show
+    def check_visibility(row_index: int, parent_item=None) -> bool:
+        row_items = tree_rows.get_row_items(model, row_index, parent_item)
+        level_item = row_items[0] if row_items else None
+        target_item = row_items[1] if len(row_items) > 1 else None
+        represented_targets = set(tree_rows.get_row_targets(target_item))
 
         child_match = False
-        if item.hasChildren():
-            for i in range(item.rowCount()):
-                c_target_idx = model.index(i, 1, item.index())
-                c_target_name = model.data(c_target_idx)
-                c_match = c_target_name in targets_to_show
-                tree.setRowHidden(i, item.index(), not c_match)
-                if c_match:
+        if level_item and level_item.hasChildren():
+            for child_row in range(level_item.rowCount()):
+                if check_visibility(child_row, level_item):
                     child_match = True
 
-        should_show = parent_match or child_match
-        tree.setRowHidden(item.row(), QModelIndex(), not should_show)
+        should_show = bool(represented_targets & targets_to_show) or child_match
+        parent_index = parent_item.index() if parent_item is not None else QModelIndex()
+        tree.setRowHidden(row_index, parent_index, not should_show)
 
-        if should_show:
-            tree.expand(item.index())
+        if should_show and level_item and level_item.hasChildren():
+            tree.expand(level_item.index())
 
         return should_show
 
     tree.setUpdatesEnabled(False)
     for row in range(model.rowCount()):
-        item = model.item(row)
-        check_visibility(item)
+        check_visibility(row)
     tree.setUpdatesEnabled(True)
 
 
@@ -223,4 +265,31 @@ def clear_trace_filter(tree, model) -> None:
         item = model.item(row)
         if item:
             show_all_children(tree, item)
+    tree.setUpdatesEnabled(True)
+
+
+def expand_all_except_groups(tree, model) -> None:
+    """Expand the visible tree while keeping synthetic group rows collapsed."""
+    if tree is None or model is None:
+        return
+
+    tree.setUpdatesEnabled(False)
+    tree.expandAll()
+
+    def collapse_group_rows(parent_item=None) -> None:
+        row_count = parent_item.rowCount() if parent_item is not None else model.rowCount()
+        for row in range(row_count):
+            row_items = tree_rows.get_row_items(model, row, parent_item)
+            level_item = row_items[0] if row_items else None
+            target_item = row_items[1] if len(row_items) > 1 else None
+            if level_item is None:
+                continue
+
+            if tree_rows.get_row_kind(target_item) == tree_rows.ROW_KIND_GROUP:
+                tree.collapse(level_item.index())
+
+            if level_item.hasChildren():
+                collapse_group_rows(level_item)
+
+    collapse_group_rows()
     tree.setUpdatesEnabled(True)

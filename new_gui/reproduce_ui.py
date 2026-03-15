@@ -1,10 +1,6 @@
-import sys
 import os
-import re
-import time
+import sys
 import warnings
-import logging
-import shutil
 from concurrent.futures import ThreadPoolExecutor
 
 # Last Updated: 2026-03-05 19:00
@@ -14,36 +10,21 @@ warnings.filterwarnings("ignore", category=DeprecationWarning) # Suppress sipPyT
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from new_gui.config.settings import (
-    ANIMATION_DURATION_MS,
-    BACKUP_TIMER_INTERVAL_MS,
     DEBOUNCE_DELAY_MS,
-    FADE_IN_DURATION_MS,
-    MAX_NOTIFICATIONS,
-    NOTIFICATION_MARGIN_BOTTOM,
-    NOTIFICATION_MARGIN_RIGHT,
-    NOTIFICATION_SPACING,
-    NOTIFICATION_TYPES,
-    RE_ACTIVE_TARGETS,
-    RE_ALL_RELATED,
-    RE_DEPENDENCY_OUT,
-    RE_LEVEL_LINE,
-    RE_QUOTED_STRING,
-    RE_TARGET_LEVEL,
-    SHORTCUTS,
     STATUS_COLORS,
     STATUS_CONFIG,
-    THEMES,
     logger,
 )
 from new_gui.ui.dialogs.dependency_graph import DependencyGraphDialog
 from new_gui.ui.dialogs.params_editor import ParamsEditorDialog
-from new_gui.services import run_repository
 from new_gui.services import file_actions
+from new_gui.services import run_repository
 from new_gui.services import search_flow
 from new_gui.services import status_summary
 from new_gui.services import tree_rows
+from new_gui.services import tree_structure
+from new_gui.services import view_tabs
 from new_gui.services import view_state
-from new_gui.ui.widgets.bounded_combo import BoundedComboBox
 from new_gui.ui.theme_runtime import ThemeManager
 from new_gui.ui.builders import menu_builder, shortcut_builder, top_panel_builder, window_builder
 from new_gui.ui.controllers import (
@@ -52,36 +33,8 @@ from new_gui.ui.controllers import (
     theme_controller,
     view_controller,
 )
-from new_gui.ui.widgets.delegates import BorderItemDelegate, TuneComboBoxDelegate
-from new_gui.ui.widgets.filter_header import FilterHeaderView
-from new_gui.ui.widgets.labels import ClickableLabel
-from new_gui.ui.widgets.notifications import NotificationManager
-from new_gui.ui.widgets.scrollbars import RoundedScrollBar
-from new_gui.ui.widgets.status_bar import StatusBar
-from new_gui.ui.widgets.tree_view import ColorTreeView, TreeViewEventFilter
-
-
-from PyQt5.QtCore import (QPropertyAnimation, QEasingCurve, Qt, QTimer, QObject,
-                          QEvent, QModelIndex, QRect, pyqtSignal,
-                          QPointF, QLineF, QFileSystemWatcher, QSize, QPoint,
-                          QAbstractTableModel, QSortFilterProxyModel)
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
-                             QHBoxLayout, QLabel, QComboBox, QPushButton, QCompleter,
-                             QTreeView, QLineEdit, QHeaderView,
-                             QGraphicsDropShadowEffect,
-                             QSizePolicy, QMenu, QStyledItemDelegate, QStyle, QStyleOptionViewItem,
-                             QAbstractItemView, QStyleOptionComboBox,
-                             QMenuBar, QAction, QGraphicsScene, QGraphicsView,
-                             QGraphicsEllipseItem, QGraphicsTextItem, QGraphicsLineItem,
-                             QGraphicsPolygonItem, QFileDialog, QCheckBox, QScrollArea,
-                             QGroupBox, QFrame, QShortcut, QShortcut,
-                             QGraphicsRectItem, QGraphicsItem, QTableWidget, QTableWidgetItem,
-                             QTableView, QItemDelegate, QScrollBar,
-                             QStyleOptionSlider)
-from PyQt5.QtGui import (QStandardItemModel, QStandardItem, QColor, QBrush, QFont,
-                         QPen, QPainter, QPolygonF,
-                         QKeySequence, QIcon, QPixmap, QPainterPath)
-import math
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QApplication, QHeaderView, QMainWindow, QMenu
 
 
 # ========== Status Bar ==========
@@ -108,13 +61,15 @@ class MainWindow(QMainWindow):
         self._init_top_panel()
 
         # Expand tree initially
-        self.tree.expandAll()
+        self.expand_tree_default()
 
     def _init_core_variables(self):
         """Initialize core instance variables."""
         self.level_expanded = {}
         self.combo_sel = None
         self.cached_targets_by_level = {}
+        self.cached_collapsible_target_groups = {}
+        self._cached_collapsible_target_groups_run = ""
         self.is_tree_expanded = True
         self.is_search_mode = False
         self._executor = ThreadPoolExecutor(max_workers=4)
@@ -304,6 +259,10 @@ class MainWindow(QMainWindow):
         """Get currently selected targets from tree view."""
         return view_state.get_selected_targets(self.tree, self.model)
 
+    def get_selected_action_targets(self):
+        """Get actionable targets from tree selection for batch execute actions."""
+        return view_state.get_selected_action_targets(self.tree, self.model)
+
     def _get_current_search_text(self) -> str:
         """Return the current search text from the header filter state."""
         if hasattr(self, 'header'):
@@ -321,10 +280,12 @@ class MainWindow(QMainWindow):
     def _build_search_context(self, selected_targets=None) -> dict:
         """Capture the current search mode, text, and selected targets."""
         targets = self.get_selected_targets() if selected_targets is None else selected_targets
+        scroll_value = self.tree.verticalScrollBar().value() if hasattr(self, "tree") else 0
         return search_flow.build_search_context(
             self.is_search_mode,
             self._get_current_search_text(),
             targets,
+            scroll_value=scroll_value,
         )
 
     def _rebuild_main_tree_now(self) -> None:
@@ -398,8 +359,12 @@ class MainWindow(QMainWindow):
         if self.is_tree_expanded:
             self.tree.collapseAll()
         else:
-            self.tree.expandAll()
+            self.expand_tree_default()
         self.is_tree_expanded = not self.is_tree_expanded
+
+    def expand_tree_default(self):
+        """Expand the tree while keeping synthetic generic groups collapsed."""
+        view_state.expand_all_except_groups(self.tree, self.model)
 
     def _filter_tree_by_status_flat(self, status):
         """Show status-filtered targets using main-view tree hierarchy."""
@@ -482,10 +447,141 @@ class MainWindow(QMainWindow):
 
         # Build graph data
         graph_data = self.build_dependency_graph(current_run)
+        selected_targets = [] if getattr(self, "is_all_status_view", False) else self.get_selected_targets()
+        initial_target = selected_targets[0] if selected_targets else None
+        return_context = self._build_dependency_graph_return_context(current_run)
 
         # Show dialog
-        dialog = DependencyGraphDialog(graph_data, self.colors, self)
+        dialog = DependencyGraphDialog(
+            graph_data,
+            self.colors,
+            initial_target=initial_target,
+            locate_target_callback=lambda target_name, context=return_context: self.locate_target_in_tree(
+                target_name,
+                context,
+            ),
+            parent=self,
+        )
         dialog.exec_()
+
+    def _build_dependency_graph_return_context(self, run_name: str) -> dict:
+        """Capture the current tree context so graph navigation can return cleanly."""
+        if not run_name or run_name == "No runs found":
+            return {}
+
+        scroll_value = self.tree.verticalScrollBar().value() if hasattr(self, "tree") else 0
+        return {
+            "run_name": run_name,
+            "is_all_status_view": bool(getattr(self, "is_all_status_view", False)),
+            "restore_plan": None if getattr(self, "is_all_status_view", False) else self._build_current_view_restore_plan(scroll_value),
+        }
+
+    def _target_matches_graph_return_context(self, target_name: str, run_name: str, return_context: dict) -> bool:
+        """Return whether the target belongs to the captured tree context."""
+        if not target_name or not run_name or not return_context or return_context.get("is_all_status_view"):
+            return False
+
+        restore_plan = return_context.get("restore_plan") or {"mode": "main"}
+        mode = restore_plan.get("mode", "main")
+
+        if mode == "main":
+            return True
+        if mode == "search":
+            search_text = (restore_plan.get("search_text") or "").lower()
+            return bool(search_text) and search_text in target_name.lower()
+        if mode == "status":
+            target_status = (self.get_target_status(run_name, target_name) or "").lower()
+            return target_status == (restore_plan.get("status") or "").lower()
+        if mode == "trace":
+            trace_target = restore_plan.get("target_name", "")
+            inout = restore_plan.get("inout")
+            if not trace_target or not inout:
+                return False
+            run_dir = os.path.join(self.run_base_dir, run_name)
+            related_targets = list(run_repository.get_retrace_targets(run_dir, trace_target, inout) or [])
+            if trace_target not in related_targets:
+                if inout == "in":
+                    related_targets.append(trace_target)
+                else:
+                    related_targets.insert(0, trace_target)
+            return target_name in set(related_targets)
+        return False
+
+    def _apply_dependency_graph_return_context(self, return_context: dict) -> None:
+        """Restore the captured tree presentation before selecting a graph target."""
+        restore_plan = (return_context or {}).get("restore_plan") or {"mode": "main"}
+        mode = restore_plan.get("mode", "main")
+
+        if mode == "trace":
+            trace_target = restore_plan.get("target_name", "")
+            direction = "Up" if restore_plan.get("inout") == "in" else "Down"
+            self._apply_tab_state(view_tabs.get_trace_tab_state(f"Trace {direction}: {trace_target}"))
+        elif mode == "status":
+            status = restore_plan.get("status", "")
+            self._apply_tab_state(view_tabs.get_status_tab_state(status))
+        else:
+            self._set_main_run_tab_state()
+
+        if mode == "search":
+            search_text = restore_plan.get("search_text", "")
+            self._set_quick_search_text(search_text)
+            self._set_header_filter_text_silent(search_text)
+            self.is_search_mode = bool(search_text)
+            if hasattr(self, "header"):
+                self.header.show_filter()
+        else:
+            self._clear_search_ui_state()
+
+        if mode != "main":
+            self._restore_view_from_plan(restore_plan)
+
+    def locate_target_in_tree(self, target_name: str, return_context: dict = None) -> None:
+        """Restore the tree view and select the requested target from the graph."""
+        current_run = (return_context or {}).get("run_name") or self.combo.currentText()
+        if not current_run or current_run == "No runs found" or not target_name:
+            return
+
+        combo_index = self.combo.findText(current_run)
+        run_changed = combo_index >= 0 and self.combo.currentIndex() != combo_index
+        if run_changed:
+            was_blocked = self.combo.blockSignals(True)
+            self.combo.setCurrentIndex(combo_index)
+            self.combo.blockSignals(was_blocked)
+
+        preserve_context = self._target_matches_graph_return_context(target_name, current_run, return_context or {})
+        used_main_view_fallback = False
+
+        if run_changed or self.is_all_status_view:
+            self._activate_selected_run_view(current_run, invalidate_snapshot=True)
+            if preserve_context:
+                self._apply_dependency_graph_return_context(return_context or {})
+            else:
+                used_main_view_fallback = not (return_context or {}).get("is_all_status_view", False)
+        elif preserve_context:
+            self._apply_dependency_graph_return_context(return_context or {})
+        else:
+            self._activate_selected_run_view(current_run, invalidate_snapshot=True)
+            current_mode = ((return_context or {}).get("restore_plan") or {}).get("mode", "main")
+            used_main_view_fallback = current_mode != "main"
+
+        if used_main_view_fallback:
+            self._clear_search_ui_state()
+            self._set_main_run_tab_state()
+
+        self._select_targets_in_tree([target_name])
+        self.tree.setFocus()
+        self.raise_()
+        self.activateWindow()
+
+        selected_targets = self.get_selected_targets()
+        if target_name not in selected_targets:
+            self.show_notification("Not Found", f"Target '{target_name}' was not found in the current tree", "warning")
+        elif used_main_view_fallback:
+            self.show_notification(
+                "Locate In Tree",
+                "Restored the main view because the selected target is outside the original graph-open filter.",
+                "info",
+            )
 
     def open_user_params(self):
         """Open user.params file for editing."""
@@ -552,6 +648,30 @@ class MainWindow(QMainWindow):
             dict: Mapping of level number to list of target names
         """
         return run_repository.parse_dependency_file(self.run_base_dir, run_name)
+
+    def parse_collapsible_target_groups(self, run_name):
+        """Parse large timing/sorttiming target collections used for grouped display rows."""
+        return run_repository.parse_collapsible_target_groups(self.run_base_dir, run_name)
+
+    def _ensure_cached_collapsible_target_groups(self, run_name: str):
+        """Load grouped display definitions for the active run when needed."""
+        normalized_run = run_name or ""
+        if (
+            normalized_run
+            and (
+                self._cached_collapsible_target_groups_run != normalized_run
+                or not self.cached_collapsible_target_groups
+            )
+        ):
+            self.cached_collapsible_target_groups = self.parse_collapsible_target_groups(normalized_run)
+            self._cached_collapsible_target_groups_run = normalized_run
+        return self.cached_collapsible_target_groups
+
+    def _build_display_level_groups(self, targets_by_level, run_name: str = None):
+        """Build level/group/target display structure for the main tree."""
+        current_run = run_name if run_name is not None else self.combo.currentText()
+        collapsible_groups = self._ensure_cached_collapsible_target_groups(current_run)
+        return tree_structure.build_level_display_groups(targets_by_level, collapsible_groups)
 
     def on_run_changed(self):
         """When combo box selection changes, rebuild tree with new run data."""
@@ -624,23 +744,151 @@ class MainWindow(QMainWindow):
             STATUS_COLORS,
         )
 
-    def _append_target_groups_to_model(self, level_groups, run_name: str = None, status_value: str = None) -> int:
-        """Append grouped targets to the model using the standard main-tree structure."""
+    def _build_container_row_items(
+        self,
+        level_text,
+        label_text: str,
+        row_kind: str,
+        descendant_targets,
+        status_value: str = "",
+        status_key: str = "",
+    ) -> list:
+        """Build one synthetic main-tree row for a level or collapsible group container."""
+        return tree_rows.build_container_row_items(
+            level_text,
+            label_text,
+            row_kind,
+            descendant_targets=descendant_targets,
+            status_value=status_value,
+            status_key=status_key,
+            status_colors=STATUS_COLORS,
+        )
+
+    def _summarize_group_row_status(self, target_names, run_name: str = None, status_value: str = None):
+        """Return display text and dominant status key for one synthetic group row."""
+        current_run = run_name if run_name is not None else self.combo.currentText()
+        if status_value is not None:
+            normalized_status = (status_value or "").strip().lower()
+            if not normalized_status:
+                return "", ""
+            return f"all {normalized_status}", normalized_status
+
+        return status_summary.summarize_group_status(
+            target_names,
+            lambda target_name: self.get_target_status(current_run, target_name),
+        )
+
+    def _append_display_node_to_parent(self, parent_item, node: dict, run_name: str = None, status_value: str = None) -> int:
+        """Append one display node and all descendants below an existing parent item."""
+        node_kind = node.get("kind", tree_rows.ROW_KIND_TARGET)
+        node_label = node.get("label", "")
+        node_targets = list(node.get("targets", []) or [])
+
+        if node_kind == tree_rows.ROW_KIND_TARGET:
+            child_row = self._build_target_row_items(
+                "",
+                node.get("target_name", node_label),
+                status_value=status_value,
+                run_name=run_name,
+            )
+            parent_item.appendRow(child_row)
+            return 1
+
+        group_status_text, group_status_key = self._summarize_group_row_status(
+            node_targets,
+            run_name=run_name,
+            status_value=status_value,
+        )
+        child_row = self._build_container_row_items(
+            "",
+            node_label,
+            node_kind,
+            node_targets,
+            status_value=group_status_text,
+            status_key=group_status_key,
+        )
+        parent_item.appendRow(child_row)
+
         appended_count = 0
-        for level, targets in level_groups:
-            if not targets:
+        child_parent_item = child_row[0]
+        for child_node in node.get("children", []):
+            appended_count += self._append_display_node_to_parent(
+                child_parent_item,
+                child_node,
+                run_name=run_name,
+                status_value=status_value,
+            )
+        return appended_count
+
+    def _split_level_anchor_target(self, child_nodes):
+        """Return the top-level anchor target and remaining child nodes for one level."""
+        ordered_nodes = list(child_nodes or [])
+        if not ordered_nodes:
+            return "", []
+
+        first_node = ordered_nodes[0]
+        if first_node.get("kind") == tree_rows.ROW_KIND_TARGET:
+            return first_node.get("target_name", ""), ordered_nodes[1:]
+
+        if first_node.get("kind") == tree_rows.ROW_KIND_GROUP:
+            group_targets = list(first_node.get("targets", []) or [])
+            if not group_targets:
+                return "", ordered_nodes[1:]
+
+            anchor_target = group_targets[0]
+            remaining_targets = group_targets[1:]
+            remaining_children = list(first_node.get("children", []) or [])[1:]
+            remaining_nodes = []
+            if remaining_targets and remaining_children:
+                remaining_nodes.append(
+                    {
+                        "kind": tree_rows.ROW_KIND_GROUP,
+                        "label": first_node.get("label", ""),
+                        "target_name": "",
+                        "targets": remaining_targets,
+                        "children": remaining_children,
+                    }
+                )
+            remaining_nodes.extend(ordered_nodes[1:])
+            return anchor_target, remaining_nodes
+
+        return "", ordered_nodes[1:]
+
+    def _append_target_groups_to_model(self, display_groups, run_name: str = None, status_value: str = None) -> int:
+        """Append grouped display nodes to the model using the standard main-tree structure."""
+        appended_target_count = 0
+        for display_group in display_groups:
+            level = display_group.get("level")
+            targets = list(display_group.get("targets", []) or [])
+            children = list(display_group.get("children", []) or [])
+
+            if not targets or not children:
                 continue
 
-            parent_row = self._build_target_row_items(str(level), targets[0], status_value=status_value, run_name=run_name)
-            self.model.appendRow(parent_row)
-            appended_count += 1
+            anchor_target, remaining_children = self._split_level_anchor_target(children)
+            if not anchor_target:
+                anchor_target = targets[0]
+                remaining_children = children
 
-            parent_level_item = parent_row[0]
-            for child_target in targets[1:]:
-                child_row = self._build_target_row_items("", child_target, status_value=status_value, run_name=run_name)
-                parent_level_item.appendRow(child_row)
-                appended_count += 1
-        return appended_count
+            parent_row = self._build_target_row_items(
+                str(level),
+                anchor_target,
+                status_value=status_value,
+                run_name=run_name,
+            )
+            self.model.appendRow(parent_row)
+            appended_target_count += 1
+
+            level_parent_item = parent_row[0]
+            for child_node in remaining_children:
+                appended_target_count += self._append_display_node_to_parent(
+                    level_parent_item,
+                    child_node,
+                    run_name=run_name,
+                    status_value=status_value,
+                )
+
+        return appended_target_count
 
     def _build_current_view_restore_plan(self, scroll_value: int) -> dict:
         """Describe the active filtered/tree mode so it can be replayed after rebuild."""
@@ -808,18 +1056,21 @@ class MainWindow(QMainWindow):
         def update_cells(target_item, tune_item):
             if not target_item or not tune_item:
                 return
-            if target_item.text() != target_name:
+            if tree_rows.get_row_target_name(target_item) != target_name:
                 return
             tune_item.setText(tune_display)
             tune_item.setData(tune_files, Qt.UserRole)
 
-        for row_idx in range(self.model.rowCount()):
-            update_cells(self.model.item(row_idx, 1), self.model.item(row_idx, 3))
-            level_item = self.model.item(row_idx, 0)
-            if not level_item or not level_item.hasChildren():
-                continue
-            for child_row in range(level_item.rowCount()):
-                update_cells(level_item.child(child_row, 1), level_item.child(child_row, 3))
+        def walk_rows(parent_item=None):
+            row_count = parent_item.rowCount() if parent_item is not None else self.model.rowCount()
+            for row_idx in range(row_count):
+                row_items = tree_rows.get_row_items(self.model, row_idx, parent_item)
+                update_cells(row_items[1] if len(row_items) > 1 else None, row_items[3] if len(row_items) > 3 else None)
+                level_item = row_items[0] if row_items else None
+                if level_item and level_item.hasChildren():
+                    walk_rows(level_item)
+
+        walk_rows()
 
     def create_tune(self):
         """Create a tune file from tunesource entries in cmds/<target>.cmd and open it."""

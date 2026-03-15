@@ -45,7 +45,9 @@ class ThemeManager:
     def toggle_theme(self):
         """Toggle between light and dark theme"""
         new_theme = "dark" if self._current_theme == "light" else "light"
-        return self.set_theme(new_theme)
+        if self.set_theme(new_theme):
+            return new_theme
+        return None
 
 
 # ========== Status Animator ==========

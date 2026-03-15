@@ -13,6 +13,7 @@ from new_gui.services.run_dependency import (
     build_dependency_graph,
     get_active_targets,
     get_retrace_targets,
+    parse_collapsible_target_groups,
     parse_dependency_file,
 )
 from new_gui.services.run_status import (
@@ -43,6 +44,7 @@ __all__ = [
     "get_tune_files",
     "invalidate_run_target_cache",
     "list_available_runs",
+    "parse_collapsible_target_groups",
     "parse_dependency_file",
     "save_bsub_param",
     "scan_runs",

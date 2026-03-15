@@ -18,7 +18,7 @@ def setup_keyboard_shortcuts(window) -> None:
     shortcut_refresh.setContext(Qt.ApplicationShortcut)
 
     shortcut_expand = QShortcut(QKeySequence(SHORTCUTS["expand_all"]["key"]), window)
-    shortcut_expand.activated.connect(window.tree.expandAll)
+    shortcut_expand.activated.connect(window.expand_tree_default)
     shortcut_expand.setContext(Qt.ApplicationShortcut)
 
     shortcut_collapse = QShortcut(QKeySequence(SHORTCUTS["collapse_all"]["key"]), window)

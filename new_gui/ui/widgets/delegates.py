@@ -3,6 +3,8 @@ from PyQt5.QtGui import QColor, QBrush, QPen
 from PyQt5.QtWidgets import QStyle, QStyleOptionViewItem, QStyledItemDelegate
 
 from new_gui.config.settings import STATUS_CONFIG
+from new_gui.services import file_actions
+from new_gui.services import tree_rows
 from new_gui.ui.theme_runtime import StatusAnimator
 
 
@@ -207,6 +209,10 @@ class TuneComboBoxDelegate(QStyledItemDelegate):
         if event.type() == QEvent.MouseButtonDblClick:
             from PyQt5.QtWidgets import QMenu
 
+            target_item = model.itemFromIndex(model.index(index.row(), 1, index.parent()))
+            if not tree_rows.get_row_target_name(target_item):
+                return False
+
             # Create menu for dropdown
             menu = QMenu(self.tree_view)
             menu.setStyleSheet("""
@@ -246,15 +252,9 @@ class TuneComboBoxDelegate(QStyledItemDelegate):
             def on_triggered(action):
                 filepath = action.data()
                 if filepath:
-                    import subprocess
-                    try:
-                        subprocess.Popen(['gvim', filepath])
-                    except Exception as e:
-                        pass
+                    file_actions.open_file_with_editor(filepath, use_popen=True)
 
             menu.triggered.connect(on_triggered)
             menu.exec_(popup_pos)
             return True
         return super().editorEvent(event, model, option, index)
-
-

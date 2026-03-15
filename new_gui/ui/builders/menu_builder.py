@@ -3,51 +3,13 @@
 from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import QAction
 
+from new_gui.ui import style_sheets
+
 
 def init_menu_bar(window) -> None:
     """Initialize the menu bar."""
     window.menu_bar = window.menuBar()
-    window._default_menu_bar_style = """
-        QMenuBar {
-            background-color: #ffffff;
-            border-bottom: 1px solid #e0e0e0;
-            padding: 2px 8px;
-            font-size: 13px;
-            font-weight: bold;
-        }
-        QMenuBar::item {
-            background-color: transparent;
-            padding: 4px 14px;
-            border-radius: 4px;
-            color: #333333;
-        }
-        QMenuBar::item:selected {
-            background-color: #e3f2fd;
-            color: #1976d2;
-        }
-        QMenuBar::item:pressed {
-            background-color: #bbdefb;
-        }
-        QMenu {
-            background-color: #ffffff;
-            border: 1px solid #e0e0e0;
-            border-radius: 6px;
-            padding: 4px 0px;
-        }
-        QMenu::item {
-            padding: 8px 24px;
-            color: #333333;
-        }
-        QMenu::item:selected {
-            background-color: #e3f2fd;
-            color: #1976d2;
-        }
-        QMenu::separator {
-            height: 1px;
-            background: #e0e0e0;
-            margin: 4px 12px;
-        }
-    """
+    window._default_menu_bar_style = style_sheets.build_default_menu_bar_style()
     window.menu_bar.setStyleSheet(window._default_menu_bar_style)
 
     status_menu = window.menu_bar.addMenu("Status")

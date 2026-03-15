@@ -10,41 +10,40 @@ from new_gui.config.settings import logger
 OverviewRow = Dict[str, str]
 
 
-def list_available_runs(run_base_dir: str) -> List[str]:
-    """Return runs that contain a .target_dependency.csh file."""
-    available_runs: List[str] = []
+def _discover_runs(run_base_dir: str) -> List[str]:
+    """Return sorted runs that contain a .target_dependency.csh file."""
+    runs: List[str] = []
     if not run_base_dir or not os.path.exists(run_base_dir):
-        return available_runs
+        return runs
 
     for item in os.listdir(run_base_dir):
         item_path = os.path.join(run_base_dir, item)
         dep_file = os.path.join(item_path, ".target_dependency.csh")
         if os.path.isdir(item_path) and os.path.exists(dep_file):
-            available_runs.append(item)
-    return available_runs
+            runs.append(item)
+
+    return sorted(runs)
+
+
+def list_available_runs(run_base_dir: str) -> List[str]:
+    """Return runs that contain a .target_dependency.csh file."""
+    return _discover_runs(run_base_dir)
 
 
 def scan_runs(run_base_dir: str) -> List[str]:
     """Scan the run base directory and return sorted valid run names."""
-    runs: List[str] = []
     if not os.path.exists(run_base_dir):
-        return runs
+        return []
 
     logger.info(f"Scanning for runs in: {os.path.abspath(run_base_dir)}")
     try:
-        for item in os.listdir(run_base_dir):
-            item_path = os.path.join(run_base_dir, item)
-            if not os.path.isdir(item_path):
-                continue
-            dependency_file = os.path.join(item_path, ".target_dependency.csh")
-            if os.path.exists(dependency_file):
-                runs.append(item)
-                logger.info(f"Found run: {item}")
+        runs = _discover_runs(run_base_dir)
     except Exception as exc:
         logger.error(f"Error scanning runs: {exc}")
+        return []
 
     logger.info(f"Total runs found: {len(runs)}")
-    return sorted(runs)
+    return runs
 
 
 def collect_all_status_overview(run_base_dir: str) -> List[OverviewRow]:

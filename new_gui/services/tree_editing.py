@@ -4,6 +4,8 @@ from typing import Dict, Optional
 
 from PyQt5.QtCore import Qt
 
+from new_gui.services import tree_rows
+
 
 EDITABLE_BSUB_COLUMNS = {
     6: "queue",
@@ -32,8 +34,8 @@ def build_bsub_edit_context(model, index) -> Optional[BsubEditContext]:
     if not param_type:
         return None
 
-    target_index = model.index(index.row(), 1, index.parent())
-    target_name = model.data(target_index)
+    target_item = model.itemFromIndex(model.index(index.row(), 1, index.parent()))
+    target_name = tree_rows.get_row_target_name(target_item)
     if not target_name:
         return None
 

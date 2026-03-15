@@ -74,15 +74,11 @@ def open_file_with_editor(filepath: str, editor: str = "gvim", use_popen: bool =
 
 def open_terminal(run_dir: str, terminal_command: str = "XMeta_term") -> None:
     """Open a terminal command in the requested run directory."""
-    original_dir = os.getcwd()
     try:
-        os.chdir(run_dir)
-        subprocess.run([terminal_command], check=False, timeout=5)
+        subprocess.run([terminal_command], check=False, timeout=5, cwd=run_dir)
     except subprocess.TimeoutExpired:
         pass
     except FileNotFoundError:
         logger.error(f"{terminal_command} not found in PATH")
     except Exception as exc:
         logger.error(f"Error opening terminal: {exc}")
-    finally:
-        os.chdir(original_dir)

@@ -31,7 +31,7 @@ class TreeViewEventFilter(QObject):
                         if not model:
                             return False
 
-                        item = model.itemFromIndex(model.index(index.row(), 0))
+                        item = model.itemFromIndex(index.sibling(index.row(), 0))
                         if item and item.hasChildren():
                             is_expanded = self.tree_view.isExpanded(index)
                             if is_expanded:
@@ -39,7 +39,12 @@ class TreeViewEventFilter(QObject):
                             else:
                                 self.tree_view.expand(index)
                             level = item.text()
-                            if hasattr(self.parent, "combo_sel") and hasattr(self.parent, "level_expanded"):
+                            if (
+                                level
+                                and not index.parent().isValid()
+                                and hasattr(self.parent, "combo_sel")
+                                and hasattr(self.parent, "level_expanded")
+                            ):
                                 run_dir = self.parent.combo_sel
                                 if run_dir not in self.parent.level_expanded:
                                     self.parent.level_expanded[run_dir] = {}

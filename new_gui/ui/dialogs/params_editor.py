@@ -1,5 +1,6 @@
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -508,10 +509,12 @@ class ParamsEditorDialog(QDialog):
             self.modified = False
             self.status_label.setText(f"Saved to: {self.params_file}")
             logger.info(f"Saved params to: {self.params_file}")
+            return True
 
         except Exception as e:
             self.status_label.setText(f"Error saving file: {e}")
             logger.error(f"Error saving params file: {e}")
+            return False
 
     def _gen_params(self):
         """Execute XMeta_gen_params to generate params to flow"""
@@ -524,7 +527,8 @@ class ParamsEditorDialog(QDialog):
             )
 
             if reply == QMessageBox.Yes:
-                self._save_params()
+                if not self._save_params():
+                    return
             elif reply == QMessageBox.Cancel:
                 return
             # If No, continue with existing file
@@ -539,13 +543,13 @@ class ParamsEditorDialog(QDialog):
         logger.info(f"Gen params - params_file: {self.params_file}")
         self.status_label.setText(f"Generating params in: {self.run_dir}")
 
-        cmd = f"cd {self.run_dir} && XMeta_gen_params"
-        logger.info(f"Executing: {cmd}")
+        command = ["XMeta_gen_params"]
+        command_display = f"cd {shlex.quote(self.run_dir)} && {shlex.join(command)}"
+        logger.info(f"Executing: {command_display}")
 
         try:
             process = subprocess.Popen(
-                cmd,
-                shell=True,
+                command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=self.run_dir  # Explicitly set working directory
@@ -582,11 +586,11 @@ class ParamsEditorDialog(QDialog):
             )
 
             if reply == QMessageBox.Yes:
-                self._save_params()
+                if not self._save_params():
+                    event.ignore()
+                    return
             elif reply == QMessageBox.Cancel:
                 event.ignore()
                 return
 
         event.accept()
-
-

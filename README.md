@@ -1,6 +1,6 @@
 # XMeta Console GUI
 
-> **Last Updated**: 2026-03-13
+> **Last Updated**: 2026-03-14
 
 A PyQt5-based GUI monitoring tool for tracking task execution status and dependencies in EDA/chip design workflows.
 
@@ -16,7 +16,9 @@ new-gui/
 ├── work_scr/         # Project docs, split roadmap, and maintenance notes
 │   ├── reproduce_ui_execution_roadmap.md
 │   ├── reproduce_ui_to_1000_blueprint.md
-│   └── new_gui_maintenance_boundaries.md
+│   ├── new_gui_maintenance_boundaries.md
+│   ├── dependency_graph_evolution_roadmap.md
+│   └── dependency_graph_closure_checklist.md
 ├── README.md          # This documentation file
 ├── CLAUDE.md          # Project guidelines for Claude Code
 ├── .cursorrules       # Cursor editor rules configuration
@@ -33,6 +35,8 @@ For the post-split codebase, use these documents as the primary references:
 - `work_scr/new_gui_maintenance_boundaries.md`: stable ownership rules and "do not split further" boundaries
 - `work_scr/reproduce_ui_execution_roadmap.md`: executed slice history and current split status
 - `work_scr/reproduce_ui_to_1000_blueprint.md`: original line-budget blueprint that drove the split
+- `work_scr/dependency_graph_evolution_roadmap.md`: dependency graph evolution plan from baseline visualization to a stable analysis aid
+- `work_scr/dependency_graph_closure_checklist.md`: dependency graph closure record and final maintenance boundary
 
 ## Technology Stack
 
@@ -76,7 +80,26 @@ For the post-split codebase, use these documents as the primary references:
   - Node selection and highlighting
   - Upstream/downstream path tracing
   - Zoom, pan, and fit-to-view controls
+  - In-graph target search
+  - Local subgraph focus with `Depth` scope control
+  - Graph-to-tree locate flow and tree-to-graph initial focus
+  - Explicit level lanes and target counts
   - Export to PNG
+
+#### Dependency Graph Current Status
+
+The dependency graph is considered a closed, stable module for this phase.
+
+- Role: single-run, read-only, modal inspection and navigation view
+- Stable capabilities:
+  - Canonical trace semantics shared with the main tree view
+  - In-graph search and cyclic "find next" navigation
+  - Local subgraph mode with explicit `Depth` scope semantics
+  - Graph-to-tree locate flow with context-aware return behavior
+  - Level-aware rendering with visible lane guides
+- Maintenance boundary:
+  - Do not expand it into a graph editor, multi-run comparison workspace, or permanently synchronized second primary view
+  - Do not add more toolbar controls unless a real inspection workflow gap appears
 
 ### 4. Search and Filter
 
@@ -268,7 +291,7 @@ The run dropdown (BoundedComboBox) provides:
 | `NotificationWidget` | Individual notification popup |
 | `NotificationManager` | Singleton managing notification stacking and display |
 | `StatusBar` | Bottom status bar with statistics |
-| `BorderItemDelegate` | Custom delegate for row borders, status colors, and bold text on hover/selection |
+| `BorderItemDelegate` | Custom delegate for row borders, status colors, and stable selection emphasis |
 | `FilterHeaderView` | Custom header with embedded search input for Target column |
 | `TuneComboBoxDelegate` | ComboBox delegate for Tune column dropdown |
 | `TreeViewEventFilter` | Event filter for expand/collapse handling |
@@ -278,10 +301,9 @@ The run dropdown (BoundedComboBox) provides:
 | `ClickableLabel` | QLabel that emits doubleClicked signal |
 | `ParamsTableModel` | High-performance QAbstractTableModel for params data with filtering |
 | `ParamsEditorDialog` | Dialog for editing user.params and viewing tile.params |
-| `DependencyGraphDialog` | Interactive dependency graph viewer with zoom/pan/export |
+| `DependencyGraphDialog` | Interactive dependency graph viewer with search, local focus, tree locate, and export |
 | `InteractiveNodeItem` | Clickable/hoverable node for dependency graph |
 | `SelectTuneDialog` | Dialog for selecting a single tune file |
-| `CopyTuneDialog` | Dialog for selecting runs to copy tune to |
 | `CopyTuneSelectDialog` | Combined dialog for multi-tune selection and multi-run copy |
 
 ## Data Sources
@@ -678,7 +700,7 @@ If patch mode fails with a baseline drift message, export again with `--full` an
 - Added `ThemeManager` singleton for theme management
 - Added `StatusAnimator` for animation coordination
 - Added `NotificationManager` for notification display
-- Enhanced `BorderItemDelegate` with bold text on hover/selection
+- Enhanced `BorderItemDelegate` with selection emphasis and hover background treatment
 - Enhanced `DependencyGraphDialog` with interactive features
 - Removed unused `HoverInfoCard` and `AdvancedSearchPanel` classes
 

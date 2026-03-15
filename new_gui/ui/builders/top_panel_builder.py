@@ -14,6 +14,7 @@ from PyQt5.QtWidgets import (
 
 from new_gui.config.settings import BACKUP_TIMER_INTERVAL_MS
 from new_gui.services import tree_rows, view_tabs
+from new_gui.ui import style_sheets
 from new_gui.ui.widgets.bounded_combo import BoundedComboBox
 from new_gui.ui.widgets.notifications import NotificationManager
 from new_gui.ui.widgets.status_bar import StatusBar
@@ -28,16 +29,9 @@ def init_top_panel(window) -> None:
     window.top_panel = QWidget()
     window.top_panel.setObjectName("topPanel")
     window.top_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-    window._default_top_panel_bg = "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #f8f9fa, stop:1 #e9ecef)"
-    window.top_panel.setStyleSheet(
-        """
-            #topPanel {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #f8f9fa, stop:1 #e9ecef);
-                border-radius: 0px;
-            }
-        """
-    )
+    default_top_panel_bg = "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #f8f9fa, stop:1 #e9ecef)"
+    window._default_top_panel_style = style_sheets.build_default_top_panel_style(default_top_panel_bg)
+    window.top_panel.setStyleSheet(window._default_top_panel_style)
     shadow = QGraphicsDropShadowEffect(window)
     shadow.setBlurRadius(8)
     shadow.setOffset(0, 2)
@@ -221,12 +215,10 @@ def init_top_panel(window) -> None:
     window.tab_bar.setObjectName("tabBar")
     tab_bg_color = QColor(window.window_bg).darker(120)
     tab_bg_hex = tab_bg_color.name()
-    window._default_tab_bar_style = f"""
-        #tabBar {{
-            background-color: {tab_bg_hex};
-            border-bottom: 1px solid #d0d0d0;
-        }}
-    """
+    window._default_tab_bar_style = style_sheets.build_tab_bar_style(
+        tab_bg_hex,
+        "border-bottom: 1px solid #d0d0d0;",
+    )
     window.tab_bar.setStyleSheet(window._default_tab_bar_style)
     tab_layout = QHBoxLayout(window.tab_bar)
     tab_layout.setContentsMargins(12, 2, 12, 2)
@@ -236,17 +228,12 @@ def init_top_panel(window) -> None:
     window.tab_widget.setObjectName("tabWidget")
     tab_widget_bg = QColor(window.window_bg).lighter(108)
     tab_widget_bg_hex = tab_widget_bg.name()
-    window.tab_widget.setStyleSheet(
-        f"""
-            #tabWidget {{
-                background-color: {tab_widget_bg_hex};
-                border: 1px solid #d0d0d0;
-                border-bottom: none;
-                border-top-left-radius: 8px;
-                border-top-right-radius: 8px;
-            }}
-        """
+    window._default_tab_widget_style = style_sheets.build_tab_widget_style(
+        tab_widget_bg_hex,
+        "border: 1px solid #d0d0d0;",
+        "border-bottom: none;",
     )
+    window.tab_widget.setStyleSheet(window._default_tab_widget_style)
     tab_inner_layout = QHBoxLayout(window.tab_widget)
     tab_inner_layout.setContentsMargins(14, 4, 10, 4)
     tab_inner_layout.setSpacing(6)
@@ -304,96 +291,8 @@ def init_top_panel(window) -> None:
     window.tree.setVerticalScrollMode(QTreeView.ScrollPerItem)
     window.tree.setSelectionMode(QTreeView.ExtendedSelection)
     window.tree.setSelectionBehavior(QTreeView.SelectRows)
-    window.tree.setStyleSheet(
-        """
-            QTreeView {
-                background: rgba(255, 255, 255, 0.96);
-                border: none;
-                font-family: "Segoe UI", "Helvetica Neue", "Arial", sans-serif;
-                font-size: 10pt;
-                border-radius: 10px;
-                padding: 6px 4px 4px 4px;
-            }
-            QTreeView::item {
-                height: 17px;
-                padding: 5px 6px;
-                border: none;
-            }
-            QTreeView:focus {
-                outline: none;
-            }
-            QHeaderView::section {
-                background: rgba(247,249,252,0.98);
-                padding: 7px 12px;
-                border: none;
-                border-bottom: 1px solid rgba(148, 163, 184, 0.35);
-                font-family: "Segoe UI", "Helvetica Neue", "Arial", sans-serif;
-                font-size: 10pt;
-                font-weight: 600;
-                color: #475569;
-            }
-            QTreeView::item:hover {
-                background: transparent;
-            }
-            QTreeView::item:selected {
-                background: transparent;
-                color: #000000 !important;
-                outline: none;
-            }
-            QTreeView::branch {
-                background: transparent;
-                border: none;
-            }
-            QTreeView::branch:has-siblings:!adjoins-item {
-                background: transparent;
-            }
-            QTreeView::branch:has-siblings:adjoins-item {
-                background: transparent;
-            }
-            QTreeView::branch:!has-children:!has-siblings:adjoins-item {
-                background: transparent;
-            }
-            QTreeView::branch:has-children:!has-siblings:closed {
-                background: transparent;
-                image: none;
-            }
-            QTreeView::branch:has-children:!has-siblings:open {
-                background: transparent;
-                image: none;
-            }
-            QTreeView::branch:has-children:has-siblings:closed {
-                image: none;
-            }
-            QTreeView::branch:has-children:has-siblings:open {
-                image: none;
-            }
-            QTreeView::branch:closed:has-children {
-                border-image: none;
-            }
-            QTreeView::branch:open:has-children {
-                border-image: none;
-            }
-            QTreeView::branch:selected {
-                background: #C0C0BE !important;
-            }
-            QTreeView::branch:has-siblings:!adjoins-item:selected {
-                background: #C0C0BE !important;
-            }
-            QTreeView::branch:has-siblings:adjoins-item:selected {
-                background: #C0C0BE !important;
-            }
-            QTreeView::branch:!has-children:!has-siblings:adjoins-item:selected {
-                background: #C0C0BE !important;
-            }
-            QTreeView::branch:has-children:!has-siblings:closed:selected,
-            QTreeView::branch:has-children:!has-siblings:open:selected {
-                background: #C0C0BE !important;
-            }
-            QTreeView::branch:hover {
-                background: rgba(230,240,255,0.6) !important;
-            }
-        """
-    )
+    window._default_tree_style = style_sheets.build_default_tree_style()
+    window.tree.setStyleSheet(window._default_tree_style)
 
     window.model = QStandardItemModel()
     tree_rows.set_main_tree_headers(window.model)
@@ -438,4 +337,4 @@ def init_top_panel(window) -> None:
     window.debounce_timer.setSingleShot(True)
     window.debounce_timer.timeout.connect(window.change_run)
 
-    window.tree.expandAll()
+    window.expand_tree_default()

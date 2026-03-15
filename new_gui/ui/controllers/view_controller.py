@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import QHeaderView
 from new_gui.config.settings import STATUS_COLORS, WINDOW_HEIGHT, logger
 from new_gui.services import run_repository
 from new_gui.services import run_views
+from new_gui.services import status_summary
 from new_gui.services import tree_rows
 from new_gui.services import tree_structure
 from new_gui.services import view_modes
@@ -59,6 +60,8 @@ def filter_tree(window, text) -> None:
         current_run = window.combo.currentText()
         if current_run and current_run != "No runs found":
             window.cached_targets_by_level = window.parse_dependency_file(current_run)
+            window.cached_collapsible_target_groups = window.parse_collapsible_target_groups(current_run)
+            window._cached_collapsible_target_groups_run = current_run
 
     if not window.cached_targets_by_level:
         return
@@ -67,12 +70,10 @@ def filter_tree(window, text) -> None:
     window._reset_main_tree_model()
 
     matching_groups = tree_structure.filter_level_groups_by_text(window.cached_targets_by_level, text)
-    window._append_target_groups_to_model(matching_groups)
+    display_groups = window._build_display_level_groups(dict(matching_groups))
+    window._append_target_groups_to_model(display_groups)
 
-    for row in range(window.model.rowCount()):
-        parent_item = window.model.item(row, 0)
-        if parent_item and parent_item.hasChildren():
-            window.tree.expand(parent_item.index())
+    window.tree.expandAll()
 
     window.tree.setUpdatesEnabled(True)
 
@@ -87,6 +88,8 @@ def filter_tree_by_status_flat(window, status):
         current_run = window.combo.currentText()
         if current_run and current_run != "No runs found":
             window.cached_targets_by_level = window.parse_dependency_file(current_run)
+            window.cached_collapsible_target_groups = window.parse_collapsible_target_groups(current_run)
+            window._cached_collapsible_target_groups_run = current_run
 
     if not window.cached_targets_by_level:
         return 0
@@ -100,11 +103,13 @@ def filter_tree_by_status_flat(window, status):
         lambda target_name: window.get_target_status(current_run, target_name),
         status_key,
     )
-    matched_count = window._append_target_groups_to_model(
-        matched_groups,
+    display_groups = window._build_display_level_groups(dict(matched_groups), run_name=current_run)
+    window._append_target_groups_to_model(
+        display_groups,
         run_name=current_run,
         status_value=status_key,
     )
+    matched_count = tree_structure.count_display_targets(display_groups)
 
     window.tree.setUpdatesEnabled(True)
     window.tree.expandAll()
@@ -331,62 +336,79 @@ def populate_data(window, force_rebuild=False) -> None:
             return
 
         window.tree.setUpdatesEnabled(False)
+        try:
+            def update_row(row_index, parent_item=None):
+                row_items = tree_rows.get_row_items(window.model, row_index, parent_item)
+                target_item = row_items[1] if len(row_items) > 1 else None
+                row_kind = tree_rows.get_row_kind(target_item)
+                target_name = tree_rows.get_row_target_name(target_item)
+                if target_name:
+                    status = window.get_target_status(current_run, target_name)
+                    tree_rows.update_target_row_items(
+                        row_items,
+                        status,
+                        row_items[4].text() if len(row_items) > 4 and row_items[4] else "",
+                        row_items[5].text() if len(row_items) > 5 and row_items[5] else "",
+                        STATUS_COLORS,
+                    )
+                elif row_kind == tree_rows.ROW_KIND_GROUP:
+                    group_targets = tree_rows.get_row_targets(target_item)
+                    status_text, status_key = status_summary.summarize_group_status(
+                        group_targets,
+                        lambda grouped_target: window.get_target_status(current_run, grouped_target),
+                    )
+                    tree_rows.update_container_row_items(
+                        row_items,
+                        status_text,
+                        status_key,
+                        STATUS_COLORS,
+                    )
 
-        def update_row(row_index, parent_item=None):
-            row_items = tree_rows.get_row_items(window.model, row_index, parent_item)
-            target_item = row_items[1] if len(row_items) > 1 else None
-            target_name = target_item.text() if target_item else ""
-            if not target_name:
-                return
+                level_item = row_items[0] if row_items else None
+                if level_item and level_item.hasChildren():
+                    for child_row in range(level_item.rowCount()):
+                        update_row(child_row, level_item)
 
-            status = window.get_target_status(current_run, target_name)
-            tree_rows.update_target_row_items(
-                row_items,
-                status,
-                row_items[4].text() if len(row_items) > 4 and row_items[4] else "",
-                row_items[5].text() if len(row_items) > 5 and row_items[5] else "",
-                STATUS_COLORS,
-            )
-
-        for row in range(window.model.rowCount()):
-            update_row(row)
-            parent_item = window.model.item(row, 0)
-            if parent_item and parent_item.hasChildren():
-                for child_row in range(parent_item.rowCount()):
-                    update_row(child_row, parent_item)
-
-        window.tree.setUpdatesEnabled(True)
+            for row in range(window.model.rowCount()):
+                update_row(row)
+        finally:
+            window.tree.setUpdatesEnabled(True)
+            window.tree.viewport().update()
         return
 
     current_scroll = window.tree.verticalScrollBar().value()
 
     window.tree.setUpdatesEnabled(False)
-    window._reset_main_tree_model()
+    try:
+        window._reset_main_tree_model()
 
-    current_run = window.combo.currentText()
-    if not current_run:
-        return
+        current_run = window.combo.currentText()
+        if not current_run:
+            return
 
-    targets_by_level = window.parse_dependency_file(current_run)
-    window.cached_targets_by_level = targets_by_level
+        targets_by_level = window.parse_dependency_file(current_run)
+        window.cached_targets_by_level = targets_by_level
+        window.cached_collapsible_target_groups = window.parse_collapsible_target_groups(current_run)
+        window._cached_collapsible_target_groups_run = current_run
 
-    if not targets_by_level:
-        logger.warning(f"No targets found for {current_run}")
-        return
+        if not targets_by_level:
+            logger.warning(f"No targets found for {current_run}")
+            return
 
-    window._append_target_groups_to_model(
-        tree_structure.get_level_target_groups(targets_by_level),
-        run_name=current_run,
-    )
+        window._append_target_groups_to_model(
+            window._build_display_level_groups(targets_by_level, run_name=current_run),
+            run_name=current_run,
+        )
 
-    restore_plan = window._build_current_view_restore_plan(current_scroll)
-    if restore_plan.get("mode") == "main":
-        window.tree.expandAll()
-        window.tree.verticalScrollBar().setValue(current_scroll)
-    else:
-        window._restore_view_from_plan(restore_plan)
-
-    window.tree.setUpdatesEnabled(True)
+        restore_plan = window._build_current_view_restore_plan(current_scroll)
+        if restore_plan.get("mode") == "main":
+            window.expand_tree_default()
+            window.tree.verticalScrollBar().setValue(current_scroll)
+        else:
+            window._restore_view_from_plan(restore_plan)
+    finally:
+        window.tree.setUpdatesEnabled(True)
+        window.tree.viewport().update()
 
 
 def change_run(window) -> None:
@@ -403,26 +425,32 @@ def change_run(window) -> None:
     def update_row_status(row_idx, parent_item=None):
         row_items = tree_rows.get_row_items(window.model, row_idx, parent_item)
         target_item = row_items[1] if len(row_items) > 1 else None
-        if not target_item:
-            return
+        row_kind = tree_rows.get_row_kind(target_item)
+        target = tree_rows.get_row_target_name(target_item)
+        if target:
+            status = window.get_target_status(current_run, target)
+            start_time, end_time = window.get_target_times(current_run, target)
+            tree_rows.update_target_row_items(row_items, status, start_time, end_time, window.colors)
+        elif row_kind == tree_rows.ROW_KIND_GROUP:
+            group_targets = tree_rows.get_row_targets(target_item)
+            status_text, status_key = status_summary.summarize_group_status(
+                group_targets,
+                lambda grouped_target: window.get_target_status(current_run, grouped_target),
+            )
+            tree_rows.update_container_row_items(
+                row_items,
+                status_text,
+                status_key,
+                window.colors,
+            )
 
-        target = target_item.text()
-        if not target:
-            return
-
-        status = window.get_target_status(current_run, target)
-        start_time, end_time = window.get_target_times(current_run, target)
-        tree_rows.update_target_row_items(row_items, status, start_time, end_time, window.colors)
-
-    for row in range(window.model.rowCount()):
-        level_item = window.model.item(row, 0)
-        if not level_item:
-            continue
-
-        update_row_status(row, None)
-
-        if level_item.hasChildren():
+        level_item = row_items[0] if row_items else None
+        if level_item and level_item.hasChildren():
             for child_row in range(level_item.rowCount()):
                 update_row_status(child_row, level_item)
 
+    for row in range(window.model.rowCount()):
+        update_row_status(row, None)
+
     window.update_status_bar()
+    window.tree.viewport().update()
