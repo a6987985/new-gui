@@ -74,6 +74,7 @@ class ColorTreeView(QTreeView):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._hovered_row_index = QModelIndex()
         self._v_scrollbar = RoundedScrollBar(Qt.Vertical, self, show_step_buttons=True)
         self._h_scrollbar = RoundedScrollBar(Qt.Horizontal, self, show_step_buttons=True)
         self._v_scrollbar.setFixedWidth(16)
@@ -82,20 +83,45 @@ class ColorTreeView(QTreeView):
         self._h_scrollbar.setColors("#b5b5b5", "#9f9f9f", "#8b8b8b", "#f3f3f3")
         self.setVerticalScrollBar(self._v_scrollbar)
         self.setHorizontalScrollBar(self._h_scrollbar)
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
+
+    def _row_index_key(self, index):
+        """Return a stable row identity for hover comparisons."""
+        if not index.isValid():
+            return None
+        return (index.row(), index.parent())
+
+    def mouseMoveEvent(self, event):
+        hovered_index = self.indexAt(event.pos())
+        if hovered_index.isValid():
+            hovered_index = hovered_index.sibling(hovered_index.row(), 0)
+        if self._row_index_key(hovered_index) != self._row_index_key(self._hovered_row_index):
+            self._hovered_row_index = hovered_index
+            self.viewport().update()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        if self._hovered_row_index.isValid():
+            self._hovered_row_index = QModelIndex()
+            self.viewport().update()
+        super().leaveEvent(event)
 
     def drawBranches(self, painter, rect, index):
-        is_selected = self.selectionModel().isSelected(index)
-        is_current = (
-            self.currentIndex().row() == index.row()
-            and self.currentIndex().parent() == index.parent()
-        )
+        selection_model = self.selectionModel()
+        is_selected = selection_model.isSelected(index) if selection_model else False
+        is_hovered = self._row_index_key(index) == self._row_index_key(self._hovered_row_index)
+        brush = index.data(Qt.BackgroundRole)
 
         painter.save()
 
         if is_selected:
             painter.fillRect(rect, QColor("#C0C0BE"))
+        elif is_hovered:
+            if brush:
+                painter.fillRect(rect, brush)
+            painter.fillRect(rect, QColor(230, 240, 255, 150))
         else:
-            brush = index.data(Qt.BackgroundRole)
             if brush:
                 painter.fillRect(rect, brush)
 

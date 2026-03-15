@@ -3,7 +3,7 @@
 import os
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFontMetrics
+from PyQt5.QtGui import QFont, QFontMetrics
 from PyQt5.QtWidgets import QHeaderView
 
 from new_gui.config.settings import STATUS_COLORS, WINDOW_HEIGHT, logger
@@ -155,10 +155,8 @@ def apply_all_status_column_widths(window) -> None:
         return
 
     header.setStretchLastSection(False)
-    header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-    header.setSectionResizeMode(1, QHeaderView.Stretch)
-    header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-    header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+    for col in range(window.model.columnCount()):
+        header.setSectionResizeMode(col, QHeaderView.Interactive)
 
     window.tree.resizeColumnToContents(0)
     window.tree.resizeColumnToContents(2)
@@ -170,6 +168,8 @@ def apply_all_status_column_widths(window) -> None:
         if min_width > 0:
             window.tree.setColumnWidth(col, max(window.tree.columnWidth(col), min_width))
 
+    apply_adaptive_target_column_width(window)
+
 
 def get_header_min_widths(window):
     """Calculate per-column minimum widths to fully show header text."""
@@ -180,13 +180,18 @@ def get_header_min_widths(window):
     if header is None:
         return {}
 
-    header_font = header.font()
+    header_font = QFont(header.font())
+    header_font.setPointSize(10)
+    header_font.setWeight(QFont.DemiBold)
     font_metrics = QFontMetrics(header_font)
     min_widths = {}
 
     for col in range(window.model.columnCount()):
         header_text = window.model.headerData(col, Qt.Horizontal) or ""
-        text_based_min = font_metrics.horizontalAdvance(str(header_text)) + 30
+        if hasattr(header, "get_minimum_width_for_text"):
+            text_based_min = header.get_minimum_width_for_text(str(header_text))
+        else:
+            text_based_min = font_metrics.horizontalAdvance(str(header_text)) + 30
         style_based_min = header.sectionSizeFromContents(col).width() + 8
         min_widths[col] = max(text_based_min, style_based_min)
 
@@ -222,6 +227,56 @@ def get_main_view_default_window_width(window):
     scrollbar_width = window.tree.verticalScrollBar().sizeHint().width()
     frame_width = window.tree.frameWidth() * 2
     return tree_content_width + scrollbar_width + frame_width
+
+
+def apply_adaptive_target_column_width(window, column: int = 1) -> None:
+    """Stretch only the target column when the tree viewport width changes."""
+    if not hasattr(window, "tree") or not hasattr(window, "model"):
+        return
+    if window.model.columnCount() <= column:
+        return
+
+    viewport_width = window.tree.viewport().width()
+    if viewport_width <= 0:
+        return
+
+    header_min_widths = get_header_min_widths(window)
+    current_target_width = window.tree.columnWidth(column)
+    min_target_width = header_min_widths.get(column, 0)
+    current_total_width = sum(window.tree.columnWidth(col) for col in range(window.model.columnCount()))
+    width_delta = viewport_width - current_total_width
+    new_target_width = max(min_target_width, current_target_width + width_delta)
+
+    if new_target_width != current_target_width:
+        window.tree.setColumnWidth(column, new_target_width)
+
+
+def fill_trailing_blank_with_last_column(window) -> None:
+    """Expand the last visible column to remove right-side blank space."""
+    if not hasattr(window, "tree") or not hasattr(window, "model"):
+        return
+
+    column_count = window.model.columnCount()
+    if column_count <= 0:
+        return
+
+    viewport_width = window.tree.viewport().width()
+    if viewport_width <= 0:
+        return
+
+    last_column = column_count - 1
+    current_total_width = sum(window.tree.columnWidth(col) for col in range(column_count))
+    width_delta = viewport_width - current_total_width
+    if width_delta <= 0:
+        return
+
+    header_min_widths = get_header_min_widths(window)
+    current_last_width = window.tree.columnWidth(last_column)
+    min_last_width = header_min_widths.get(last_column, 0)
+    new_last_width = max(min_last_width, current_last_width + width_delta)
+
+    if new_last_width != current_last_width:
+        window.tree.setColumnWidth(last_column, new_last_width)
 
 
 def apply_initial_window_width(window) -> None:
@@ -409,6 +464,7 @@ def populate_data(window, force_rebuild=False) -> None:
     finally:
         window.tree.setUpdatesEnabled(True)
         window.tree.viewport().update()
+        window._apply_adaptive_target_column_width()
 
 
 def change_run(window) -> None:

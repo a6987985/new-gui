@@ -33,7 +33,7 @@ from new_gui.ui.controllers import (
     theme_controller,
     view_controller,
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtWidgets import QApplication, QHeaderView, QMainWindow, QMenu
 
 
@@ -77,6 +77,7 @@ class MainWindow(QMainWindow):
         self._tune_files_cache = {}
         self._bsub_params_cache = {}
         self._main_view_snapshot = None
+        self._column_resize_guard = False
 
     def _invalidate_tune_cache(self, run_dir: str = None, target_name: str = None) -> None:
         """Invalidate tune-file cache entries."""
@@ -141,6 +142,11 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._position_top_action_buttons()
+        self._apply_adaptive_target_column_width()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(0, self._apply_adaptive_target_column_width)
 
     def _position_top_action_buttons(self):
         """Float the top action buttons independently from the main row layout."""
@@ -404,6 +410,30 @@ class MainWindow(QMainWindow):
     def _get_main_view_default_column_widths(self):
         """Return the default width plan for the main tree view."""
         return view_controller.get_main_view_default_column_widths(self)
+
+    def _apply_adaptive_target_column_width(self):
+        """Resize only the target column to absorb overall viewport size changes."""
+        view_controller.apply_adaptive_target_column_width(self)
+
+    def _fill_trailing_blank_with_last_column(self):
+        """Expand the rightmost column when manual resize leaves trailing blank space."""
+        view_controller.fill_trailing_blank_with_last_column(self)
+
+    def _on_tree_header_section_resized(self, logical_index, old_size, new_size):
+        """Keep the right edge flush after manual column resizing."""
+        del old_size
+        if self._column_resize_guard:
+            return
+
+        self._column_resize_guard = True
+        try:
+            header_min_widths = self._get_header_min_widths()
+            min_width = header_min_widths.get(logical_index, 0)
+            if min_width > 0 and new_size < min_width:
+                self.tree.setColumnWidth(logical_index, min_width)
+            self._fill_trailing_blank_with_last_column()
+        finally:
+            self._column_resize_guard = False
 
     def _get_main_view_default_window_width(self):
         """Estimate the startup window width from the main-view column defaults."""
@@ -854,6 +884,26 @@ class MainWindow(QMainWindow):
 
         return "", ordered_nodes[1:]
 
+    def _get_level_root_group_node(self, targets, child_nodes):
+        """Return the top-level group node when one level is fully generic-grouped."""
+        ordered_targets = list(targets or [])
+        ordered_nodes = list(child_nodes or [])
+        if len(ordered_nodes) != 1:
+            return None
+
+        first_node = ordered_nodes[0]
+        if first_node.get("kind") != tree_rows.ROW_KIND_GROUP:
+            return None
+
+        group_targets = list(first_node.get("targets", []) or [])
+        if not group_targets or len(group_targets) != len(ordered_targets):
+            return None
+
+        if group_targets != ordered_targets:
+            return None
+
+        return first_node
+
     def _append_target_groups_to_model(self, display_groups, run_name: str = None, status_value: str = None) -> int:
         """Append grouped display nodes to the model using the standard main-tree structure."""
         appended_target_count = 0
@@ -863,6 +913,33 @@ class MainWindow(QMainWindow):
             children = list(display_group.get("children", []) or [])
 
             if not targets or not children:
+                continue
+
+            level_root_group = self._get_level_root_group_node(targets, children)
+            if level_root_group is not None:
+                group_status_text, group_status_key = self._summarize_group_row_status(
+                    level_root_group.get("targets", []),
+                    run_name=run_name,
+                    status_value=status_value,
+                )
+                parent_row = self._build_container_row_items(
+                    str(level),
+                    level_root_group.get("label", ""),
+                    tree_rows.ROW_KIND_GROUP,
+                    level_root_group.get("targets", []),
+                    status_value=group_status_text,
+                    status_key=group_status_key,
+                )
+                self.model.appendRow(parent_row)
+
+                level_parent_item = parent_row[0]
+                for child_node in level_root_group.get("children", []):
+                    appended_target_count += self._append_display_node_to_parent(
+                        level_parent_item,
+                        child_node,
+                        run_name=run_name,
+                        status_value=status_value,
+                    )
                 continue
 
             anchor_target, remaining_children = self._split_level_anchor_target(children)
@@ -1188,12 +1265,13 @@ class MainWindow(QMainWindow):
             header.setStretchLastSection(False)
             for col in range(self.model.columnCount()):
                 header.setSectionResizeMode(col, QHeaderView.Interactive)
-            if self.model.columnCount() > 1:
-                header.setSectionResizeMode(1, QHeaderView.Stretch)
 
         for column, width in default_widths.items():
             min_width = header_min_widths.get(column, 0)
             self.tree.setColumnWidth(column, max(width, min_width))
+
+        self._apply_adaptive_target_column_width()
+        self._fill_trailing_blank_with_last_column()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

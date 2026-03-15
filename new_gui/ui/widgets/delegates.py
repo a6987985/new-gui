@@ -47,10 +47,6 @@ class BorderItemDelegate(QStyledItemDelegate):
         painter.save()
         bg_rect = QRect(option.rect)
 
-        # If first column, extend rect to the left edge to cover branch/indentation
-        if index.column() == 0:
-            bg_rect.setLeft(0)
-
         # Check if this item is in hover or selected state
         is_hover = option.state & QStyle.State_MouseOver
         is_selected = option.state & QStyle.State_Selected

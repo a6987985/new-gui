@@ -148,7 +148,7 @@ def build_container_row_items(
         item.setEditable(False)
         item.setForeground(QBrush(Qt.black))
         item.setBackground(QBrush(background_color))
-        if col_idx in (0, 1):
+        if row_kind == ROW_KIND_LEVEL and col_idx in (0, 1):
             font = item.font()
             font.setBold(True)
             item.setFont(font)

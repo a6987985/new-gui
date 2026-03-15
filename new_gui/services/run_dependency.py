@@ -23,11 +23,8 @@ CollapsibleTargetGroups = Dict[str, List[str]]
 
 
 RE_INSTANCES_LIST_LINE = re.compile(r'^set\s+INSTANCES_LIST_([A-Za-z0-9_]+)\s*=\s*"([^"]*)"')
-COLLAPSIBLE_GROUP_PREFIXES = (
-    "TIMING_GenericPtTiming_",
-    "SORTTIMING_GenericSort_",
-)
-MIN_COLLAPSIBLE_GROUP_SIZE = 4
+COLLAPSIBLE_GROUP_MARKER = "Generic"
+MIN_COLLAPSIBLE_GROUP_SIZE = 3
 
 
 def parse_dependency_file(run_base_dir: str, run_name: str) -> TargetsByLevel:
@@ -126,7 +123,7 @@ def _dedupe_targets(targets: List[str]) -> List[str]:
 
 
 def _normalize_collapsible_group_label(raw_group_name: str) -> str:
-    """Return the display label used for a collapsible timing group."""
+    """Return the display label used for a collapsible target group."""
     normalized_group_name = raw_group_name or ""
     for prefix in ("TIMING_", "SORTTIMING_"):
         if normalized_group_name.startswith(prefix):
@@ -136,7 +133,7 @@ def _normalize_collapsible_group_label(raw_group_name: str) -> str:
 
 
 def parse_collapsible_target_groups(run_base_dir: str, run_name: str) -> CollapsibleTargetGroups:
-    """Parse large timing/sorttiming instance lists into display-group mappings."""
+    """Parse large generic instance lists into display-group mappings."""
     dependency_file = os.path.join(run_base_dir, run_name, ".target_dependency.csh")
     collapsible_groups: CollapsibleTargetGroups = {}
 
@@ -150,7 +147,7 @@ def parse_collapsible_target_groups(run_base_dir: str, run_name: str) -> Collaps
             continue
 
         raw_group_name, members_text = match.groups()
-        if not raw_group_name.startswith(COLLAPSIBLE_GROUP_PREFIXES):
+        if COLLAPSIBLE_GROUP_MARKER not in raw_group_name:
             continue
 
         member_targets = _dedupe_targets(members_text.split())

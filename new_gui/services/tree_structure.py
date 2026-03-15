@@ -2,6 +2,8 @@
 
 from typing import Callable, Dict, List, Tuple
 
+MIN_DISPLAY_GROUP_SIZE = 3
+
 
 TargetsByLevel = Dict[int, List[str]]
 LevelGroup = Tuple[int, List[str]]
@@ -46,7 +48,7 @@ def _collect_level_group_nodes(
     candidate_groups = []
     for group_label, group_targets in (collapsible_groups or {}).items():
         scoped_targets = [target_name for target_name in level_targets if target_name in set(group_targets)]
-        if len(scoped_targets) < 4:
+        if len(scoped_targets) < MIN_DISPLAY_GROUP_SIZE:
             continue
         candidate_groups.append(
             (
@@ -80,7 +82,7 @@ def _collect_level_group_nodes(
                 for grouped_target in group_definition["targets"]
                 if grouped_target not in assigned_targets
             ]
-            if len(available_targets) >= 4:
+            if len(available_targets) >= MIN_DISPLAY_GROUP_SIZE:
                 display_nodes.append(_build_group_node(group_definition["label"], available_targets))
                 assigned_targets.update(available_targets)
                 continue

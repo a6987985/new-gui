@@ -148,11 +148,14 @@ def build_default_tree_style() -> str:
         QTreeView:focus {
             outline: none;
         }
-        QHeaderView::section {
-            background: rgba(247,249,252,0.98);
-            padding: 7px 12px;
+        QHeaderView {
+            background: transparent;
             border: none;
-            border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+        }
+        QHeaderView::section {
+            background: transparent;
+            padding: 0px;
+            border: none;
             font-family: "Segoe UI", "Helvetica Neue", "Arial", sans-serif;
             font-size: 10pt;
             font-weight: 600;
@@ -240,11 +243,14 @@ def build_xmeta_tree_style(text_color: str) -> str:
         QTreeView:focus {{
             outline: none;
         }}
-        QHeaderView::section {{
-            background: rgba(250,250,250,0.95);
-            padding: 7px 12px;
+        QHeaderView {{
+            background: transparent;
             border: none;
-            border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+        }}
+        QHeaderView::section {{
+            background: transparent;
+            padding: 0px;
+            border: none;
             font-family: "Segoe UI", "Helvetica Neue", "Arial", sans-serif;
             font-size: 10pt;
             font-weight: 600;

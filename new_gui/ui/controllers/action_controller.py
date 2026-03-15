@@ -2,6 +2,7 @@
 
 import os
 
+from PyQt5.QtGui import QClipboard
 from PyQt5.QtWidgets import QApplication, QDialog, QInputDialog, QLineEdit, QMessageBox
 
 from new_gui.config.settings import logger
@@ -18,10 +19,20 @@ from new_gui.ui.dialogs.tune_dialogs import CopyTuneSelectDialog, SelectTuneDial
 def copy_selected_target(window) -> None:
     """Copy selected target names to the clipboard."""
     targets = window._exit_search_mode_and_get_targets()
-    if targets:
-        clipboard = QApplication.clipboard()
-        clipboard.setText("\n".join(targets))
-        window.show_notification("Copied", f"Copied {len(targets)} target(s)", "success")
+    if not targets:
+        targets = window.get_selected_action_targets()
+
+    if not targets:
+        window.show_notification("Copy", "No target names available for the current selection", "info")
+        return
+
+    clipboard = QApplication.clipboard()
+    clipboard_text = "\n".join(targets)
+    clipboard.setText(clipboard_text, QClipboard.Clipboard)
+    if clipboard.supportsSelection():
+        clipboard.setText(clipboard_text, QClipboard.Selection)
+
+    window.show_notification("Copied", f"Copied {len(targets)} target(s)", "success")
 
 
 def get_selected_targets_keep_search(window):

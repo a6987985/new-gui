@@ -276,9 +276,11 @@ def init_top_panel(window) -> None:
     window.tree = ColorTreeView()
 
     window.header = FilterHeaderView(Qt.Horizontal, window.tree, filter_column=1)
+    window.header.setFixedHeight(46)
     window.tree.setHeader(window.header)
     window.header.filter_changed.connect(window._on_header_filter_changed)
     window.header.level_double_clicked.connect(window.toggle_tree_expansion)
+    window.header.sectionResized.connect(window._on_tree_header_section_resized)
 
     window.delegate = BorderItemDelegate(window.tree)
     window.tree.setItemDelegate(window.delegate)
