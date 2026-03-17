@@ -20,3 +20,7 @@
 - Use meaningful variable and function names
 - Add docstrings to public functions and classes
 - Keep functions focused and reasonably sized
+
+### Response Requirements
+- At the end of every assistant response, add a final item showing the current total Python code size for this project.
+- Measure code size as total `.py` lines under `new_gui/`, excluding caches such as `__pycache__/`.

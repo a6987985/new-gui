@@ -1,7 +1,7 @@
 """Menu-bar builder helpers for MainWindow."""
 
 from PyQt5.QtGui import QKeySequence
-from PyQt5.QtWidgets import QAction
+from PyQt5.QtWidgets import QAction, QWidgetAction
 
 from new_gui.ui import style_sheets
 
@@ -35,6 +35,21 @@ def init_menu_bar(window) -> None:
     high_contrast_action.triggered.connect(lambda: window.apply_theme("high_contrast"))
     theme_menu.addAction(high_contrast_action)
 
+    setting_menu = window.menu_bar.addMenu("Setting")
+    column_menu = setting_menu.addMenu("colomn")
+    column_menu.aboutToShow.connect(window._prepare_column_visibility_menu)
+    column_picker_action = QWidgetAction(window)
+    column_picker_action.setDefaultWidget(window._get_or_create_column_visibility_picker())
+    column_menu.addAction(column_picker_action)
+    button_menu = setting_menu.addMenu("button")
+    button_menu.aboutToShow.connect(window._prepare_button_visibility_menu)
+    button_picker_action = QWidgetAction(window)
+    button_picker_action.setDefaultWidget(window._get_or_create_button_visibility_picker())
+    button_menu.addAction(button_picker_action)
+    window.setting_menu = setting_menu
+    window.column_menu = column_menu
+    window.button_menu = button_menu
+
     tools_menu = window.menu_bar.addMenu("Tools")
     user_params_action = QAction("📝 User Params", window)
     user_params_action.setShortcut(QKeySequence("Ctrl+P"))
@@ -48,3 +63,4 @@ def init_menu_bar(window) -> None:
     tools_menu.addAction(tile_params_action)
 
     window.is_all_status_view = False
+    window._update_column_visibility_control_state()

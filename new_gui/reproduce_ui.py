@@ -27,6 +27,8 @@ from new_gui.services import view_tabs
 from new_gui.services import view_state
 from new_gui.ui.theme_runtime import ThemeManager
 from new_gui.ui.builders import menu_builder, shortcut_builder, top_panel_builder, window_builder
+from new_gui.ui.widgets.button_visibility_picker import ButtonVisibilityPicker
+from new_gui.ui.widgets.column_visibility_picker import ColumnVisibilityPicker
 from new_gui.ui.controllers import (
     action_controller,
     context_menu_controller,
@@ -78,6 +80,11 @@ class MainWindow(QMainWindow):
         self._bsub_params_cache = {}
         self._main_view_snapshot = None
         self._column_resize_guard = False
+        self._locked_main_tree_columns = {0, 1}
+        self._main_tree_visible_columns = set(range(len(tree_rows.MAIN_TREE_HEADERS)))
+        self._column_visibility_picker = None
+        self._visible_top_buttons = set(top_panel_builder.DEFAULT_TOP_BUTTON_IDS)
+        self._button_visibility_picker = None
 
     def _invalidate_tune_cache(self, run_dir: str = None, target_name: str = None) -> None:
         """Invalidate tune-file cache entries."""
@@ -434,6 +441,134 @@ class MainWindow(QMainWindow):
             self._fill_trailing_blank_with_last_column()
         finally:
             self._column_resize_guard = False
+
+    def _is_main_tree_schema_active(self) -> bool:
+        """Return whether the current model is the standard main-tree schema."""
+        if not hasattr(self, "model"):
+            return False
+        expected_headers = tree_rows.MAIN_TREE_HEADERS
+        if self.model.columnCount() < len(expected_headers):
+            return False
+        for index, header in enumerate(expected_headers):
+            if str(self.model.headerData(index, Qt.Horizontal) or "").strip().lower() != header:
+                return False
+        return True
+
+    def _get_visible_main_tree_columns(self):
+        """Return currently visible main-tree columns."""
+        visible_columns = set()
+        for column in range(min(self.model.columnCount(), len(tree_rows.MAIN_TREE_HEADERS))):
+            if not self.tree.isColumnHidden(column):
+                visible_columns.add(column)
+        return visible_columns
+
+    def _apply_main_tree_column_visibility(self, visible_columns, save_state=True):
+        """Apply persisted main-tree column visibility to the tree widget."""
+        normalized_columns = set(int(column) for column in (visible_columns or []))
+        normalized_columns.update(self._locked_main_tree_columns)
+        max_columns = min(self.model.columnCount(), len(tree_rows.MAIN_TREE_HEADERS))
+        normalized_columns = {column for column in normalized_columns if 0 <= column < max_columns}
+
+        if save_state:
+            self._main_tree_visible_columns = set(normalized_columns)
+
+        if not self._is_main_tree_schema_active():
+            return
+
+        for column in range(max_columns):
+            self.tree.setColumnHidden(column, column not in normalized_columns)
+
+        self._apply_adaptive_target_column_width()
+        self._fill_trailing_blank_with_last_column()
+
+    def _update_column_visibility_control_state(self):
+        """Enable the column-visibility control only for main-tree mode."""
+        if not hasattr(self, "column_menu"):
+            return
+        enabled = self._is_main_tree_schema_active() and not getattr(self, "is_all_status_view", False)
+        self.column_menu.menuAction().setEnabled(enabled)
+        if not enabled and self._column_visibility_picker is not None:
+            self._column_visibility_picker.hide()
+
+    def _on_apply_column_visibility(self, visible_columns):
+        """Apply user-picked visibility from the picker popup."""
+        if getattr(self, "is_all_status_view", False):
+            return
+        self._apply_main_tree_column_visibility(visible_columns, save_state=True)
+        if hasattr(self, "column_menu"):
+            self.column_menu.hideTearOffMenu()
+            self.column_menu.hide()
+        if hasattr(self, "setting_menu"):
+            self.setting_menu.hideTearOffMenu()
+            self.setting_menu.hide()
+
+    def _get_or_create_column_visibility_picker(self):
+        """Return the shared column-visibility editor widget."""
+        if self._column_visibility_picker is None:
+            self._column_visibility_picker = ColumnVisibilityPicker(self)
+            self._column_visibility_picker.apply_requested.connect(self._on_apply_column_visibility)
+            self._column_visibility_picker.cancel_requested.connect(self._close_column_visibility_menu)
+        return self._column_visibility_picker
+
+    def _prepare_column_visibility_menu(self):
+        """Refresh the column-visibility editor before opening the menu."""
+        if getattr(self, "is_all_status_view", False) or not self._is_main_tree_schema_active():
+            return
+        picker = self._get_or_create_column_visibility_picker()
+        visible_columns = self._get_visible_main_tree_columns() or set(self._main_tree_visible_columns)
+        column_rows = [
+            (index, self.model.headerData(index, Qt.Horizontal) or tree_rows.MAIN_TREE_HEADERS[index])
+            for index in range(min(self.model.columnCount(), len(tree_rows.MAIN_TREE_HEADERS)))
+        ]
+        picker.set_columns(
+            column_rows,
+            visible_columns,
+            self._locked_main_tree_columns,
+        )
+        picker.show()
+
+    def _apply_top_button_visibility(self, visible_button_ids, save_state=True):
+        """Apply persisted top-button visibility to the floating button area."""
+        normalized_ids = top_panel_builder.normalize_visible_top_buttons(visible_button_ids)
+        if save_state:
+            self._visible_top_buttons = set(normalized_ids)
+        top_panel_builder.rebuild_top_action_buttons(self)
+
+    def _on_apply_button_visibility(self, visible_button_ids):
+        """Apply user-picked top-button visibility from the picker popup."""
+        self._apply_top_button_visibility(visible_button_ids, save_state=True)
+        self._close_button_visibility_menu()
+
+    def _get_or_create_button_visibility_picker(self):
+        """Return the shared top-button visibility editor widget."""
+        if self._button_visibility_picker is None:
+            self._button_visibility_picker = ButtonVisibilityPicker(self)
+            self._button_visibility_picker.apply_requested.connect(self._on_apply_button_visibility)
+            self._button_visibility_picker.cancel_requested.connect(self._close_button_visibility_menu)
+        return self._button_visibility_picker
+
+    def _prepare_button_visibility_menu(self):
+        """Refresh the top-button visibility editor before opening the menu."""
+        picker = self._get_or_create_button_visibility_picker()
+        picker.set_buttons(
+            top_panel_builder.get_top_button_choices(),
+            self._visible_top_buttons,
+        )
+        picker.show()
+
+    def _close_button_visibility_menu(self):
+        """Close the button-visibility menu hierarchy."""
+        if hasattr(self, "button_menu"):
+            self.button_menu.hide()
+        if hasattr(self, "setting_menu"):
+            self.setting_menu.hide()
+
+    def _close_column_visibility_menu(self):
+        """Close the column-visibility menu hierarchy."""
+        if hasattr(self, "column_menu"):
+            self.column_menu.hide()
+        if hasattr(self, "setting_menu"):
+            self.setting_menu.hide()
 
     def _get_main_view_default_window_width(self):
         """Estimate the startup window width from the main-view column defaults."""
@@ -1272,6 +1407,8 @@ class MainWindow(QMainWindow):
 
         self._apply_adaptive_target_column_width()
         self._fill_trailing_blank_with_last_column()
+        self._apply_main_tree_column_visibility(self._main_tree_visible_columns, save_state=False)
+        self._update_column_visibility_control_state()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

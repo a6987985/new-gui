@@ -16,32 +16,57 @@ class TreeViewEventFilter(QObject):
         self.parent = parent
         self.level_expanded = {}
         self.level_items = {}
+        if self.tree_view is not None:
+            self.tree_view.destroyed.connect(self._on_tree_view_destroyed)
+        if self.parent is not None:
+            self.parent.destroyed.connect(self._on_parent_destroyed)
+
+    def _on_tree_view_destroyed(self, *_args):
+        """Drop the Python reference once the tree view C++ object is gone."""
+        self.tree_view = None
+
+    def _on_parent_destroyed(self, *_args):
+        """Drop the Python reference once the parent C++ object is gone."""
+        self.parent = None
+
+    def _get_live_tree_view(self):
+        """Return the tree view only while its C++ object is still alive."""
+        if self.tree_view is None:
+            return None
+        try:
+            self.tree_view.viewport()
+        except RuntimeError:
+            self.tree_view = None
+            return None
+        return self.tree_view
 
     def eventFilter(self, obj, event):
-        if not self.tree_view or not obj:
+        tree_view = self._get_live_tree_view()
+        if tree_view is None or not obj:
             return False
 
-        if obj == self.tree_view.viewport():
+        if obj == tree_view.viewport():
             if event.type() == QEvent.MouseButtonPress:
-                index = self.tree_view.indexAt(event.pos())
+                index = tree_view.indexAt(event.pos())
                 if index.isValid():
-                    column = self.tree_view.columnAt(event.x())
+                    column = tree_view.columnAt(event.x())
                     if column == 0:
-                        model = self.tree_view.model()
+                        model = tree_view.model()
                         if not model:
                             return False
 
                         item = model.itemFromIndex(index.sibling(index.row(), 0))
                         if item and item.hasChildren():
-                            is_expanded = self.tree_view.isExpanded(index)
+                            is_expanded = tree_view.isExpanded(index)
                             if is_expanded:
-                                self.tree_view.collapse(index)
+                                tree_view.collapse(index)
                             else:
-                                self.tree_view.expand(index)
+                                tree_view.expand(index)
                             level = item.text()
                             if (
                                 level
                                 and not index.parent().isValid()
+                                and self.parent is not None
                                 and hasattr(self.parent, "combo_sel")
                                 and hasattr(self.parent, "level_expanded")
                             ):
@@ -55,6 +80,9 @@ class TreeViewEventFilter(QObject):
 
     def toggle_level_items(self, level):
         """Toggle visibility of items for a given level."""
+        tree_view = self._get_live_tree_view()
+        if tree_view is None:
+            return
         if level not in self.level_items:
             return
 
@@ -66,7 +94,7 @@ class TreeViewEventFilter(QObject):
         for index, row in enumerate(rows):
             if index == 0:
                 continue
-            self.tree_view.setRowHidden(row, QModelIndex(), not self.level_expanded[level])
+            tree_view.setRowHidden(row, QModelIndex(), not self.level_expanded[level])
 
 
 class ColorTreeView(QTreeView):

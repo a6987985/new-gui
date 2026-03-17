@@ -23,6 +23,315 @@ from new_gui.ui.widgets.delegates import BorderItemDelegate, TuneComboBoxDelegat
 from new_gui.ui.widgets.filter_header import FilterHeaderView
 from new_gui.ui.widgets.labels import ClickableLabel
 
+DEFAULT_TOP_BUTTON_IDS = (
+    "run_all",
+    "run",
+    "stop",
+    "skip",
+    "unskip",
+    "invalid",
+)
+
+TOP_BUTTON_DEFINITIONS = (
+    {
+        "id": "run_all",
+        "label": "Run All",
+        "style": "primary",
+        "preferred_row": 1,
+        "callback": lambda window: window.start("XMeta_run all"),
+    },
+    {
+        "id": "run",
+        "label": "Run",
+        "style": "primary",
+        "preferred_row": 1,
+        "callback": lambda window: window.start("XMeta_run"),
+    },
+    {
+        "id": "stop",
+        "label": "Stop",
+        "style": "warning",
+        "preferred_row": 1,
+        "callback": lambda window: window.start("XMeta_stop"),
+    },
+    {
+        "id": "skip",
+        "label": "Skip",
+        "style": "warning",
+        "preferred_row": 1,
+        "callback": lambda window: window.start("XMeta_skip"),
+    },
+    {
+        "id": "unskip",
+        "label": "Unskip",
+        "style": "neutral",
+        "preferred_row": 1,
+        "callback": lambda window: window.start("XMeta_unskip"),
+    },
+    {
+        "id": "invalid",
+        "label": "Invalid",
+        "style": "warning",
+        "preferred_row": 1,
+        "callback": lambda window: window.start("XMeta_invalid"),
+    },
+    {
+        "id": "term",
+        "label": "Term",
+        "style": "neutral",
+        "preferred_row": 2,
+        "callback": lambda window: window.open_terminal(),
+    },
+    {
+        "id": "csh",
+        "label": "Csh",
+        "style": "neutral",
+        "preferred_row": 2,
+        "callback": lambda window: window.handle_csh(),
+    },
+    {
+        "id": "log",
+        "label": "Log",
+        "style": "neutral",
+        "preferred_row": 2,
+        "callback": lambda window: window.handle_log(),
+    },
+    {
+        "id": "cmd",
+        "label": "Cmd",
+        "style": "neutral",
+        "preferred_row": 2,
+        "callback": lambda window: window.handle_cmd(),
+    },
+    {
+        "id": "trace_up",
+        "label": "Trace Up",
+        "style": "neutral",
+        "preferred_row": 2,
+        "callback": lambda window: window.retrace_tab("in"),
+    },
+    {
+        "id": "trace_down",
+        "label": "Trace Down",
+        "style": "neutral",
+        "preferred_row": 2,
+        "callback": lambda window: window.retrace_tab("out"),
+    },
+)
+
+TOP_BUTTON_STYLE_SHEETS = {
+    "neutral": """
+        QPushButton {
+            background-color: #ffffff;
+            border: 1px solid #cfd8e3;
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-weight: 500;
+            font-size: 12px;
+            color: #314154;
+        }
+        QPushButton:hover {
+            background-color: #f7fbff;
+            border: 1px solid #7ba4d9;
+            color: #0f5fa8;
+        }
+        QPushButton:pressed {
+            background-color: #e7f1fb;
+            border: 1px solid #5d8fcf;
+        }
+    """,
+    "primary": """
+        QPushButton {
+            background-color: #1976d2;
+            border: none;
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-weight: 600;
+            font-size: 12px;
+            color: #ffffff;
+        }
+        QPushButton:hover {
+            background-color: #1565c0;
+        }
+        QPushButton:pressed {
+            background-color: #0d47a1;
+        }
+    """,
+    "warning": """
+        QPushButton {
+            background-color: #fff8f8;
+            border: 1px solid #f3c5c5;
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-weight: 600;
+            font-size: 12px;
+            color: #b42318;
+        }
+        QPushButton:hover {
+            background-color: #ffefef;
+            border: 1px solid #e38b8b;
+        }
+        QPushButton:pressed {
+            background-color: #ffdede;
+        }
+    """,
+    "secondary_compact": """
+        QPushButton {
+            background-color: #ffffff;
+            border: 1px solid #cfd8e3;
+            border-radius: 6px;
+            padding: 4px 8px;
+            font-weight: 500;
+            font-size: 11px;
+            color: #314154;
+        }
+        QPushButton:hover {
+            background-color: #f7fbff;
+            border: 1px solid #7ba4d9;
+            color: #0f5fa8;
+        }
+        QPushButton:pressed {
+            background-color: #e7f1fb;
+            border: 1px solid #5d8fcf;
+        }
+    """,
+    "secondary_tight": """
+        QPushButton {
+            background-color: #ffffff;
+            border: 1px solid #cfd8e3;
+            border-radius: 6px;
+            padding: 3px 6px;
+            font-weight: 500;
+            font-size: 11px;
+            color: #314154;
+        }
+        QPushButton:hover {
+            background-color: #f7fbff;
+            border: 1px solid #7ba4d9;
+            color: #0f5fa8;
+        }
+        QPushButton:pressed {
+            background-color: #e7f1fb;
+            border: 1px solid #5d8fcf;
+        }
+    """,
+}
+
+
+def get_top_button_choices():
+    """Return top-button ids and labels in stable display order."""
+    return [(definition["id"], definition["label"]) for definition in TOP_BUTTON_DEFINITIONS]
+
+
+def normalize_visible_top_buttons(button_ids):
+    """Return a normalized set of visible top-button ids."""
+    valid_ids = {definition["id"] for definition in TOP_BUTTON_DEFINITIONS}
+    return {button_id for button_id in (button_ids or set()) if button_id in valid_ids}
+
+
+def rebuild_top_action_buttons(window) -> None:
+    """Rebuild the floating top-button container from the current visibility state."""
+    visible_button_ids = normalize_visible_top_buttons(
+        getattr(window, "_visible_top_buttons", DEFAULT_TOP_BUTTON_IDS)
+    )
+
+    existing_container = getattr(window, "_top_button_container", None)
+    if existing_container is not None:
+        existing_container.deleteLater()
+
+    button_container = QWidget(window.top_panel)
+    button_container.setAttribute(Qt.WA_TranslucentBackground, True)
+    button_container.setStyleSheet("background: transparent; border: none;")
+
+    container_layout = QVBoxLayout(button_container)
+    container_layout.setContentsMargins(0, 0, 0, 0)
+    container_layout.setSpacing(8)
+
+    visible_definitions = [
+        definition for definition in TOP_BUTTON_DEFINITIONS if definition["id"] in visible_button_ids
+    ]
+    row1_definitions = [definition for definition in visible_definitions if definition["preferred_row"] == 1]
+    row2_definitions = [definition for definition in visible_definitions if definition["preferred_row"] == 2]
+
+    row1_widget = None
+    row2_widget = None
+    row1_width = 0
+    row2_height = 0
+
+    if row1_definitions:
+        row1_widget = _build_top_button_row_widget(window, row1_definitions, row_role="row1")
+        container_layout.addWidget(row1_widget)
+        row1_width = row1_widget.sizeHint().width()
+    if row2_definitions:
+        row2_widget = _build_top_button_row_widget(
+            window,
+            row2_definitions,
+            row_role="row2",
+            target_width=row1_width or None,
+        )
+        container_layout.addWidget(row2_widget)
+        row2_height = row2_widget.sizeHint().height() + container_layout.spacing()
+
+    button_container.adjustSize()
+    window._top_button_container = button_container
+    window.buttons_row1 = [definition["label"].lower() for definition in row1_definitions]
+    window.buttons_row2 = [definition["label"].lower() for definition in row2_definitions]
+
+    placeholder = getattr(window, "_top_button_placeholder", None)
+    if placeholder is not None:
+        if row1_widget is not None:
+            placeholder.setFixedWidth(row1_widget.sizeHint().width())
+            placeholder.setFixedHeight(0)
+        else:
+            placeholder.setFixedSize(0, 0)
+
+    button_container.setVisible(bool(visible_definitions))
+    _update_top_panel_button_spacing(window, extra_bottom=row2_height)
+    if hasattr(window, "top_panel"):
+        window.top_panel.updateGeometry()
+        window.top_panel.adjustSize()
+
+    QTimer.singleShot(0, window._position_top_action_buttons)
+
+
+def _build_top_button_row_widget(window, row_definitions, row_role: str, target_width: int = None):
+    """Build a single row of visible top action buttons."""
+    row_widget = QWidget()
+    row_widget.setAttribute(Qt.WA_TranslucentBackground, True)
+    row_widget.setStyleSheet("background: transparent; border: none;")
+    row_layout = QHBoxLayout(row_widget)
+    row_layout.setContentsMargins(0, 0, 0, 0)
+    row_layout.setSpacing(8 if row_role == "row1" else 6)
+
+    for definition in row_definitions:
+        button = QPushButton(definition["label"])
+        style_key = definition["style"]
+        if row_role == "row2" and style_key == "neutral":
+            style_key = "secondary_compact"
+        button.setStyleSheet(TOP_BUTTON_STYLE_SHEETS[style_key])
+        button.clicked.connect(lambda _, callback=definition["callback"]: callback(window))
+        row_layout.addWidget(button)
+
+    row_widget.adjustSize()
+    if row_role == "row2" and target_width and row_widget.sizeHint().width() > target_width:
+        row_layout.setSpacing(4)
+        for index in range(row_layout.count()):
+            item = row_layout.itemAt(index)
+            widget = item.widget()
+            if widget is not None:
+                widget.setStyleSheet(TOP_BUTTON_STYLE_SHEETS["secondary_tight"])
+        row_widget.adjustSize()
+
+    return row_widget
+
+
+def _update_top_panel_button_spacing(window, extra_bottom: int) -> None:
+    """Reserve vertical room for a second floating button row without stretching row1."""
+    if not hasattr(window, "top_panel") or window.top_panel.layout() is None:
+        return
+    left, top, right, bottom = getattr(window, "_top_panel_base_margins", (16, 8, 16, 8))
+    window.top_panel.layout().setContentsMargins(left, top, right, bottom + max(0, extra_bottom))
+
 
 def init_top_panel(window) -> None:
     """Initialize the top control panel."""
@@ -41,6 +350,7 @@ def init_top_panel(window) -> None:
     top_layout = QVBoxLayout(window.top_panel)
     top_layout.setContentsMargins(16, 8, 16, 8)
     top_layout.setSpacing(6)
+    window._top_panel_base_margins = (16, 8, 16, 8)
 
     row1_layout = QHBoxLayout()
     row1_layout.setContentsMargins(0, 0, 0, 0)
@@ -101,112 +411,11 @@ def init_top_panel(window) -> None:
         """
     )
 
-    btn_style = """
-        QPushButton {
-            background-color: #ffffff;
-            border: 1px solid #cfd8e3;
-            border-radius: 6px;
-            padding: 6px 12px;
-            font-weight: 500;
-            font-size: 12px;
-            color: #314154;
-        }
-        QPushButton:hover {
-            background-color: #f7fbff;
-            border: 1px solid #7ba4d9;
-            color: #0f5fa8;
-        }
-        QPushButton:pressed {
-            background-color: #e7f1fb;
-            border: 1px solid #5d8fcf;
-        }
-    """
-
-    action_btn_style = """
-        QPushButton {
-            background-color: #1976d2;
-            border: none;
-            border-radius: 6px;
-            padding: 6px 12px;
-            font-weight: 600;
-            font-size: 12px;
-            color: #ffffff;
-        }
-        QPushButton:hover {
-            background-color: #1565c0;
-        }
-        QPushButton:pressed {
-            background-color: #0d47a1;
-        }
-    """
-
-    warning_btn_style = """
-        QPushButton {
-            background-color: #fff8f8;
-            border: 1px solid #f3c5c5;
-            border-radius: 6px;
-            padding: 6px 12px;
-            font-weight: 600;
-            font-size: 12px;
-            color: #b42318;
-        }
-        QPushButton:hover {
-            background-color: #ffefef;
-            border: 1px solid #e38b8b;
-        }
-        QPushButton:pressed {
-            background-color: #ffdede;
-        }
-    """
-
-    window.buttons_row1 = ["run all", "run", "stop", "skip", "unskip", "invalid"]
-    window.buttons_row2 = ["term", "csh", "log", "cmd", "trace up", "trace dn"]
-
     row1_layout.addWidget(window.combo)
-
-    button_container = QWidget(window.top_panel)
-    button_container.setAttribute(Qt.WA_TranslucentBackground, True)
-    button_container.setStyleSheet("background: transparent; border: none;")
-    button_layout = QHBoxLayout(button_container)
-    button_layout.setContentsMargins(0, 0, 0, 0)
-    button_layout.setSpacing(8)
-
-    bt_runall = QPushButton("Run All")
-    bt_runall.setStyleSheet(action_btn_style)
-    bt_runall.clicked.connect(lambda: window.start("XMeta_run all"))
-    button_layout.addWidget(bt_runall)
-
-    bt_run = QPushButton("Run")
-    bt_run.setStyleSheet(action_btn_style)
-    bt_run.clicked.connect(lambda: window.start("XMeta_run"))
-    button_layout.addWidget(bt_run)
-
-    bt_stop = QPushButton("Stop")
-    bt_stop.setStyleSheet(warning_btn_style)
-    bt_stop.clicked.connect(lambda: window.start("XMeta_stop"))
-    button_layout.addWidget(bt_stop)
-
-    bt_skip = QPushButton("Skip")
-    bt_skip.setStyleSheet(warning_btn_style)
-    bt_skip.clicked.connect(lambda: window.start("XMeta_skip"))
-    button_layout.addWidget(bt_skip)
-
-    bt_unskip = QPushButton("Unskip")
-    bt_unskip.setStyleSheet(btn_style)
-    bt_unskip.clicked.connect(lambda: window.start("XMeta_unskip"))
-    button_layout.addWidget(bt_unskip)
-
-    bt_invalid = QPushButton("Invalid")
-    bt_invalid.setStyleSheet(warning_btn_style)
-    bt_invalid.clicked.connect(lambda: window.start("XMeta_invalid"))
-    button_layout.addWidget(bt_invalid)
-
-    button_container.adjustSize()
-    window._top_button_container = button_container
     window._top_button_placeholder = QWidget()
     window._top_button_placeholder.setStyleSheet("background: transparent; border: none;")
-    window._top_button_placeholder.setFixedWidth(button_container.sizeHint().width())
     row1_layout.addWidget(window._top_button_placeholder)
+    rebuild_top_action_buttons(window)
 
     top_layout.addLayout(row1_layout)
     window._main_layout.addWidget(window.top_panel)

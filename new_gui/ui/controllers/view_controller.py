@@ -140,6 +140,7 @@ def show_all_status(window) -> None:
     overview_rows = run_repository.collect_all_status_overview(window.run_base_dir)
     window._populate_all_status_overview(overview_rows)
     window._apply_all_status_column_widths()
+    window._update_column_visibility_control_state()
     logger.debug(f"show_all_status completed, showing {len(overview_rows)} runs")
 
 
@@ -235,6 +236,8 @@ def apply_adaptive_target_column_width(window, column: int = 1) -> None:
         return
     if window.model.columnCount() <= column:
         return
+    if window.tree.isColumnHidden(column):
+        return
 
     viewport_width = window.tree.viewport().width()
     if viewport_width <= 0:
@@ -243,7 +246,10 @@ def apply_adaptive_target_column_width(window, column: int = 1) -> None:
     header_min_widths = get_header_min_widths(window)
     current_target_width = window.tree.columnWidth(column)
     min_target_width = header_min_widths.get(column, 0)
-    current_total_width = sum(window.tree.columnWidth(col) for col in range(window.model.columnCount()))
+    visible_columns = [col for col in range(window.model.columnCount()) if not window.tree.isColumnHidden(col)]
+    if not visible_columns:
+        return
+    current_total_width = sum(window.tree.columnWidth(col) for col in visible_columns)
     width_delta = viewport_width - current_total_width
     new_target_width = max(min_target_width, current_target_width + width_delta)
 
@@ -256,16 +262,16 @@ def fill_trailing_blank_with_last_column(window) -> None:
     if not hasattr(window, "tree") or not hasattr(window, "model"):
         return
 
-    column_count = window.model.columnCount()
-    if column_count <= 0:
+    visible_columns = [col for col in range(window.model.columnCount()) if not window.tree.isColumnHidden(col)]
+    if not visible_columns:
         return
 
     viewport_width = window.tree.viewport().width()
     if viewport_width <= 0:
         return
 
-    last_column = column_count - 1
-    current_total_width = sum(window.tree.columnWidth(col) for col in range(column_count))
+    last_column = visible_columns[-1]
+    current_total_width = sum(window.tree.columnWidth(col) for col in visible_columns)
     width_delta = viewport_width - current_total_width
     if width_delta <= 0:
         return
@@ -376,11 +382,13 @@ def activate_selected_run_view(window, current_run: str, invalidate_snapshot: bo
     window._build_status_cache(run_state["run_name"])
     window.model.clear()
     window.populate_data()
+    window._apply_main_tree_column_visibility(window._main_tree_visible_columns, save_state=False)
 
     if hasattr(window, "status_watcher"):
         window.setup_status_watcher()
 
     window.update_status_bar()
+    window._update_column_visibility_control_state()
 
 
 def populate_data(window, force_rebuild=False) -> None:
