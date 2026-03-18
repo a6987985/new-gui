@@ -1,6 +1,7 @@
 import os
 import sys
 import warnings
+import logging
 from concurrent.futures import ThreadPoolExecutor
 
 # Last Updated: 2026-03-05 19:00
@@ -11,6 +12,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from new_gui.config.settings import (
     DEBOUNCE_DELAY_MS,
+    DEFAULT_LOG_LEVEL,
     STATUS_COLORS,
     STATUS_CONFIG,
     logger,
@@ -28,6 +30,7 @@ from new_gui.services import view_state
 from new_gui.ui.theme_runtime import ThemeManager
 from new_gui.ui.builders import menu_builder, shortcut_builder, top_panel_builder, window_builder
 from new_gui.ui.widgets.button_visibility_picker import ButtonVisibilityPicker
+from new_gui.ui.widgets.bottom_output_panel import GuiLogEntry, GuiLogHandler, GuiLogSignalBridge
 from new_gui.ui.widgets.column_visibility_picker import ColumnVisibilityPicker
 from new_gui.ui.controllers import (
     action_controller,
@@ -53,6 +56,7 @@ class MainWindow(QMainWindow):
 
         # Call parent constructor
         super().__init__()
+        self._init_ui_log_dispatcher()
 
         # Initialize window
         self._init_window()
@@ -61,6 +65,7 @@ class MainWindow(QMainWindow):
         self._init_menu_bar()
         self._init_central_widget()
         self._init_top_panel()
+        self._install_gui_log_handler()
 
         # Expand tree initially
         self.expand_tree_default()
@@ -85,7 +90,96 @@ class MainWindow(QMainWindow):
         self._column_visibility_picker = None
         self._visible_top_buttons = set(top_panel_builder.DEFAULT_TOP_BUTTON_IDS)
         self._button_visibility_picker = None
-        self._embedded_terminal_last_height = 260
+        self._bottom_output_last_height = 260
+        self._ui_log_dispatcher = None
+        self._gui_log_handler = None
+        self._gui_log_previous_logger_level = None
+        self._gui_log_root_handler_levels = {}
+
+    def _init_ui_log_dispatcher(self) -> None:
+        """Create the thread-safe log bridge used by the GUI session log."""
+        self._ui_log_dispatcher = GuiLogSignalBridge(self)
+        self._ui_log_dispatcher.entry_requested.connect(self._append_ui_log_entry)
+
+    def _install_gui_log_handler(self) -> None:
+        """Attach a GUI-only log handler while keeping console logging unchanged."""
+        if self._gui_log_handler is not None:
+            return
+
+        root_logger = logging.getLogger()
+        self._gui_log_previous_logger_level = logger.level
+        self._gui_log_root_handler_levels = {id(handler): handler.level for handler in root_logger.handlers}
+
+        for handler in root_logger.handlers:
+            if handler.level < DEFAULT_LOG_LEVEL:
+                handler.setLevel(DEFAULT_LOG_LEVEL)
+
+        logger.setLevel(logging.INFO)
+        self._gui_log_handler = GuiLogHandler(self._queue_ui_log_entry)
+        logger.addHandler(self._gui_log_handler)
+
+    def _remove_gui_log_handler(self) -> None:
+        """Detach the GUI log handler and restore previous logger settings."""
+        if self._gui_log_handler is None:
+            return
+
+        logger.removeHandler(self._gui_log_handler)
+        self._gui_log_handler = None
+
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers:
+            if id(handler) in self._gui_log_root_handler_levels:
+                handler.setLevel(self._gui_log_root_handler_levels[id(handler)])
+
+        if self._gui_log_previous_logger_level is not None:
+            logger.setLevel(self._gui_log_previous_logger_level)
+
+        self._gui_log_root_handler_levels = {}
+        self._gui_log_previous_logger_level = None
+
+    def _queue_ui_log_entry(self, entry: GuiLogEntry) -> None:
+        """Queue one log entry back onto the GUI thread."""
+        if self._ui_log_dispatcher is not None:
+            self._ui_log_dispatcher.entry_requested.emit(entry)
+
+    @staticmethod
+    def _normalize_ui_log_level(level: str) -> str:
+        """Normalize GUI log levels to the supported INFO/WARNING/ERROR set."""
+        level_name = (level or "INFO").upper()
+        if level_name in ("ERROR", "CRITICAL"):
+            return "ERROR"
+        if level_name == "WARNING":
+            return "WARNING"
+        return "INFO"
+
+    def append_ui_log(
+        self,
+        level: str,
+        source: str,
+        message: str,
+        command: str = "",
+        details: str = "",
+    ) -> None:
+        """Append one session log entry through the thread-safe GUI sink."""
+        entry = GuiLogEntry.create(
+            level=self._normalize_ui_log_level(level),
+            source=source,
+            message=message,
+            command=command,
+            details=details,
+        )
+        self._queue_ui_log_entry(entry)
+
+    def _append_ui_log_entry(self, entry: GuiLogEntry) -> None:
+        """Render one queued log entry and apply panel attention rules."""
+        if not hasattr(self, "_bottom_output_panel"):
+            return
+
+        entry.level = self._normalize_ui_log_level(entry.level)
+        self._bottom_output_panel.append_log_entry(entry)
+
+        if entry.level in ("WARNING", "ERROR"):
+            self.show_log_output_panel()
 
     def _invalidate_tune_cache(self, run_dir: str = None, target_name: str = None) -> None:
         """Invalidate tune-file cache entries."""
@@ -158,6 +252,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Release background resources when the window closes."""
+        self._remove_gui_log_handler()
         if hasattr(self, "_embedded_terminal"):
             self._embedded_terminal.shutdown()
         if hasattr(self, "_executor"):
@@ -180,47 +275,68 @@ class MainWindow(QMainWindow):
         """Initialize the top control panel."""
         top_panel_builder.init_top_panel(self)
 
-    def _set_embedded_terminal_panel_visible(self, visible: bool) -> None:
-        """Show or collapse the embedded terminal panel inside the content splitter."""
-        if not hasattr(self, "_content_splitter") or not hasattr(self, "_embedded_terminal"):
+    def _set_bottom_output_panel_visible(self, visible: bool) -> None:
+        """Show or collapse the bottom output panel inside the content splitter."""
+        if not hasattr(self, "_content_splitter") or not hasattr(self, "_bottom_output_panel"):
             return
 
-        panel = self._embedded_terminal
+        panel = self._bottom_output_panel
         splitter = self._content_splitter
 
         if visible:
             panel.show()
             total_height = max(splitter.height(), self.height())
-            requested_height = max(180, self._embedded_terminal_last_height)
-            terminal_height = min(requested_height, max(180, total_height // 2))
-            tree_height = max(220, total_height - terminal_height)
-            splitter.setSizes([tree_height, terminal_height])
+            requested_height = max(180, self._bottom_output_last_height)
+            output_height = min(requested_height, max(180, total_height // 2))
+            tree_height = max(220, total_height - output_height)
+            splitter.setSizes([tree_height, output_height])
             panel.raise_()
             return
 
         current_sizes = splitter.sizes()
         if len(current_sizes) > 1 and current_sizes[1] > 0:
-            self._embedded_terminal_last_height = current_sizes[1]
+            self._bottom_output_last_height = current_sizes[1]
         splitter.setSizes([1, 0])
         panel.hide()
+
+    def _set_embedded_terminal_panel_visible(self, visible: bool) -> None:
+        """Backward-compatible wrapper for the old terminal-only panel API."""
+        self._set_bottom_output_panel_visible(visible)
 
     def show_embedded_terminal_panel(self, run_dir: str) -> bool:
         """Open the embedded terminal panel for the requested run directory."""
         if not hasattr(self, "_embedded_terminal"):
             return False
-        self._set_embedded_terminal_panel_visible(True)
+        self._set_bottom_output_panel_visible(True)
+        self._bottom_output_panel.show_terminal_tab()
         QApplication.processEvents()
         if not self._embedded_terminal.show_for_directory(run_dir):
-            self._set_embedded_terminal_panel_visible(False)
             return False
         return True
 
     def hide_embedded_terminal_panel(self) -> None:
-        """Close the embedded terminal session and collapse the panel."""
+        """Close the embedded terminal session and collapse the bottom panel."""
         if not hasattr(self, "_embedded_terminal"):
             return
         self._embedded_terminal.stop_terminal()
-        self._set_embedded_terminal_panel_visible(False)
+        self._set_bottom_output_panel_visible(False)
+
+    def hide_bottom_output_panel(self) -> None:
+        """Collapse the bottom output panel without stopping the terminal session."""
+        self._set_bottom_output_panel_visible(False)
+
+    def show_log_output_panel(self) -> None:
+        """Open the bottom output area and switch to the session log tab."""
+        if not hasattr(self, "_bottom_output_panel"):
+            return
+        self._set_bottom_output_panel_visible(True)
+        self._bottom_output_panel.show_log_tab()
+
+    def get_embedded_terminal_status_message(self) -> str:
+        """Return the current embedded-terminal status text, if any."""
+        if hasattr(self, "_embedded_terminal"):
+            return self._embedded_terminal.status_message()
+        return ""
 
     def _setup_keyboard_shortcuts(self):
         """Setup global keyboard shortcuts"""
@@ -286,6 +402,14 @@ class MainWindow(QMainWindow):
         """Show a notification message"""
         if hasattr(self, '_notification_manager'):
             self._notification_manager.show_notification(title, message, notification_type)
+        level = {
+            "error": "ERROR",
+            "warning": "WARNING",
+            "success": "INFO",
+            "info": "INFO",
+        }.get(notification_type, "INFO")
+        summary = f"{title}: {message}" if title else message
+        self.append_ui_log(level, "notification", summary)
 
     def update_status_bar(self):
         """Update the status bar with current statistics"""

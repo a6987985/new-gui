@@ -20,8 +20,8 @@ from new_gui.ui.widgets.bounded_combo import BoundedComboBox
 from new_gui.ui.widgets.notifications import NotificationManager
 from new_gui.ui.widgets.status_bar import StatusBar
 from new_gui.ui.widgets.tree_view import ColorTreeView, TreeViewEventFilter
+from new_gui.ui.widgets.bottom_output_panel import BottomOutputPanel
 from new_gui.ui.widgets.delegates import BorderItemDelegate, TuneComboBoxDelegate
-from new_gui.ui.widgets.embedded_terminal import EmbeddedTerminalWidget
 from new_gui.ui.widgets.filter_header import FilterHeaderView
 from new_gui.ui.widgets.labels import ClickableLabel
 
@@ -730,13 +730,16 @@ def init_top_panel(window) -> None:
     window._content_splitter.setHandleWidth(6)
     window._content_splitter.addWidget(window.tree)
 
-    window._embedded_terminal = EmbeddedTerminalWidget(window)
+    window._bottom_output_panel = BottomOutputPanel(window)
+    window._embedded_terminal = window._bottom_output_panel.terminal_widget
+    window._session_log_widget = window._bottom_output_panel.log_widget
     window._embedded_terminal.close_requested.connect(window.hide_embedded_terminal_panel)
     window._embedded_terminal.external_requested.connect(window.open_external_terminal)
-    window._content_splitter.addWidget(window._embedded_terminal)
+    window._session_log_widget.close_requested.connect(window.hide_bottom_output_panel)
+    window._content_splitter.addWidget(window._bottom_output_panel)
 
     window._main_layout.addWidget(window._content_splitter)
-    window._set_embedded_terminal_panel_visible(False)
+    window._set_bottom_output_panel_visible(False)
 
     window.tree.setContextMenuPolicy(Qt.CustomContextMenu)
     window.tree.customContextMenuRequested.connect(window.show_context_menu)

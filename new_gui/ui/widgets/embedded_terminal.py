@@ -35,42 +35,49 @@ class EmbeddedTerminalWidget(QWidget):
         self.setStyleSheet(
             """
                 QWidget#embeddedTerminalPanel {
-                    background-color: #10151c;
-                    border-top: 1px solid #223040;
+                    background-color: #f6f9fb;
+                    border-top: 1px solid #d6dee7;
                 }
                 QLabel#embeddedTerminalTitle {
-                    color: #d9e5f2;
+                    color: #526476;
                     font-weight: 600;
+                    font-size: 12px;
                 }
                 QLabel#embeddedTerminalPath {
-                    color: #91a8c2;
+                    color: #7b8794;
                     font-size: 11px;
                 }
                 QLabel#embeddedTerminalMessage {
-                    color: #d9e5f2;
+                    color: #526476;
                     font-size: 12px;
                 }
                 QFrame#embeddedTerminalHost {
                     background-color: #ffffff;
-                    border: 1px solid #1b2530;
-                    border-radius: 4px;
+                    border: 1px solid #dbe3eb;
+                    border-radius: 6px;
                 }
                 QPushButton#embeddedTerminalButton {
-                    background-color: #16202a;
-                    border: 1px solid #2d3f52;
-                    border-radius: 4px;
-                    color: #d9e5f2;
-                    padding: 4px 10px;
+                    background-color: #fafcfd;
+                    border: 1px solid #d9e1e8;
+                    border-radius: 6px;
+                    color: #5c6d7e;
+                    font-weight: 600;
+                    padding: 3px 10px;
                 }
                 QPushButton#embeddedTerminalButton:hover {
-                    background-color: #213142;
+                    background-color: #eef3f7;
+                    border: 1px solid #c9d5e0;
+                }
+                QPushButton#embeddedTerminalButton:pressed {
+                    background-color: #e6edf4;
+                    border: 1px solid #bccbda;
                 }
             """
         )
 
         root_layout = QVBoxLayout(self)
-        root_layout.setContentsMargins(10, 8, 10, 10)
-        root_layout.setSpacing(8)
+        root_layout.setContentsMargins(10, 7, 10, 9)
+        root_layout.setSpacing(7)
 
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
@@ -133,6 +140,10 @@ class EmbeddedTerminalWidget(QWidget):
     def current_run_dir(self) -> str:
         """Return the run directory currently bound to the panel."""
         return self._current_run_dir
+
+    def status_message(self) -> str:
+        """Return the current status or fallback text shown by the widget."""
+        return self._message_label.text()
 
     def is_running(self) -> bool:
         """Return whether the embedded xterm process is active."""

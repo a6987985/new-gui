@@ -72,17 +72,51 @@ def exit_search_mode_and_get_targets(window):
 
 def log_action_result(window, command: str, result: dict, include_returncode: bool = False) -> None:
     """Log the outcome of a shell action using the current UI logging policy."""
-    del window
+    details = []
+    level = "INFO"
+    message = "Command completed successfully."
+
     if result.get("stdout"):
-        logger.info(result["stdout"])
+        logger.info(result["stdout"], extra={"ui_skip": True, "ui_source": "action"})
+        details.append(f"STDOUT\n{result['stdout'].strip()}")
     if result.get("stderr"):
-        logger.error(result["stderr"])
+        logger.error(result["stderr"], extra={"ui_skip": True, "ui_source": "action"})
+        details.append(f"STDERR\n{result['stderr'].strip()}")
+        level = "ERROR"
+        message = "Command produced stderr output."
     if result.get("timed_out"):
-        logger.error(f"Command timed out: {command}")
+        logger.error(
+            f"Command timed out: {command}",
+            extra={"ui_skip": True, "ui_source": "action"},
+        )
+        details.append("The command exceeded the configured timeout.")
+        level = "ERROR"
+        message = "Command timed out."
     if result.get("error") is not None:
-        logger.error(f"Error executing command: {result['error']}")
+        logger.error(
+            f"Error executing command: {result['error']}",
+            extra={"ui_skip": True, "ui_source": "action"},
+        )
+        details.append(f"EXCEPTION\n{result['error']}")
+        level = "ERROR"
+        message = "Command execution failed."
     if include_returncode and result.get("returncode") not in (None, 0):
-        logger.error(f"Command exited with code {result['returncode']}")
+        logger.error(
+            f"Command exited with code {result['returncode']}",
+            extra={"ui_skip": True, "ui_source": "action"},
+        )
+        details.append(f"Return code: {result['returncode']}")
+        level = "ERROR"
+        message = f"Command exited with code {result['returncode']}."
+
+    if hasattr(window, "append_ui_log"):
+        window.append_ui_log(
+            level,
+            "action",
+            message,
+            command=command,
+            details="\n\n".join(part for part in details if part),
+        )
 
 
 def start(window, action) -> None:
@@ -91,7 +125,7 @@ def start(window, action) -> None:
     search_context = window._build_search_context(selected_targets)
 
     if action != "XMeta_run all" and not selected_targets:
-        logger.warning(f"No targets selected for action: {action}")
+        logger.warning(f"No targets selected for action: {action}", extra={"ui_source": "action"})
         return
 
     current_run = window.combo.currentText()
@@ -101,7 +135,7 @@ def start(window, action) -> None:
         action,
         selected_targets,
     )
-    logger.info(action_request["log_message"])
+    logger.info(action_request["log_message"], extra={"ui_source": "action"})
 
     if action_request["run_sync"]:
         result = action_flow.execute_shell_command(
@@ -368,15 +402,40 @@ def open_terminal(window) -> None:
         return
 
     if hasattr(window, "show_embedded_terminal_panel") and window.show_embedded_terminal_panel(window.combo_sel):
+        if hasattr(window, "append_ui_log"):
+            window.append_ui_log(
+                "INFO",
+                "terminal",
+                "Opened embedded terminal panel.",
+                details=window.combo_sel,
+            )
         return
 
-    open_external_terminal(window)
+    if hasattr(window, "append_ui_log"):
+        window.append_ui_log(
+            "WARNING",
+            "terminal",
+            "Embedded terminal unavailable. Falling back to the external terminal.",
+            details=window.get_embedded_terminal_status_message()
+            if hasattr(window, "get_embedded_terminal_status_message")
+            else "",
+        )
+
+    open_external_terminal(window, log_request=False)
 
 
-def open_external_terminal(window) -> None:
+def open_external_terminal(window, log_request: bool = True) -> None:
     """Open the external terminal in the current run directory."""
     if not window.combo_sel:
         return
+
+    if log_request and hasattr(window, "append_ui_log"):
+        window.append_ui_log(
+            "INFO",
+            "terminal",
+            "Opening external terminal.",
+            details=window.combo_sel,
+        )
 
     window._executor.submit(file_actions.open_terminal, window.combo_sel)
 
@@ -385,11 +444,11 @@ def retrace_tab(window, inout) -> None:
     """Execute trace filtering in place for the selected target."""
     selected_targets = window._exit_search_mode_and_get_targets()
     if not selected_targets or not window.combo_sel:
-        logger.warning("No target selected for trace")
+        logger.warning("No target selected for trace", extra={"ui_source": "action"})
         return
 
     selected_target = selected_targets[0]
-    logger.info(f"Trace {inout} for target: {selected_target}")
+    logger.info(f"Trace {inout} for target: {selected_target}", extra={"ui_source": "action"})
 
     related_targets = window.get_retrace_target(selected_target, inout)
     if selected_target not in related_targets:
@@ -399,7 +458,7 @@ def retrace_tab(window, inout) -> None:
             related_targets.insert(0, selected_target)
 
     if not related_targets:
-        logger.info("No dependencies found.")
+        logger.info("No dependencies found.", extra={"ui_source": "action"})
         return
 
     window.filter_tree_by_targets(set(related_targets))
