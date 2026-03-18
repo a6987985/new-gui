@@ -130,6 +130,7 @@ Access via the `Setting` menu in the menu bar.
 - Control which top action buttons are visible
 - Default state keeps execute actions only in the top area
 - Optional buttons include `Term`, `Csh`, `Log`, `Cmd`, `Trace Up`, and `Trace Down`
+- `Term` opens the embedded terminal panel on Linux/X11 when `xterm` is available, and falls back to the external terminal command otherwise
 - Enabling optional buttons switches the top action area to a `row1 + row2` layout
 - Execute buttons remain prioritized in `row1`
 - `row2` button widths stay stable even when only a subset of optional buttons is enabled
@@ -164,7 +165,7 @@ Right-click on a target to access organized menu:
 - Invalid
 
 **📁 Files**
-- Terminal (open in run directory)
+- Terminal (prefer embedded terminal panel in current run directory, fall back externally when embedding is unavailable)
 - csh (shell script)
 - Log (log file)
 - cmd (command file)
@@ -274,7 +275,7 @@ VARC = 333
 - **Copy**: Double-click to copy parameter to clipboard
 
 #### Access Methods
-- **Menu**: Tools → User Params / Tile Params
+- **Menu**: Tools → Terminal Panel / External Terminal / User Params / Tile Params
 - **Context Menu**: Right-click → Params → User Params / Tile Params
 - **Shortcuts**: Ctrl+P / Ctrl+Shift+P
 
@@ -541,6 +542,7 @@ If patch mode fails with a baseline drift message, export again with `--full` an
 
 #### Improvements
 - **Top action layout refinement**: Two-row button mode now keeps the tree area height stable, moves `row1` into the menu band when `row2` is visible, and keeps `row2` button widths stable across partial-enable states
+- **Embedded terminal panel**: `Term` now prefers an in-window terminal panel on Linux/X11 with `xterm`, while keeping an external-terminal fallback for unsupported environments
 - **Tree expand behavior**: "Expand all" keeps synthetic generic groups collapsed by default for readability
 - **Header width rules**: Adaptive sizing now respects real header rendering width and hidden-column state
 

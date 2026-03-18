@@ -36,6 +36,7 @@ The tool is a practical operation console on top of the existing flow directory 
 - Menu bar: Status, View, Tools
 - Top control panel: run selector, current view tab, action buttons
 - Main tree view: target hierarchy and detailed columns
+- Optional bottom terminal panel: embedded shell for the current run directory when supported
 - Bottom status bar: run info, task count, status badges, theme and connection
 
 Speaker notes:
@@ -104,7 +105,8 @@ The context menu is the fastest path for most daily target operations.
 - Open `cmd` file to inspect flow command details
 - Open `csh` file to inspect target shell wrapper
 - Open tune files directly from the Tune column or context menu
-- Open terminal in the current run directory
+- Open the embedded terminal panel in the current run directory on Linux/X11
+- Fall back to the external terminal command when embedding is unavailable
 
 Speaker notes:
 This reduces the need to manually navigate directories in terminal during debug.
@@ -196,6 +198,7 @@ These interactions help advanced users operate faster without relying only on mo
 - Select a run
 - Scan target status in the main tree
 - Filter by status or trace dependencies if needed
+- Open the embedded terminal panel when quick shell commands are needed in the current run directory
 - Open related log, cmd, csh, or tune files
 - Edit params or BSUB values when adjustment is required
 - Execute Run, Stop, Skip, or Unskip actions
