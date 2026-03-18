@@ -363,7 +363,18 @@ def copy_tune_to_runs(window) -> None:
 
 
 def open_terminal(window) -> None:
-    """Open a terminal in the current run directory."""
+    """Open the embedded terminal panel or fall back to an external terminal."""
+    if not window.combo_sel:
+        return
+
+    if hasattr(window, "show_embedded_terminal_panel") and window.show_embedded_terminal_panel(window.combo_sel):
+        return
+
+    open_external_terminal(window)
+
+
+def open_external_terminal(window) -> None:
+    """Open the external terminal in the current run directory."""
     if not window.combo_sel:
         return
 

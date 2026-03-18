@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import (
     QGraphicsDropShadowEffect,
     QHBoxLayout,
     QPushButton,
+    QSplitter,
     QSizePolicy,
     QTreeView,
     QVBoxLayout,
@@ -20,6 +21,7 @@ from new_gui.ui.widgets.notifications import NotificationManager
 from new_gui.ui.widgets.status_bar import StatusBar
 from new_gui.ui.widgets.tree_view import ColorTreeView, TreeViewEventFilter
 from new_gui.ui.widgets.delegates import BorderItemDelegate, TuneComboBoxDelegate
+from new_gui.ui.widgets.embedded_terminal import EmbeddedTerminalWidget
 from new_gui.ui.widgets.filter_header import FilterHeaderView
 from new_gui.ui.widgets.labels import ClickableLabel
 
@@ -222,8 +224,8 @@ ROW1_BUTTON_SPACING = 8
 ROW2_COMPACT_SPACING = 6
 ROW2_TIGHT_SPACING = 4
 ROW2_NEUTRAL_PADDING_CANDIDATES = (12, 11, 10, 9, 8, 7, 6, 5, 4)
-TOP_BUTTON_MENU_ROW_Y_OFFSET = 8
-TOP_BUTTON_PANEL_ROW_Y_OFFSET = 8
+TOP_BUTTON_MENU_ROW_Y_OFFSET = 10
+TOP_BUTTON_PANEL_ROW_Y_OFFSET = 10
 
 
 def get_top_button_choices():
@@ -723,7 +725,18 @@ def init_top_panel(window) -> None:
     window.tune_delegate = TuneComboBoxDelegate(window.tree)
     window.tree.setItemDelegateForColumn(3, window.tune_delegate)
 
-    window._main_layout.addWidget(window.tree)
+    window._content_splitter = QSplitter(Qt.Vertical)
+    window._content_splitter.setChildrenCollapsible(False)
+    window._content_splitter.setHandleWidth(6)
+    window._content_splitter.addWidget(window.tree)
+
+    window._embedded_terminal = EmbeddedTerminalWidget(window)
+    window._embedded_terminal.close_requested.connect(window.hide_embedded_terminal_panel)
+    window._embedded_terminal.external_requested.connect(window.open_external_terminal)
+    window._content_splitter.addWidget(window._embedded_terminal)
+
+    window._main_layout.addWidget(window._content_splitter)
+    window._set_embedded_terminal_panel_visible(False)
 
     window.tree.setContextMenuPolicy(Qt.CustomContextMenu)
     window.tree.customContextMenuRequested.connect(window.show_context_menu)

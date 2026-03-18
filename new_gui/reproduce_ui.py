@@ -85,6 +85,7 @@ class MainWindow(QMainWindow):
         self._column_visibility_picker = None
         self._visible_top_buttons = set(top_panel_builder.DEFAULT_TOP_BUTTON_IDS)
         self._button_visibility_picker = None
+        self._embedded_terminal_last_height = 260
 
     def _invalidate_tune_cache(self, run_dir: str = None, target_name: str = None) -> None:
         """Invalidate tune-file cache entries."""
@@ -155,6 +156,14 @@ class MainWindow(QMainWindow):
         super().showEvent(event)
         QTimer.singleShot(0, self._apply_adaptive_target_column_width)
 
+    def closeEvent(self, event):
+        """Release background resources when the window closes."""
+        if hasattr(self, "_embedded_terminal"):
+            self._embedded_terminal.shutdown()
+        if hasattr(self, "_executor"):
+            self._executor.shutdown(wait=False)
+        super().closeEvent(event)
+
     def _position_top_action_buttons(self):
         """Float the top action buttons independently from the main row layout."""
         window_builder.position_top_action_buttons(self)
@@ -170,6 +179,48 @@ class MainWindow(QMainWindow):
     def _init_top_panel(self):
         """Initialize the top control panel."""
         top_panel_builder.init_top_panel(self)
+
+    def _set_embedded_terminal_panel_visible(self, visible: bool) -> None:
+        """Show or collapse the embedded terminal panel inside the content splitter."""
+        if not hasattr(self, "_content_splitter") or not hasattr(self, "_embedded_terminal"):
+            return
+
+        panel = self._embedded_terminal
+        splitter = self._content_splitter
+
+        if visible:
+            panel.show()
+            total_height = max(splitter.height(), self.height())
+            requested_height = max(180, self._embedded_terminal_last_height)
+            terminal_height = min(requested_height, max(180, total_height // 2))
+            tree_height = max(220, total_height - terminal_height)
+            splitter.setSizes([tree_height, terminal_height])
+            panel.raise_()
+            return
+
+        current_sizes = splitter.sizes()
+        if len(current_sizes) > 1 and current_sizes[1] > 0:
+            self._embedded_terminal_last_height = current_sizes[1]
+        splitter.setSizes([1, 0])
+        panel.hide()
+
+    def show_embedded_terminal_panel(self, run_dir: str) -> bool:
+        """Open the embedded terminal panel for the requested run directory."""
+        if not hasattr(self, "_embedded_terminal"):
+            return False
+        self._set_embedded_terminal_panel_visible(True)
+        QApplication.processEvents()
+        if not self._embedded_terminal.show_for_directory(run_dir):
+            self._set_embedded_terminal_panel_visible(False)
+            return False
+        return True
+
+    def hide_embedded_terminal_panel(self) -> None:
+        """Close the embedded terminal session and collapse the panel."""
+        if not hasattr(self, "_embedded_terminal"):
+            return
+        self._embedded_terminal.stop_terminal()
+        self._set_embedded_terminal_panel_visible(False)
 
     def _setup_keyboard_shortcuts(self):
         """Setup global keyboard shortcuts"""
@@ -1338,8 +1389,12 @@ class MainWindow(QMainWindow):
         action_controller.copy_tune_to_runs(self)
 
     def open_terminal(self):
-        """Open terminal in current run directory (runs in background thread)"""
+        """Open the embedded terminal panel for the current run, or fall back externally."""
         action_controller.open_terminal(self)
+
+    def open_external_terminal(self):
+        """Open the external terminal in the current run directory."""
+        action_controller.open_external_terminal(self)
 
     # ========== Context Menu Helpers ==========
 

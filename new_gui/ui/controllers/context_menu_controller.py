@@ -42,7 +42,7 @@ def build_file_menu(window, menu: QMenu) -> None:
     file_menu = menu.addMenu("📁 Files")
 
     terminal_action = file_menu.addAction("⌘ Terminal")
-    terminal_action.setToolTip("Open terminal in run directory")
+    terminal_action.setToolTip("Open the embedded terminal panel in the current run directory")
     terminal_action.triggered.connect(window.open_terminal)
 
     csh_action = file_menu.addAction("📄 csh")
