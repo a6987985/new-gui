@@ -1,6 +1,6 @@
 # XMeta Console GUI
 
-> **Last Updated**: 2026-03-14
+> **Last Updated**: 2026-03-17
 
 A PyQt5-based GUI monitoring tool for tracking task execution status and dependencies in EDA/chip design workflows.
 
@@ -18,7 +18,8 @@ new-gui/
 │   ├── reproduce_ui_to_1000_blueprint.md
 │   ├── new_gui_maintenance_boundaries.md
 │   ├── dependency_graph_evolution_roadmap.md
-│   └── dependency_graph_closure_checklist.md
+│   ├── dependency_graph_closure_checklist.md
+│   └── target_category_navigation_plan.md
 ├── README.md          # This documentation file
 ├── CLAUDE.md          # Project guidelines for Claude Code
 ├── .cursorrules       # Cursor editor rules configuration
@@ -37,6 +38,7 @@ For the post-split codebase, use these documents as the primary references:
 - `work_scr/reproduce_ui_to_1000_blueprint.md`: original line-budget blueprint that drove the split
 - `work_scr/dependency_graph_evolution_roadmap.md`: dependency graph evolution plan from baseline visualization to a stable analysis aid
 - `work_scr/dependency_graph_closure_checklist.md`: dependency graph closure record and final maintenance boundary
+- `work_scr/target_category_navigation_plan.md`: design exploration for a future left-side category navigation workflow
 
 ## Technology Stack
 
@@ -51,6 +53,10 @@ For the post-split codebase, use these documents as the primary references:
 
 - Parse `.target_dependency.csh` files to build target dependency trees
 - Display hierarchical view with levels, targets, status, and timestamps
+- Preserve large generic collections as `level -> generic group -> leaf target`
+- Build generic group rows from `INSTANCES_LIST_*Generic*` entries with 3 or more targets
+- Show aggregated status text and color on synthetic generic group rows
+- Allow batch execute actions directly from generic group rows
 - Real-time status updates via file system watcher (no polling)
 - Status colors with visual feedback
 
@@ -67,8 +73,8 @@ For the post-split codebase, use these documents as the primary references:
 | (no status) | Light Blue (#88D0EC) | | None | Status not yet determined |
 
 #### Row Visual Effects
-- **Hover**: Semi-transparent blue background (#E6F0FF), bold text
-- **Selected**: Gray background (#C0C0BE), bold text
+- **Hover**: Semi-transparent blue background (#E6F0FF) with stable text weight
+- **Selected**: Gray background (#C0C0BE) with stable selection emphasis
 - **Row Borders**: Drawn on hover/selection for visual clarity
 
 ### 3. Dependency Tracing
@@ -106,8 +112,27 @@ The dependency graph is considered a closed, stable module for this phase.
 - Real-time search by target name
 - Status-based filtering
 - Dependency-based filtering
+- Status and dependency filters preserve relevant ancestors so grouped rows remain readable
 
-### 5. Tune File Management
+### 5. View Configuration
+
+Access via the `Setting` menu in the menu bar.
+
+#### `Setting -> colomn`
+
+- Control visible columns for the main target tree
+- `level` and `target` remain mandatory and cannot be disabled
+- Other columns can be shown or hidden without changing the underlying tree data
+
+#### `Setting -> button`
+
+- Control which top action buttons are visible
+- Default state keeps execute actions only in the top area
+- Optional buttons include `Term`, `Csh`, `Log`, `Cmd`, `Trace Up`, and `Trace Down`
+- Enabling optional buttons switches the top action area to a `row1 + row2` layout
+- Execute buttons remain prioritized in `row1`
+
+### 6. Tune File Management
 
 Tune files are TCL scripts used for task configuration.
 
@@ -124,7 +149,7 @@ Example: `/path/to/run/tune/synthesis/synthesis.pre_opt.tcl`
   - Via double-click: Double-click on the Tune column cell to show dropdown menu
 - **Copy Tune To...**: Copy tune file to multiple runs (supports selecting multiple tune files)
 
-### 6. Context Menu Actions
+### 7. Context Menu Actions
 
 Right-click on a target to access organized menu:
 
@@ -157,21 +182,21 @@ Right-click on a target to access organized menu:
 - User Params (Ctrl+P)
 - Tile Params (Ctrl+Shift+P)
 
-### 7. Status Overview
+### 8. Status Overview
 
 Access via `Status → Show All Status` menu to view a summary of all run directories:
 - Displays: Run Directory, Latest Target, Status, Time Stamp
 - Double-click any row to copy the run name to clipboard
 - Provides quick overview of all runs in the base directory
 
-### 8. Embedded Search Filter
+### 9. Embedded Search Filter
 
 Double-click on the Target column header to show an embedded search input:
 - Real-time filtering as you type
 - Press Escape or Enter to hide the filter
 - Shows flat list of matching targets
 
-### 9. BSUB Parameter Editing
+### 10. BSUB Parameter Editing
 
 Double-click on Queue, Cores, or Memory columns to edit bsub parameters:
 - **Queue**: BSUB queue name (-q parameter)
@@ -179,13 +204,14 @@ Double-click on Queue, Cores, or Memory columns to edit bsub parameters:
 - **Memory**: Memory allocation in MB (rusage[mem=XXX], must be numeric)
 - Changes are saved directly to `{run_dir}/make_targets/{target}.csh`
 
-### 10. Tab Label Interaction
+### 11. Tab Label Interaction
 
 The tab label (showing current run name) supports:
 - **Double-click**: Toggle between Expand All and Collapse All
+- Default expand behavior keeps synthetic generic group rows collapsed
 - Displays trace mode status (red text) when tracing dependencies
 
-### 11. Theme System
+### 12. Theme System
 
 Three themes available:
 - **Light Theme** (default): Clean, bright interface
@@ -194,7 +220,7 @@ Three themes available:
 
 Access via `View → Theme` menu or `Ctrl+T` shortcut.
 
-### 12. Status Bar
+### 13. Status Bar
 
 Bottom status bar displays:
 - Current run name
@@ -202,7 +228,7 @@ Bottom status bar displays:
 - Connection status indicator
 - Current theme indicator
 
-### 13. Notifications
+### 14. Notifications
 
 Toast notifications appear in bottom-right corner:
 - **Info** (blue): General information
@@ -212,7 +238,7 @@ Toast notifications appear in bottom-right corner:
 
 Auto-dismiss after configurable duration, click to close.
 
-### 14. Params Editor
+### 15. Params Editor
 
 Edit and view parameter files for each run.
 
@@ -248,7 +274,7 @@ VARC = 333
 - **Context Menu**: Right-click → Params → User Params / Tile Params
 - **Shortcuts**: Ctrl+P / Ctrl+Shift+P
 
-### 15. Multi-Selection Support
+### 16. Multi-Selection Support
 
 The tree view supports extended selection for batch operations:
 - **Ctrl+Click**: Add/remove individual items from selection
@@ -256,7 +282,7 @@ The tree view supports extended selection for batch operations:
 - Actions (Run, Stop, Skip, Unskip, Invalid) apply to all selected targets
 - Copy (Ctrl+C) copies all selected target names to clipboard
 
-### 16. Run Selection with Search
+### 17. Run Selection with Search
 
 The run dropdown (BoundedComboBox) provides:
 - **Search Mode**: Click the 🔍 button to enable text filtering
@@ -285,7 +311,7 @@ The run dropdown (BoundedComboBox) provides:
 
 | Class | Description |
 |-------|-------------|
-| `MainWindow` | Main application window and runtime composition root (~953 lines in `reproduce_ui.py`) |
+| `MainWindow` | Main application window and runtime composition root (~1419 lines in `reproduce_ui.py`) |
 | `ThemeManager` | Singleton managing application themes |
 | `StatusAnimator` | Singleton managing status animations (pulse effect) |
 | `NotificationWidget` | Individual notification popup |
@@ -294,6 +320,8 @@ The run dropdown (BoundedComboBox) provides:
 | `BorderItemDelegate` | Custom delegate for row borders, status colors, and stable selection emphasis |
 | `FilterHeaderView` | Custom header with embedded search input for Target column |
 | `TuneComboBoxDelegate` | ComboBox delegate for Tune column dropdown |
+| `ColumnVisibilityPicker` | Embedded settings widget for main-tree column visibility |
+| `ButtonVisibilityPicker` | Embedded settings widget for top action button visibility |
 | `TreeViewEventFilter` | Event filter for expand/collapse handling |
 | `RoundedScrollBar` | Custom scrollbar with rounded corners (cross-platform) |
 | `ColorTreeView` | Custom tree view with custom branch drawing and rounded scrollbars |
@@ -375,18 +403,14 @@ SHORTCUTS = {
 }
 ```
 
-### Column Widths
-| Column | Width |
-|--------|-------|
-| Level | 80px (fixed) |
-| Target | 400px (fixed) |
-| Status | Dynamic (based on longest status text + 20px padding) |
-| Tune | 120px (fixed) |
-| Start Time | Dynamic (based on time format "YYYY-MM-DD HH:MM:SS" + 20px) |
-| End Time | Dynamic (based on time format "YYYY-MM-DD HH:MM:SS" + 20px) |
-| Queue | 100px (fixed) |
-| Cores | 60px (fixed) |
-| Memory | 80px (fixed) |
+### Column Width Rules
+
+- Initial main-view width is derived from the default tree column plan
+- `target` absorbs most overall window-resize growth
+- Manual resize of one column does not silently redistribute other columns
+- The rightmost visible column expands to fill trailing blank space after manual shrinking
+- Each visible column is clamped so the header label remains fully readable
+- Hidden columns via `Setting -> colomn` are excluded from adaptive width calculations
 
 ### Tree View Columns
 
@@ -400,6 +424,10 @@ The tree view displays the following columns:
 - **Queue**: BSUB queue name (double-click to edit)
 - **Cores**: Number of CPU cores (double-click to edit)
 - **Memory**: Memory allocation in MB (double-click to edit)
+
+In the main target view:
+- `level` and `target` are always visible
+- Other columns can be toggled from `Setting -> colomn`
 
 ### Pre-compiled Regex Patterns
 - `RE_LEVEL_LINE`: Parse level definitions
@@ -494,6 +522,23 @@ If patch mode fails with a baseline drift message, export again with `--full` an
 - gvim (optional, for opening tune files)
 
 ## Changelog
+
+### v3.0.0 - Main View Workflow Consolidation
+
+#### New Features
+- **Configurable top action area**: Added `Setting -> button` to control visible top buttons
+  - Default top area keeps execute actions only
+  - Optional file/trace actions can be enabled into a second row
+- **Configurable columns**: Added `Setting -> colomn` to control visible main-tree columns
+  - `level` and `target` stay locked visible
+- **Generic group rows**: Large generic target collections now collapse into synthetic group rows
+  - Derived from `INSTANCES_LIST_*Generic*` entries with 3 or more targets
+  - Group rows show aggregated status and support batch execute actions
+
+#### Improvements
+- **Top action layout refinement**: Two-row button mode now preserves the original row1 vertical position and keeps row2 width compact
+- **Tree expand behavior**: "Expand all" keeps synthetic generic groups collapsed by default for readability
+- **Header width rules**: Adaptive sizing now respects real header rendering width and hidden-column state
 
 ### v2.9.0 - UI Improvements
 
@@ -637,7 +682,7 @@ If patch mode fails with a baseline drift message, export again with `--full` an
 - Fixed scrollbar rounded corners not displaying on Linux
 - Fixed ComboBox dropdown arrow not visible on Linux
 - Platform-independent UI components using manual paint events
-- **Removed duplicate toolbar buttons**: Removed second row of buttons (Terminal, CSH, Log, CMD, Trace Up, Trace Down) as these functions are already available via right-click context menu and keyboard shortcuts, making the UI more compact
+- File and trace actions remain available via context menu and shortcuts by default, and later versions reintroduced them as optional top buttons through `Setting -> button`
 
 ### v2.2.0 - Feature Enhancements
 
@@ -686,7 +731,7 @@ If patch mode fails with a baseline drift message, export again with `--full` an
 - **Notification System**: Toast notifications for user feedback
 - **Enhanced Dependency Graph**: Interactive nodes, path highlighting, export to PNG
 - **Grouped Context Menu**: Organized menus with icons and shortcuts
-- **Bold Text on Selection/Hover**: Improved visual feedback in tree view
+- **Selection and Hover Emphasis**: Improved visual feedback in tree view
 - **Dynamic Status Column Width**: Auto-calculated based on status text
 
 #### Improvements
