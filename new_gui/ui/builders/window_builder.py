@@ -4,6 +4,7 @@ from PyQt5.QtCore import QEasingCurve, QPropertyAnimation, Qt
 from PyQt5.QtWidgets import QVBoxLayout, QWidget
 
 from new_gui.config.settings import FADE_IN_DURATION_MS, WINDOW_HEIGHT, WINDOW_WIDTH
+from new_gui.ui.builders import top_panel_builder
 
 
 def init_window(window) -> None:
@@ -42,13 +43,13 @@ def init_central_widget(window) -> None:
 
 def position_top_action_buttons(window) -> None:
     """Float the top action buttons independently from the main row layout."""
-    if not hasattr(window, "_top_button_container") or not hasattr(window, "top_panel"):
+    if not hasattr(window, "_top_button_container"):
         return
 
     container = window._top_button_container
     container.adjustSize()
     right_margin = 16
-    x_pos = window.top_panel.width() - right_margin - container.sizeHint().width()
-    y_pos = 0
+    x_pos = window.width() - right_margin - container.sizeHint().width()
+    y_pos = top_panel_builder.get_top_button_anchor_y(window)
     container.move(max(0, x_pos), y_pos)
     container.raise_()

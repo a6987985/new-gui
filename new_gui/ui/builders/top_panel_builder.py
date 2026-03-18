@@ -1,6 +1,6 @@
 """Top-panel and tree-area builder helpers for MainWindow."""
 
-from PyQt5.QtCore import QFileSystemWatcher, QTimer, Qt
+from PyQt5.QtCore import QFileSystemWatcher, QPoint, QTimer, Qt
 from PyQt5.QtGui import QColor, QStandardItemModel
 from PyQt5.QtWidgets import (
     QGraphicsDropShadowEffect,
@@ -218,6 +218,14 @@ TOP_BUTTON_STYLE_SHEETS = {
 }
 
 
+ROW1_BUTTON_SPACING = 8
+ROW2_COMPACT_SPACING = 6
+ROW2_TIGHT_SPACING = 4
+ROW2_NEUTRAL_PADDING_CANDIDATES = (12, 11, 10, 9, 8, 7, 6, 5, 4)
+TOP_BUTTON_MENU_ROW_Y_OFFSET = 8
+TOP_BUTTON_PANEL_ROW_Y_OFFSET = 8
+
+
 def get_top_button_choices():
     """Return top-button ids and labels in stable display order."""
     return [(definition["id"], definition["label"]) for definition in TOP_BUTTON_DEFINITIONS]
@@ -239,7 +247,7 @@ def rebuild_top_action_buttons(window) -> None:
     if existing_container is not None:
         existing_container.deleteLater()
 
-    button_container = QWidget(window.top_panel)
+    button_container = QWidget(window)
     button_container.setAttribute(Qt.WA_TranslucentBackground, True)
     button_container.setStyleSheet("background: transparent; border: none;")
 
@@ -276,17 +284,22 @@ def rebuild_top_action_buttons(window) -> None:
     window._top_button_container = button_container
     window.buttons_row1 = [definition["label"].lower() for definition in row1_definitions]
     window.buttons_row2 = [definition["label"].lower() for definition in row2_definitions]
+    window._top_button_row_count = container_layout.count()
 
     placeholder = getattr(window, "_top_button_placeholder", None)
     if placeholder is not None:
-        if row1_widget is not None:
-            placeholder.setFixedWidth(row1_widget.sizeHint().width())
+        reserved_width = max(
+            row1_widget.sizeHint().width() if row1_widget is not None else 0,
+            row2_widget.sizeHint().width() if row2_widget is not None else 0,
+        )
+        if reserved_width > 0:
+            placeholder.setFixedWidth(reserved_width)
             placeholder.setFixedHeight(0)
         else:
             placeholder.setFixedSize(0, 0)
 
     button_container.setVisible(bool(visible_definitions))
-    _update_top_panel_button_spacing(window, extra_bottom=row2_height)
+    _update_top_panel_button_spacing(window, extra_bottom=0)
     if hasattr(window, "top_panel"):
         window.top_panel.updateGeometry()
         window.top_panel.adjustSize()
@@ -294,34 +307,216 @@ def rebuild_top_action_buttons(window) -> None:
     QTimer.singleShot(0, window._position_top_action_buttons)
 
 
+def _measure_button_width_from_style(label: str, style_sheet: str) -> int:
+    """Return the polished size hint width for one styled top action button."""
+    button = QPushButton(label)
+    button.setStyleSheet(style_sheet)
+    button.ensurePolished()
+    return button.sizeHint().width()
+
+
+def _measure_button_height_from_style(label: str, style_sheet: str) -> int:
+    """Return the polished size hint height for one styled top action button."""
+    button = QPushButton(label)
+    button.setStyleSheet(style_sheet)
+    button.ensurePolished()
+    return button.sizeHint().height()
+
+
+def _measure_button_width(label: str, style_key: str) -> int:
+    """Return the polished size hint width for one predefined style."""
+    return _measure_button_width_from_style(label, TOP_BUTTON_STYLE_SHEETS[style_key])
+
+
+def _measure_button_height(label: str, style_key: str) -> int:
+    """Return the polished size hint height for one predefined style."""
+    return _measure_button_height_from_style(label, TOP_BUTTON_STYLE_SHEETS[style_key])
+
+
+def _measure_row_width(row_definitions, style_key: str, spacing: int) -> int:
+    """Return the natural row width for the given button set and style."""
+    if not row_definitions:
+        return 0
+
+    return sum(_measure_button_width(definition["label"], style_key) for definition in row_definitions) + (
+        spacing * max(0, len(row_definitions) - 1)
+    )
+
+
+def _fit_button_widths_to_target(base_widths, min_widths, target_width: int, spacing: int):
+    """Shrink widths just enough to fit the requested row width."""
+    fitted_widths = dict(base_widths or {})
+    if not fitted_widths or not target_width:
+        return fitted_widths
+
+    total_width = sum(fitted_widths.values()) + spacing * max(0, len(fitted_widths) - 1)
+    overflow = total_width - target_width
+    if overflow <= 0:
+        return fitted_widths
+
+    width_order = sorted(
+        fitted_widths.keys(),
+        key=lambda button_id: (
+            fitted_widths[button_id] - min_widths.get(button_id, fitted_widths[button_id]),
+            fitted_widths[button_id],
+        ),
+        reverse=True,
+    )
+
+    while overflow > 0:
+        changed = False
+        for button_id in width_order:
+            minimum_width = min_widths.get(button_id, fitted_widths[button_id])
+            if fitted_widths[button_id] <= minimum_width:
+                continue
+            fitted_widths[button_id] -= 1
+            overflow -= 1
+            changed = True
+            if overflow <= 0:
+                break
+        if not changed:
+            break
+
+    return fitted_widths
+
+
+def _build_row2_neutral_style(horizontal_padding: int) -> str:
+    """Return the row2 button style with adjustable horizontal padding."""
+    return f"""
+        QPushButton {{
+            background-color: #ffffff;
+            border: 1px solid #cfd8e3;
+            border-radius: 6px;
+            padding: 6px {horizontal_padding}px;
+            font-weight: 500;
+            font-size: 12px;
+            color: #314154;
+        }}
+        QPushButton:hover {{
+            background-color: #f7fbff;
+            border: 1px solid #7ba4d9;
+            color: #0f5fa8;
+        }}
+        QPushButton:pressed {{
+            background-color: #e7f1fb;
+            border: 1px solid #5d8fcf;
+        }}
+    """
+
+
+def _get_fixed_top_button_height() -> int:
+    """Return one shared button height for both top-button rows."""
+    measured_heights = []
+
+    for definition in TOP_BUTTON_DEFINITIONS:
+        style_key = definition["style"]
+        if style_key in TOP_BUTTON_STYLE_SHEETS:
+            measured_heights.append(_measure_button_height(definition["label"], style_key))
+
+    for style_key in ("secondary_compact", "secondary_tight"):
+        measured_heights.extend(
+            _measure_button_height(definition["label"], style_key)
+            for definition in TOP_BUTTON_DEFINITIONS
+            if definition["preferred_row"] == 2
+        )
+
+    return max(measured_heights or [29])
+
+
+def _get_fixed_row2_layout(target_width: int = None):
+    """Return the stable row2 layout metrics based on the full row2 button set."""
+    full_row2_definitions = [
+        definition for definition in TOP_BUTTON_DEFINITIONS if definition["preferred_row"] == 2
+    ]
+    if not full_row2_definitions:
+        return {
+            "style_sheet": _build_row2_neutral_style(12),
+            "spacing": ROW2_COMPACT_SPACING,
+            "button_widths": {},
+        }
+
+    spacing = ROW2_COMPACT_SPACING
+    chosen_padding = ROW2_NEUTRAL_PADDING_CANDIDATES[0]
+    chosen_style_sheet = _build_row2_neutral_style(chosen_padding)
+    base_widths = {}
+
+    for candidate_padding in ROW2_NEUTRAL_PADDING_CANDIDATES:
+        candidate_style_sheet = _build_row2_neutral_style(candidate_padding)
+        candidate_widths = {
+            definition["id"]: _measure_button_width_from_style(
+                definition["label"],
+                candidate_style_sheet,
+            )
+            for definition in full_row2_definitions
+        }
+        candidate_total_width = sum(candidate_widths.values()) + spacing * max(0, len(candidate_widths) - 1)
+        chosen_padding = candidate_padding
+        chosen_style_sheet = candidate_style_sheet
+        base_widths = candidate_widths
+        if not target_width or candidate_total_width <= target_width:
+            break
+
+    min_widths = {
+        definition["id"]: _measure_button_width(definition["label"], "secondary_tight")
+        for definition in full_row2_definitions
+    }
+
+    if target_width:
+        candidate_total_width = sum(base_widths.values()) + spacing * max(0, len(base_widths) - 1)
+        if candidate_total_width <= target_width:
+            return {
+                "style_sheet": chosen_style_sheet,
+                "spacing": spacing,
+                "button_widths": dict(base_widths),
+            }
+
+        return {
+            "style_sheet": chosen_style_sheet,
+            "spacing": spacing,
+            "button_widths": _fit_button_widths_to_target(
+                base_widths,
+                min_widths,
+                target_width,
+                spacing,
+            ),
+        }
+
+    return {
+        "style_sheet": chosen_style_sheet,
+        "spacing": spacing,
+        "button_widths": dict(base_widths),
+    }
+
+
 def _build_top_button_row_widget(window, row_definitions, row_role: str, target_width: int = None):
     """Build a single row of visible top action buttons."""
     row_widget = QWidget()
     row_widget.setAttribute(Qt.WA_TranslucentBackground, True)
     row_widget.setStyleSheet("background: transparent; border: none;")
+    row_widget.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
     row_layout = QHBoxLayout(row_widget)
     row_layout.setContentsMargins(0, 0, 0, 0)
-    row_layout.setSpacing(8 if row_role == "row1" else 6)
+    row_layout.setSpacing(ROW1_BUTTON_SPACING if row_role == "row1" else ROW2_COMPACT_SPACING)
+    row2_layout = _get_fixed_row2_layout(target_width) if row_role == "row2" else None
+    fixed_button_height = _get_fixed_top_button_height()
+    if row2_layout is not None:
+        row_layout.setSpacing(row2_layout["spacing"])
 
     for definition in row_definitions:
         button = QPushButton(definition["label"])
         style_key = definition["style"]
         if row_role == "row2" and style_key == "neutral":
-            style_key = "secondary_compact"
-        button.setStyleSheet(TOP_BUTTON_STYLE_SHEETS[style_key])
+            button.setStyleSheet(row2_layout["style_sheet"])
+        else:
+            button.setStyleSheet(TOP_BUTTON_STYLE_SHEETS[style_key])
+        button.setFixedHeight(fixed_button_height)
+        if row2_layout is not None:
+            button.setFixedWidth(row2_layout["button_widths"].get(definition["id"], button.sizeHint().width()))
+            button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         button.clicked.connect(lambda _, callback=definition["callback"]: callback(window))
         row_layout.addWidget(button)
 
     row_widget.adjustSize()
-    if row_role == "row2" and target_width and row_widget.sizeHint().width() > target_width:
-        row_layout.setSpacing(4)
-        for index in range(row_layout.count()):
-            item = row_layout.itemAt(index)
-            widget = item.widget()
-            if widget is not None:
-                widget.setStyleSheet(TOP_BUTTON_STYLE_SHEETS["secondary_tight"])
-        row_widget.adjustSize()
-
     return row_widget
 
 
@@ -331,6 +526,18 @@ def _update_top_panel_button_spacing(window, extra_bottom: int) -> None:
         return
     left, top, right, bottom = getattr(window, "_top_panel_base_margins", (16, 8, 16, 8))
     window.top_panel.layout().setContentsMargins(left, top, right, bottom + max(0, extra_bottom))
+
+
+def get_top_button_anchor_y(window) -> int:
+    """Return the top Y position for the floating top-button container."""
+    top_panel_top = window.top_panel.mapTo(window, QPoint(0, 0)).y() if hasattr(window, "top_panel") else 0
+    menu_top = window.menu_bar.geometry().top() if hasattr(window, "menu_bar") else 0
+
+    has_row1 = bool(getattr(window, "buttons_row1", []))
+    has_row2 = bool(getattr(window, "buttons_row2", []))
+    if has_row1 and has_row2:
+        return menu_top + TOP_BUTTON_MENU_ROW_Y_OFFSET
+    return top_panel_top + TOP_BUTTON_PANEL_ROW_Y_OFFSET
 
 
 def init_top_panel(window) -> None:

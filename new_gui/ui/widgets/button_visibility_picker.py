@@ -2,15 +2,56 @@
 
 from typing import Dict, Iterable, List, Sequence
 
-from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QCheckBox,
     QFrame,
     QHBoxLayout,
+    QLabel,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
+
+
+class ButtonVisibilityRow(QFrame):
+    """One picker row where only the checkbox itself toggles state."""
+
+    def __init__(self, label_text: str, parent: QWidget = None):
+        super().__init__(parent)
+        self.checkbox = QCheckBox(self)
+        self.label = QLabel(label_text, self)
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        self.setObjectName("buttonVisibilityRow")
+        self.setStyleSheet(
+            """
+            QFrame#buttonVisibilityRow {
+                background: transparent;
+                border: none;
+            }
+            """
+        )
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        layout.addWidget(self.checkbox, 0, Qt.AlignLeft | Qt.AlignVCenter)
+        layout.addWidget(self.label, 0, Qt.AlignLeft | Qt.AlignVCenter)
+        layout.addStretch()
+
+        self.label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.label.setStyleSheet("color: #263238;")
+
+    def mousePressEvent(self, event) -> None:
+        event.accept()
+
+    def mouseReleaseEvent(self, event) -> None:
+        event.accept()
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        event.accept()
 
 
 class ButtonVisibilityPicker(QFrame):
@@ -84,10 +125,10 @@ class ButtonVisibilityPicker(QFrame):
         visible_set = set(visible_button_ids or [])
 
         for button_id, button_label in buttons:
-            checkbox = QCheckBox(str(button_label))
-            checkbox.setChecked(button_id in visible_set)
-            self._checkbox_container.addWidget(checkbox)
-            self._checkboxes[str(button_id)] = checkbox
+            row = ButtonVisibilityRow(str(button_label), self)
+            row.checkbox.setChecked(button_id in visible_set)
+            self._checkbox_container.addWidget(row)
+            self._checkboxes[str(button_id)] = row.checkbox
 
     def _clear_checkboxes(self) -> None:
         while self._checkbox_container.count():
@@ -106,3 +147,12 @@ class ButtonVisibilityPicker(QFrame):
 
     def _on_cancel_clicked(self) -> None:
         self.cancel_requested.emit()
+
+    def mousePressEvent(self, event) -> None:
+        event.accept()
+
+    def mouseReleaseEvent(self, event) -> None:
+        event.accept()
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        event.accept()

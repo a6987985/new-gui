@@ -123,6 +123,7 @@ Access via the `Setting` menu in the menu bar.
 - Control visible columns for the main target tree
 - `level` and `target` remain mandatory and cannot be disabled
 - Other columns can be shown or hidden without changing the underlying tree data
+- The picker only toggles a column when the checkbox square itself is clicked
 
 #### `Setting -> button`
 
@@ -131,6 +132,9 @@ Access via the `Setting` menu in the menu bar.
 - Optional buttons include `Term`, `Csh`, `Log`, `Cmd`, `Trace Up`, and `Trace Down`
 - Enabling optional buttons switches the top action area to a `row1 + row2` layout
 - Execute buttons remain prioritized in `row1`
+- `row2` button widths stay stable even when only a subset of optional buttons is enabled
+- When `row2` is enabled, `row1` shares the menu-band height and `row2` uses the original action-button band, so the tree area is not pushed downward
+- The picker only toggles a button when the checkbox square itself is clicked
 
 ### 6. Tune File Management
 
@@ -536,9 +540,12 @@ If patch mode fails with a baseline drift message, export again with `--full` an
   - Group rows show aggregated status and support batch execute actions
 
 #### Improvements
-- **Top action layout refinement**: Two-row button mode now preserves the original row1 vertical position and keeps row2 width compact
+- **Top action layout refinement**: Two-row button mode now keeps the tree area height stable, moves `row1` into the menu band when `row2` is visible, and keeps `row2` button widths stable across partial-enable states
 - **Tree expand behavior**: "Expand all" keeps synthetic generic groups collapsed by default for readability
 - **Header width rules**: Adaptive sizing now respects real header rendering width and hidden-column state
+
+#### Bug Fixes
+- **Visibility picker click behavior**: `Setting -> button` and `Setting -> colomn` now toggle only on checkbox clicks, so label or blank-area misclicks do not change state or close the picker unexpectedly
 
 ### v2.9.0 - UI Improvements
 

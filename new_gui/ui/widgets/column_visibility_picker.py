@@ -7,10 +7,51 @@ from PyQt5.QtWidgets import (
     QCheckBox,
     QFrame,
     QHBoxLayout,
+    QLabel,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
+
+
+class ColumnVisibilityRow(QFrame):
+    """One picker row where only the checkbox itself toggles state."""
+
+    def __init__(self, label_text: str, parent: QWidget = None):
+        super().__init__(parent)
+        self.checkbox = QCheckBox(self)
+        self.label = QLabel(label_text, self)
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        self.setObjectName("columnVisibilityRow")
+        self.setStyleSheet(
+            """
+            QFrame#columnVisibilityRow {
+                background: transparent;
+                border: none;
+            }
+            """
+        )
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        layout.addWidget(self.checkbox, 0, Qt.AlignLeft | Qt.AlignVCenter)
+        layout.addWidget(self.label, 0, Qt.AlignLeft | Qt.AlignVCenter)
+        layout.addStretch()
+
+        self.label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.label.setStyleSheet("color: #263238;")
+
+    def mousePressEvent(self, event) -> None:
+        event.accept()
+
+    def mouseReleaseEvent(self, event) -> None:
+        event.accept()
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        event.accept()
 
 
 class ColumnVisibilityPicker(QFrame):
@@ -87,12 +128,13 @@ class ColumnVisibilityPicker(QFrame):
         self._locked_columns = set(locked_columns or [])
 
         for column_index, column_label in columns:
-            checkbox = QCheckBox(str(column_label))
+            row = ColumnVisibilityRow(str(column_label), self)
+            checkbox = row.checkbox
             checkbox.setChecked(column_index in visible_set)
             if column_index in self._locked_columns:
                 checkbox.setChecked(True)
                 checkbox.setEnabled(False)
-            self._checkbox_container.addWidget(checkbox)
+            self._checkbox_container.addWidget(row)
             self._checkboxes[int(column_index)] = checkbox
 
     def _clear_checkboxes(self) -> None:
@@ -117,3 +159,12 @@ class ColumnVisibilityPicker(QFrame):
 
     def _on_cancel_clicked(self) -> None:
         self.cancel_requested.emit()
+
+    def mousePressEvent(self, event) -> None:
+        event.accept()
+
+    def mouseReleaseEvent(self, event) -> None:
+        event.accept()
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        event.accept()

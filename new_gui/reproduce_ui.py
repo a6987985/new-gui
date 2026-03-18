@@ -536,8 +536,12 @@ class MainWindow(QMainWindow):
 
     def _on_apply_button_visibility(self, visible_button_ids):
         """Apply user-picked top-button visibility from the picker popup."""
-        self._apply_top_button_visibility(visible_button_ids, save_state=True)
         self._close_button_visibility_menu()
+        normalized_ids = list(visible_button_ids or [])
+        QTimer.singleShot(
+            0,
+            lambda ids=normalized_ids: self._apply_top_button_visibility(ids, save_state=True),
+        )
 
     def _get_or_create_button_visibility_picker(self):
         """Return the shared top-button visibility editor widget."""
