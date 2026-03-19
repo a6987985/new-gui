@@ -2,6 +2,15 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import QFrame, QHBoxLayout, QLabel, QWidget
 
 from new_gui.config.settings import STATUS_CONFIG, THEMES
+from new_gui.ui.status_bar_styles import (
+    build_status_badge_style,
+    build_status_bar_style,
+    build_status_connection_label_style,
+    build_status_run_label_style,
+    build_status_separator_style,
+    build_status_stats_label_style,
+    build_status_theme_label_style,
+)
 from new_gui.ui.widgets.labels import StatusBadgeLabel
 
 
@@ -16,16 +25,7 @@ class StatusBar(QFrame):
     def _setup_ui(self):
         """Setup the status bar UI"""
         self.setFixedHeight(34)
-        self.setStyleSheet("""
-            StatusBar {
-                background-color: rgba(255, 255, 255, 0.95);
-                border-top: 1px solid #d8e2ec;
-            }
-            QLabel {
-                color: #526071;
-                font-size: 12px;
-            }
-        """)
+        self.setStyleSheet(build_status_bar_style("rgba(255, 255, 255, 0.95)", "#d8e2ec", "#526071"))
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(16, 0, 16, 0)
@@ -33,7 +33,7 @@ class StatusBar(QFrame):
 
         # Left side - Run info
         self._run_label = QLabel("Run: -")
-        self._run_label.setStyleSheet("color: #0f5fa8; font-weight: 600;")
+        self._run_label.setStyleSheet(build_status_run_label_style())
         layout.addWidget(self._run_label)
 
         # Separator
@@ -41,7 +41,7 @@ class StatusBar(QFrame):
 
         # Task statistics
         self._stats_label = QLabel("Tasks: -")
-        self._stats_label.setStyleSheet("color: #314154; font-weight: 500;")
+        self._stats_label.setStyleSheet(build_status_stats_label_style())
         layout.addWidget(self._stats_label)
 
         # Separator
@@ -58,19 +58,19 @@ class StatusBar(QFrame):
 
         # Right side - Connection status
         self._connection_label = QLabel("● Connected")
-        self._connection_label.setStyleSheet("color: #4caf50; font-weight: 500;")
+        self._connection_label.setStyleSheet(build_status_connection_label_style("#4caf50"))
         layout.addWidget(self._connection_label)
 
         # Theme indicator
         self._theme_label = QLabel("☀ Light")
-        self._theme_label.setStyleSheet("color: #666666;")
+        self._theme_label.setStyleSheet(build_status_theme_label_style())
         layout.addWidget(self._theme_label)
 
     def _create_separator(self):
         """Create a vertical separator"""
         sep = QFrame()
         sep.setFrameShape(QFrame.VLine)
-        sep.setStyleSheet("color: #e0e0e0;")
+        sep.setStyleSheet(build_status_separator_style())
         return sep
 
     def update_run(self, run_name):
@@ -102,10 +102,7 @@ class StatusBar(QFrame):
             badge = StatusBadgeLabel(status, f"{icon} {count}")
             badge.setFixedHeight(18)
             badge.setAlignment(Qt.AlignCenter)
-            badge.setStyleSheet(
-                f"QLabel {{ background-color: {bg_color}; color: {text_color}; "
-                "border-radius: 4px; padding: 0px 6px; }"
-            )
+            badge.setStyleSheet(build_status_badge_style(bg_color, text_color))
             badge.statusDoubleClicked.connect(self.status_filter_requested.emit)
             self._status_breakdown_layout.addWidget(badge)
 
@@ -113,10 +110,10 @@ class StatusBar(QFrame):
         """Update connection status"""
         if connected:
             self._connection_label.setText("● Connected")
-            self._connection_label.setStyleSheet("color: #28a745;")
+            self._connection_label.setStyleSheet(build_status_connection_label_style("#28a745", emphasized=False))
         else:
             self._connection_label.setText("○ Disconnected")
-            self._connection_label.setStyleSheet("color: #ef5350;")
+            self._connection_label.setStyleSheet(build_status_connection_label_style("#ef5350", emphasized=False))
 
     def update_theme(self, theme_name):
         """Update theme indicator"""
@@ -128,16 +125,13 @@ class StatusBar(QFrame):
             self._theme_label.setText("☀ Light")
 
         theme = THEMES.get(theme_name, THEMES["light"])
-        self.setStyleSheet(f"""
-            StatusBar {{
-                background-color: {theme['status_bar_bg']};
-                border-top: 1px solid {theme['border_color']};
-            }}
-            QLabel {{
-                color: {theme['text_color']};
-                font-size: 12px;
-            }}
-        """)
+        self.setStyleSheet(
+            build_status_bar_style(
+                theme["status_bar_bg"],
+                theme["border_color"],
+                theme["text_color"],
+            )
+        )
 
 
 # ========== Params Table Model (Optimized for large datasets) ==========

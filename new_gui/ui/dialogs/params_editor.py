@@ -25,6 +25,12 @@ from PyQt5.QtWidgets import (
 )
 
 from new_gui.config.settings import RE_PARAM_LINE, logger
+from new_gui.ui.menu_styles import build_popup_menu_style
+from new_gui.ui.params_editor_styles import (
+    build_params_editor_dialog_style,
+    build_params_editor_meta_label_style,
+    build_params_editor_primary_button_style,
+)
 
 
 class ParamsTableModel(QAbstractTableModel):
@@ -145,7 +151,7 @@ class ParamsEditorDialog(QDialog):
         # Header with file path
         header_layout = QHBoxLayout()
         file_label = QLabel(f"File: {self.params_file}")
-        file_label.setStyleSheet("color: #666; font-size: 11px;")
+        file_label.setStyleSheet(build_params_editor_meta_label_style())
         file_label.setWordWrap(True)
         header_layout.addWidget(file_label)
         header_layout.addStretch()
@@ -222,7 +228,7 @@ class ParamsEditorDialog(QDialog):
 
         # Status bar
         self.status_label = QLabel("Ready")
-        self.status_label.setStyleSheet("color: #666; font-size: 11px;")
+        self.status_label.setStyleSheet(build_params_editor_meta_label_style())
         layout.addWidget(self.status_label)
 
         # Buttons
@@ -236,15 +242,7 @@ class ParamsEditorDialog(QDialog):
 
             gen_btn = QPushButton("Gen Params")
             gen_btn.setToolTip("Generate params to flow (XMeta_gen_params)")
-            gen_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #4A90D9;
-                    color: white;
-                }
-                QPushButton:hover {
-                    background-color: #357ABD;
-                }
-            """)
+            gen_btn.setStyleSheet(build_params_editor_primary_button_style())
             gen_btn.clicked.connect(self._gen_params)
             button_layout.addWidget(gen_btn)
 
@@ -255,53 +253,7 @@ class ParamsEditorDialog(QDialog):
         layout.addLayout(button_layout)
 
         # Apply styling
-        self.setStyleSheet("""
-            QDialog {
-                background-color: white;
-            }
-            QTableView {
-                border: 1px solid #ccc;
-                border-radius: 4px;
-                gridline-color: #e0e0e0;
-            }
-            QTableView::item {
-                padding: 4px;
-            }
-            QTableView::item:selected {
-                background-color: #e6f7ff;
-            }
-            QTableView::item:hover {
-                background-color: #f5f5f5;
-            }
-            QLineEdit {
-                padding: 5px;
-                border: 1px solid #ccc;
-                border-radius: 4px;
-            }
-            QLineEdit:focus {
-                border: 1px solid #4A90D9;
-            }
-            QPushButton {
-                padding: 6px 16px;
-                border: 1px solid #ccc;
-                border-radius: 4px;
-                background-color: #f5f5f5;
-            }
-            QPushButton:hover {
-                background-color: #e6f7ff;
-                border: 1px solid #4A90D9;
-            }
-            QPushButton:pressed {
-                background-color: #cce5ff;
-            }
-            QGroupBox {
-                font-weight: bold;
-                border: 1px solid #ccc;
-                border-radius: 4px;
-                margin-top: 10px;
-                padding-top: 10px;
-            }
-        """)
+        self.setStyleSheet(build_params_editor_dialog_style())
 
     def _debounced_filter(self, text):
         """Debounce search to avoid lag while typing"""
@@ -381,15 +333,12 @@ class ParamsEditorDialog(QDialog):
             return
 
         menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: white;
-                border: 1px solid #ccc;
-            }
-            QMenu::item:selected {
-                background-color: #e6f7ff;
-            }
-        """)
+        menu.setStyleSheet(
+            build_popup_menu_style(
+                selected_background="#e6f7ff",
+                selected_text_color="#000000",
+            )
+        )
 
         # Copy action
         copy_action = menu.addAction("📋 Copy to clipboard")

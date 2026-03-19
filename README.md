@@ -1,6 +1,6 @@
 # XMeta Console GUI
 
-> **Last Updated**: 2026-03-17
+> **Last Updated**: 2026-03-19
 
 A PyQt5-based GUI monitoring tool for tracking task execution status and dependencies in EDA/chip design workflows.
 
@@ -17,6 +17,7 @@ new-gui/
 │   ├── reproduce_ui_execution_roadmap.md
 │   ├── reproduce_ui_to_1000_blueprint.md
 │   ├── new_gui_maintenance_boundaries.md
+│   ├── codebase_governance_plan.md
 │   ├── dependency_graph_evolution_roadmap.md
 │   ├── dependency_graph_closure_checklist.md
 │   └── target_category_navigation_plan.md
@@ -33,6 +34,7 @@ new-gui/
 
 For the post-split codebase, use these documents as the primary references:
 
+- `work_scr/codebase_governance_plan.md`: active governance checklist for hotspot cleanup, debt containment, and safe next-step refactors
 - `work_scr/new_gui_maintenance_boundaries.md`: stable ownership rules and "do not split further" boundaries
 - `work_scr/reproduce_ui_execution_roadmap.md`: executed slice history and current split status
 - `work_scr/reproduce_ui_to_1000_blueprint.md`: original line-budget blueprint that drove the split

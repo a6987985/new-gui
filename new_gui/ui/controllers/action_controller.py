@@ -13,17 +13,24 @@ from new_gui.services import search_flow
 from new_gui.services import tree_editing
 from new_gui.services import tune_actions
 from new_gui.services import view_tabs
+from new_gui.ui.controllers.action_window_bridge import ActionWindowBridge
 from new_gui.ui.dialogs.tune_dialogs import CopyTuneSelectDialog, SelectTuneDialog
+
+
+def _bridge(window) -> ActionWindowBridge:
+    """Return the narrow MainWindow bridge used by action-controller flows."""
+    return ActionWindowBridge(window)
 
 
 def copy_selected_target(window) -> None:
     """Copy selected target names to the clipboard."""
-    targets = window._exit_search_mode_and_get_targets()
+    ui = _bridge(window)
+    targets = exit_search_mode_and_get_targets(window)
     if not targets:
-        targets = window.get_selected_action_targets()
+        targets = ui.get_selected_action_targets()
 
     if not targets:
-        window.show_notification("Copy", "No target names available for the current selection", "info")
+        ui.notify("Copy", "No target names available for the current selection", "info")
         return
 
     clipboard = QApplication.clipboard()
@@ -32,46 +39,43 @@ def copy_selected_target(window) -> None:
     if clipboard.supportsSelection():
         clipboard.setText(clipboard_text, QClipboard.Selection)
 
-    window.show_notification("Copied", f"Copied {len(targets)} target(s)", "success")
-
-
-def get_selected_targets_keep_search(window):
-    """Get selected targets while preserving the active search state."""
-    selected_targets = window.get_selected_targets()
-    return selected_targets, window._build_search_context(selected_targets)
+    ui.notify("Copied", f"Copied {len(targets)} target(s)", "success")
 
 
 def refresh_after_action(window, search_context) -> None:
     """Refresh the view after an action while preserving search state."""
-    current_run = window.combo.currentText()
+    ui = _bridge(window)
+    current_run = ui.current_run_name()
     search_flow.refresh_after_action(
         search_context,
         current_run,
-        window._build_status_cache,
-        window._rebuild_main_tree_now,
-        window.filter_tree,
-        window.tree.verticalScrollBar().setValue,
+        ui.build_status_cache,
+        ui.rebuild_main_tree_now,
+        ui.filter_tree,
+        ui.restore_scroll_value,
     )
 
 
 def exit_search_mode_and_get_targets(window):
     """Exit search mode if needed and return selected target names."""
-    if window.is_search_mode:
-        selected_targets = window.get_selected_targets()
-        search_context = window._build_search_context(selected_targets)
+    ui = _bridge(window)
+    if ui.is_search_mode_active():
+        selected_targets = ui.get_selected_targets()
+        search_context = ui.build_search_context(selected_targets)
         logger.info(f"Exiting search mode with {len(selected_targets)} selected targets")
 
         return search_flow.exit_search_mode(
             search_context,
-            window._clear_search_ui_state,
-            window._rebuild_main_tree_now,
-            window._select_targets_in_tree,
+            ui.clear_search_ui_state,
+            ui.rebuild_main_tree_now,
+            ui.select_targets_in_tree,
         )
-    return window.get_selected_targets()
+    return ui.get_selected_targets()
 
 
 def log_action_result(window, command: str, result: dict, include_returncode: bool = False) -> None:
     """Log the outcome of a shell action using the current UI logging policy."""
+    ui = _bridge(window)
     details = []
     level = "INFO"
     message = "Command completed successfully."
@@ -109,28 +113,28 @@ def log_action_result(window, command: str, result: dict, include_returncode: bo
         level = "ERROR"
         message = f"Command exited with code {result['returncode']}."
 
-    if hasattr(window, "append_ui_log"):
-        window.append_ui_log(
-            level,
-            "action",
-            message,
-            command=command,
-            details="\n\n".join(part for part in details if part),
-        )
+    ui.append_ui_log(
+        level,
+        "action",
+        message,
+        command=command,
+        details="\n\n".join(part for part in details if part),
+    )
 
 
 def start(window, action) -> None:
     """Execute a flow action and refresh the view when needed."""
-    selected_targets = window.get_selected_action_targets()
-    search_context = window._build_search_context(selected_targets)
+    ui = _bridge(window)
+    selected_targets = ui.get_selected_action_targets()
+    search_context = ui.build_search_context(selected_targets)
 
     if action != "XMeta_run all" and not selected_targets:
         logger.warning(f"No targets selected for action: {action}", extra={"ui_source": "action"})
         return
 
-    current_run = window.combo.currentText()
+    current_run = ui.current_run_name()
     action_request = action_flow.build_action_request(
-        window.run_base_dir,
+        ui.run_base_dir,
         current_run,
         action,
         selected_targets,
@@ -143,8 +147,8 @@ def start(window, action) -> None:
             action_request["timeout"],
             action_request["cwd"],
         )
-        window._log_action_result(action_request["command"], result)
-        window._refresh_after_action(search_context)
+        log_action_result(window, action_request["command"], result)
+        refresh_after_action(window, search_context)
     else:
         def run_command():
             result = action_flow.execute_shell_command(
@@ -152,28 +156,30 @@ def start(window, action) -> None:
                 action_request["timeout"],
                 action_request["cwd"],
             )
-            window._log_action_result(
+            log_action_result(
+                window,
                 action_request["command"],
                 result,
                 include_returncode=True,
             )
 
-        window._executor.submit(run_command)
+        ui.submit_background(run_command)
 
-    window.tree.clearSelection()
+    ui.clear_tree_selection()
 
 
 def on_tree_double_clicked(window, index) -> None:
     """Handle tree double-clicks for run copy or BSUB editing."""
-    if window.is_all_status_view:
-        run_name = tree_editing.get_all_status_run_name(window.model, index)
+    ui = _bridge(window)
+    if ui.is_all_status_view:
+        run_name = tree_editing.get_all_status_run_name(ui.model, index)
         if run_name:
             clipboard = QApplication.clipboard()
             clipboard.setText(run_name)
             logger.info(f"Copied run name to clipboard: {run_name}")
         return
 
-    edit_context = tree_editing.build_bsub_edit_context(window.model, index)
+    edit_context = tree_editing.build_bsub_edit_context(ui.model, index)
     if not edit_context:
         return
 
@@ -196,9 +202,9 @@ def on_tree_double_clicked(window, index) -> None:
             QMessageBox.warning(window, "Invalid Input", validation_error)
             return
 
-        if window.save_bsub_param(window.combo_sel, target, param_type, new_value):
-            window.model.setData(index, new_value)
-            window.show_notification("Saved", f"Updated {param_type} to {new_value} for {target}", "success")
+        if ui.save_bsub_param(ui.combo_sel, target, param_type, new_value):
+            ui.set_model_data(index, new_value)
+            ui.notify("Saved", f"Updated {param_type} to {new_value} for {target}", "success")
         else:
             QMessageBox.warning(
                 window,
@@ -209,63 +215,67 @@ def on_tree_double_clicked(window, index) -> None:
 
 def open_file_with_editor(window, filepath: str, editor: str = "gvim", use_popen: bool = False) -> None:
     """Open a file with the configured editor in a background task."""
-    window._executor.submit(file_actions.open_file_with_editor, filepath, editor, use_popen)
+    _bridge(window).submit_background(file_actions.open_file_with_editor, filepath, editor, use_popen)
 
 
 def handle_csh(window) -> None:
     """Open the shell file for the selected target."""
-    selected_targets = window._exit_search_mode_and_get_targets()
-    if not selected_targets or not window.combo_sel:
+    ui = _bridge(window)
+    selected_targets = exit_search_mode_and_get_targets(window)
+    if not selected_targets or not ui.combo_sel:
         return
 
     target = selected_targets[0]
-    shell_file = file_actions.get_shell_file(window.combo_sel, target)
+    shell_file = file_actions.get_shell_file(ui.combo_sel, target)
 
     if shell_file:
-        window._open_file_with_editor(shell_file)
+        ui.open_file_with_editor(shell_file)
     else:
         logger.warning(f"Shell file not found for target: {target}")
 
 
 def handle_log(window) -> None:
     """Open the log file for the selected target."""
-    selected_targets = window._exit_search_mode_and_get_targets()
-    if not selected_targets or not window.combo_sel:
+    ui = _bridge(window)
+    selected_targets = exit_search_mode_and_get_targets(window)
+    if not selected_targets or not ui.combo_sel:
         return
 
     target = selected_targets[0]
-    log_file = file_actions.get_log_file(window.combo_sel, target)
+    log_file = file_actions.get_log_file(ui.combo_sel, target)
 
     if log_file:
-        window._open_file_with_editor(log_file, use_popen=True)
+        ui.open_file_with_editor(log_file, use_popen=True)
     else:
         logger.warning(f"Log file not found for target: {target}")
 
 
 def handle_cmd(window) -> None:
     """Open the command file for the selected target."""
-    selected_targets = window._exit_search_mode_and_get_targets()
-    if not selected_targets or not window.combo_sel:
+    ui = _bridge(window)
+    selected_targets = exit_search_mode_and_get_targets(window)
+    if not selected_targets or not ui.combo_sel:
         return
 
     target = selected_targets[0]
-    cmd_file = file_actions.get_cmd_file(window.combo_sel, target)
+    cmd_file = file_actions.get_cmd_file(ui.combo_sel, target)
 
     if cmd_file:
-        window._open_file_with_editor(cmd_file)
+        ui.open_file_with_editor(cmd_file)
     else:
         logger.warning(f"Command file not found for target: {target}")
 
 
 def create_tune(window) -> None:
     """Create a tune file from tunesource entries and open it."""
-    selected_targets = window._exit_search_mode_and_get_targets()
-    if not window.combo_sel or len(selected_targets) != 1:
+    ui = _bridge(window)
+    selected_targets = exit_search_mode_and_get_targets(window)
+    if not ui.combo_sel or len(selected_targets) != 1:
         QMessageBox.information(window, "Info", "Select exactly one target to create tune.")
         return
 
     target = selected_targets[0]
-    candidates = window.get_tune_candidates_from_cmd(window.combo_sel, target)
+    candidates = ui.get_tune_candidates_from_cmd(target)
     if not candidates:
         QMessageBox.information(
             window,
@@ -292,21 +302,21 @@ def create_tune(window) -> None:
     try:
         created = tune_actions.ensure_tune_file(tune_file)
         if created:
-            window.show_notification(
+            ui.notify(
                 "Tune",
                 f"Created tune file: {os.path.basename(tune_file)}",
                 "success",
             )
         else:
-            window.show_notification(
+            ui.notify(
                 "Tune",
                 f"Tune file already exists: {os.path.basename(tune_file)}",
                 "info",
             )
 
-        window._invalidate_tune_cache(window.combo_sel, target)
-        window._refresh_tune_cells_for_target(target)
-        window._open_tune_file(tune_file)
+        ui.invalidate_tune_cache(ui.combo_sel, target)
+        ui.refresh_tune_cells_for_target(target)
+        ui.open_tune_file(tune_file)
     except Exception as exc:
         logger.error(f"Failed to create tune file {tune_file}: {exc}")
         QMessageBox.warning(
@@ -318,54 +328,54 @@ def create_tune(window) -> None:
 
 def handle_tune(window) -> None:
     """Open a tune file for the selected target."""
-    selected_targets = window._exit_search_mode_and_get_targets()
-    if not selected_targets or not window.combo_sel:
+    ui = _bridge(window)
+    selected_targets = exit_search_mode_and_get_targets(window)
+    if not selected_targets or not ui.combo_sel:
         return
 
     target = selected_targets[0]
-    tune_files = window.get_tune_files(window.combo_sel, target)
+    tune_files = ui.get_tune_files(target)
 
     if not tune_files:
         QMessageBox.information(window, "Info", f"No tune file found for: {target}")
         return
 
     if len(tune_files) == 1:
-        window._open_tune_file(tune_files[0][1])
+        ui.open_tune_file(tune_files[0][1])
         return
 
     dialog = SelectTuneDialog(target, tune_files, window)
     if dialog.exec_() == QDialog.Accepted:
         selected = dialog.get_selected_tune()
         if selected:
-            window._open_tune_file(selected[1])
+            ui.open_tune_file(selected[1])
 
 
 def open_tune_file(window, tune_file) -> None:
     """Open a tune file with the configured editor."""
-    window._open_file_with_editor(tune_file)
+    _bridge(window).open_tune_file(tune_file)
 
 
 def copy_tune_to_runs(window) -> None:
     """Copy selected tune files to other runs."""
-    selected_targets = window._exit_search_mode_and_get_targets()
-    if not selected_targets or not window.combo_sel:
+    ui = _bridge(window)
+    selected_targets = exit_search_mode_and_get_targets(window)
+    if not selected_targets or not ui.combo_sel:
         return
 
     target = selected_targets[0]
-    tune_files = window.get_tune_files(window.combo_sel, target)
+    tune_files = ui.get_tune_files(target)
 
     if not tune_files:
         QMessageBox.information(window, "Info", f"No tune file found for: {target}")
         return
 
-    available_runs = run_repository.list_available_runs(
-        window.run_base_dir if hasattr(window, "run_base_dir") else ""
-    )
+    available_runs = run_repository.list_available_runs(ui.run_base_dir)
     if not available_runs:
         QMessageBox.warning(window, "Warning", "No other runs available")
         return
 
-    current_run = os.path.basename(window.combo_sel) if os.path.isabs(window.combo_sel) else window.combo_sel
+    current_run = os.path.basename(ui.combo_sel) if os.path.isabs(ui.combo_sel) else ui.combo_sel
 
     dialog = CopyTuneSelectDialog(current_run, target, tune_files, available_runs, window)
     if dialog.exec_() != QDialog.Accepted:
@@ -379,14 +389,14 @@ def copy_tune_to_runs(window) -> None:
     result = tune_actions.copy_tune_files_to_runs(
         selected_tunes,
         selected_runs,
-        window.run_base_dir if hasattr(window, "run_base_dir") else "",
+        ui.run_base_dir,
         target,
     )
     total_success = result["total_success"]
 
     for run in selected_runs:
-        run_dir = os.path.join(window.run_base_dir, run) if hasattr(window, "run_base_dir") else run
-        window._invalidate_tune_cache(run_dir, target)
+        run_dir = os.path.join(ui.run_base_dir, run)
+        ui.invalidate_tune_cache(run_dir, target)
 
     tune_names = ", ".join([suffix for suffix, _ in selected_tunes])
     QMessageBox.information(
@@ -398,59 +408,58 @@ def copy_tune_to_runs(window) -> None:
 
 def open_terminal(window) -> None:
     """Open the embedded terminal panel or fall back to an external terminal."""
-    if not window.combo_sel:
+    ui = _bridge(window)
+    if not ui.combo_sel:
         return
 
-    if hasattr(window, "show_embedded_terminal_panel") and window.show_embedded_terminal_panel(window.combo_sel):
-        if hasattr(window, "append_ui_log"):
-            window.append_ui_log(
-                "INFO",
-                "terminal",
-                "Opened embedded terminal panel.",
-                details=window.combo_sel,
-            )
-        return
-
-    if hasattr(window, "append_ui_log"):
-        window.append_ui_log(
-            "WARNING",
+    if ui.show_embedded_terminal_panel(ui.combo_sel):
+        ui.append_ui_log(
+            "INFO",
             "terminal",
-            "Embedded terminal unavailable. Falling back to the external terminal.",
-            details=window.get_embedded_terminal_status_message()
-            if hasattr(window, "get_embedded_terminal_status_message")
-            else "",
+            "Opened embedded terminal panel.",
+            details=ui.combo_sel,
         )
+        return
+
+    ui.append_ui_log(
+        "WARNING",
+        "terminal",
+        "Embedded terminal unavailable. Falling back to the external terminal.",
+        details=ui.embedded_terminal_status_message(),
+    )
 
     open_external_terminal(window, log_request=False)
 
 
 def open_external_terminal(window, log_request: bool = True) -> None:
     """Open the external terminal in the current run directory."""
-    if not window.combo_sel:
+    ui = _bridge(window)
+    if not ui.combo_sel:
         return
 
-    if log_request and hasattr(window, "append_ui_log"):
-        window.append_ui_log(
+    if log_request:
+        ui.append_ui_log(
             "INFO",
             "terminal",
             "Opening external terminal.",
-            details=window.combo_sel,
+            details=ui.combo_sel,
         )
 
-    window._executor.submit(file_actions.open_terminal, window.combo_sel)
+    ui.submit_background(file_actions.open_terminal, ui.combo_sel)
 
 
 def retrace_tab(window, inout) -> None:
     """Execute trace filtering in place for the selected target."""
-    selected_targets = window._exit_search_mode_and_get_targets()
-    if not selected_targets or not window.combo_sel:
+    ui = _bridge(window)
+    selected_targets = exit_search_mode_and_get_targets(window)
+    if not selected_targets or not ui.combo_sel:
         logger.warning("No target selected for trace", extra={"ui_source": "action"})
         return
 
     selected_target = selected_targets[0]
     logger.info(f"Trace {inout} for target: {selected_target}", extra={"ui_source": "action"})
 
-    related_targets = window.get_retrace_target(selected_target, inout)
+    related_targets = ui.get_retrace_target(selected_target, inout)
     if selected_target not in related_targets:
         if inout == "in":
             related_targets.append(selected_target)
@@ -461,8 +470,8 @@ def retrace_tab(window, inout) -> None:
         logger.info("No dependencies found.", extra={"ui_source": "action"})
         return
 
-    window.filter_tree_by_targets(set(related_targets))
+    ui.filter_tree_by_targets(set(related_targets))
 
     direction = "Up" if inout == "in" else "Down"
     label_text = f"Trace {direction}: {selected_target}"
-    window._apply_tab_state(view_tabs.get_trace_tab_state(label_text))
+    ui.apply_tab_state(view_tabs.get_trace_tab_state(label_text))

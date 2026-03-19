@@ -21,6 +21,12 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from new_gui.ui.output_panel_styles import (
+    build_bottom_output_panel_style,
+    build_bottom_output_tab_style,
+    build_session_log_document_style,
+    build_session_log_style,
+)
 from new_gui.ui.widgets.embedded_terminal import EmbeddedTerminalWidget
 
 
@@ -109,41 +115,7 @@ class SessionLogWidget(QWidget):
         self._entries = []
         self.setObjectName("sessionLogWidget")
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-        self.setStyleSheet(
-            """
-                QWidget#sessionLogWidget {
-                    background-color: #f6f9fb;
-                }
-                QLabel#sessionLogTitle {
-                    color: #526476;
-                    font-weight: 600;
-                    font-size: 12px;
-                }
-                QTextBrowser#sessionLogView {
-                    background-color: #fcfdfe;
-                    border: 1px solid #dbe3eb;
-                    border-radius: 6px;
-                    color: #314154;
-                    padding: 5px;
-                }
-                QPushButton#sessionLogButton {
-                    background-color: #fafcfd;
-                    border: 1px solid #d9e1e8;
-                    border-radius: 6px;
-                    color: #5c6d7e;
-                    font-weight: 600;
-                    padding: 3px 10px;
-                }
-                QPushButton#sessionLogButton:hover {
-                    background-color: #eef3f7;
-                    border: 1px solid #c9d5e0;
-                }
-                QPushButton#sessionLogButton:pressed {
-                    background-color: #e6edf4;
-                    border: 1px solid #bccbda;
-                }
-            """
-        )
+        self.setStyleSheet(build_session_log_style())
 
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(10, 7, 10, 9)
@@ -174,34 +146,7 @@ class SessionLogWidget(QWidget):
         self._view.setObjectName("sessionLogView")
         self._view.setReadOnly(True)
         self._view.setOpenExternalLinks(False)
-        self._view.document().setDefaultStyleSheet(
-            """
-                body {
-                    color: #314154;
-                    font-size: 12px;
-                }
-                .entry { margin-bottom: 10px; }
-                .meta { margin-bottom: 4px; }
-                .timestamp { color: #7b8794; }
-                .source { color: #6e8cac; }
-                .message { color: #2f3d4c; }
-                .command-label, .details-label {
-                    color: #6885a2;
-                    font-weight: 600;
-                    margin-top: 4px;
-                }
-                pre {
-                    white-space: pre-wrap;
-                    margin: 4px 0 0 0;
-                    padding: 6px 8px;
-                    background: #f5f8fa;
-                    border: 1px solid #dee5ec;
-                    border-radius: 5px;
-                    color: #314154;
-                    font-family: monospace;
-                }
-            """
-        )
+        self._view.document().setDefaultStyleSheet(build_session_log_document_style())
         root_layout.addWidget(self._view, 1)
 
     def append_entry(self, entry: GuiLogEntry) -> None:
@@ -257,13 +202,7 @@ class BottomOutputPanel(QWidget):
         self.setObjectName("bottomOutputPanel")
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.setMinimumHeight(180)
-        self.setStyleSheet(
-            """
-                QWidget#bottomOutputPanel {
-                    background-color: #e9eff4;
-                }
-            """
-        )
+        self.setStyleSheet(build_bottom_output_panel_style())
 
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -272,46 +211,7 @@ class BottomOutputPanel(QWidget):
         self._tabs = QTabWidget()
         self._tabs.setDocumentMode(True)
         self._tabs.setMovable(False)
-        self._tabs.setStyleSheet(
-            """
-                QTabWidget {
-                    background-color: #e9eff4;
-                }
-                QTabWidget::tab-bar {
-                    alignment: left;
-                    left: 12px;
-                }
-                QTabWidget::pane {
-                    border-top: 1px solid #d6dee7;
-                    background-color: #f6f9fb;
-                    top: -1px;
-                }
-                QTabBar::tab {
-                    background: transparent;
-                    color: #738293;
-                    border: 1px solid transparent;
-                    border-radius: 6px;
-                    padding: 5px 14px;
-                    margin: 8px 4px 0 0;
-                    font-size: 12px;
-                    font-weight: 600;
-                }
-                QTabBar::tab:hover {
-                    background: #e3eaf0;
-                    color: #556779;
-                }
-                QTabBar::tab:selected {
-                    background: #f6f9fb;
-                    color: #334657;
-                    border: 1px solid #d0d8e1;
-                    border-bottom-color: #f6f9fb;
-                    margin-bottom: -1px;
-                }
-                QTabBar::tab:selected:hover {
-                    background: #f6f9fb;
-                }
-            """
-        )
+        self._tabs.setStyleSheet(build_bottom_output_tab_style())
 
         self.terminal_widget = EmbeddedTerminalWidget(self)
         self.log_widget = SessionLogWidget(self)

@@ -1,7 +1,6 @@
 import os
 import sys
 import warnings
-import logging
 from concurrent.futures import ThreadPoolExecutor
 
 # Last Updated: 2026-03-05 19:00
@@ -12,7 +11,6 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from new_gui.config.settings import (
     DEBOUNCE_DELAY_MS,
-    DEFAULT_LOG_LEVEL,
     STATUS_COLORS,
     STATUS_CONFIG,
     logger,
@@ -24,18 +22,18 @@ from new_gui.services import run_repository
 from new_gui.services import search_flow
 from new_gui.services import status_summary
 from new_gui.services import tree_rows
-from new_gui.services import tree_structure
 from new_gui.services import view_tabs
 from new_gui.services import view_state
 from new_gui.ui.theme_runtime import ThemeManager
 from new_gui.ui.builders import menu_builder, shortcut_builder, top_panel_builder, window_builder
-from new_gui.ui.widgets.button_visibility_picker import ButtonVisibilityPicker
-from new_gui.ui.widgets.bottom_output_panel import GuiLogEntry, GuiLogHandler, GuiLogSignalBridge
-from new_gui.ui.widgets.column_visibility_picker import ColumnVisibilityPicker
 from new_gui.ui.controllers import (
     action_controller,
     context_menu_controller,
+    output_controller,
+    search_ui_controller,
     theme_controller,
+    tree_display_controller,
+    visibility_controller,
     view_controller,
 )
 from PyQt5.QtCore import QTimer, Qt
@@ -98,59 +96,24 @@ class MainWindow(QMainWindow):
 
     def _init_ui_log_dispatcher(self) -> None:
         """Create the thread-safe log bridge used by the GUI session log."""
-        self._ui_log_dispatcher = GuiLogSignalBridge(self)
-        self._ui_log_dispatcher.entry_requested.connect(self._append_ui_log_entry)
+        output_controller.init_ui_log_dispatcher(self)
 
     def _install_gui_log_handler(self) -> None:
         """Attach a GUI-only log handler while keeping console logging unchanged."""
-        if self._gui_log_handler is not None:
-            return
-
-        root_logger = logging.getLogger()
-        self._gui_log_previous_logger_level = logger.level
-        self._gui_log_root_handler_levels = {id(handler): handler.level for handler in root_logger.handlers}
-
-        for handler in root_logger.handlers:
-            if handler.level < DEFAULT_LOG_LEVEL:
-                handler.setLevel(DEFAULT_LOG_LEVEL)
-
-        logger.setLevel(logging.INFO)
-        self._gui_log_handler = GuiLogHandler(self._queue_ui_log_entry)
-        logger.addHandler(self._gui_log_handler)
+        output_controller.install_gui_log_handler(self)
 
     def _remove_gui_log_handler(self) -> None:
         """Detach the GUI log handler and restore previous logger settings."""
-        if self._gui_log_handler is None:
-            return
+        output_controller.remove_gui_log_handler(self)
 
-        logger.removeHandler(self._gui_log_handler)
-        self._gui_log_handler = None
-
-        root_logger = logging.getLogger()
-        for handler in root_logger.handlers:
-            if id(handler) in self._gui_log_root_handler_levels:
-                handler.setLevel(self._gui_log_root_handler_levels[id(handler)])
-
-        if self._gui_log_previous_logger_level is not None:
-            logger.setLevel(self._gui_log_previous_logger_level)
-
-        self._gui_log_root_handler_levels = {}
-        self._gui_log_previous_logger_level = None
-
-    def _queue_ui_log_entry(self, entry: GuiLogEntry) -> None:
+    def _queue_ui_log_entry(self, entry) -> None:
         """Queue one log entry back onto the GUI thread."""
-        if self._ui_log_dispatcher is not None:
-            self._ui_log_dispatcher.entry_requested.emit(entry)
+        output_controller.queue_ui_log_entry(self, entry)
 
     @staticmethod
     def _normalize_ui_log_level(level: str) -> str:
         """Normalize GUI log levels to the supported INFO/WARNING/ERROR set."""
-        level_name = (level or "INFO").upper()
-        if level_name in ("ERROR", "CRITICAL"):
-            return "ERROR"
-        if level_name == "WARNING":
-            return "WARNING"
-        return "INFO"
+        return output_controller.normalize_ui_log_level(level)
 
     def append_ui_log(
         self,
@@ -161,25 +124,18 @@ class MainWindow(QMainWindow):
         details: str = "",
     ) -> None:
         """Append one session log entry through the thread-safe GUI sink."""
-        entry = GuiLogEntry.create(
-            level=self._normalize_ui_log_level(level),
-            source=source,
-            message=message,
+        output_controller.append_ui_log(
+            self,
+            level,
+            source,
+            message,
             command=command,
             details=details,
         )
-        self._queue_ui_log_entry(entry)
 
-    def _append_ui_log_entry(self, entry: GuiLogEntry) -> None:
+    def _append_ui_log_entry(self, entry) -> None:
         """Render one queued log entry and apply panel attention rules."""
-        if not hasattr(self, "_bottom_output_panel"):
-            return
-
-        entry.level = self._normalize_ui_log_level(entry.level)
-        self._bottom_output_panel.append_log_entry(entry)
-
-        if entry.level in ("WARNING", "ERROR"):
-            self.show_log_output_panel()
+        output_controller.append_ui_log_entry(self, entry)
 
     def _invalidate_tune_cache(self, run_dir: str = None, target_name: str = None) -> None:
         """Invalidate tune-file cache entries."""
@@ -277,66 +233,31 @@ class MainWindow(QMainWindow):
 
     def _set_bottom_output_panel_visible(self, visible: bool) -> None:
         """Show or collapse the bottom output panel inside the content splitter."""
-        if not hasattr(self, "_content_splitter") or not hasattr(self, "_bottom_output_panel"):
-            return
-
-        panel = self._bottom_output_panel
-        splitter = self._content_splitter
-
-        if visible:
-            panel.show()
-            total_height = max(splitter.height(), self.height())
-            requested_height = max(180, self._bottom_output_last_height)
-            output_height = min(requested_height, max(180, total_height // 2))
-            tree_height = max(220, total_height - output_height)
-            splitter.setSizes([tree_height, output_height])
-            panel.raise_()
-            return
-
-        current_sizes = splitter.sizes()
-        if len(current_sizes) > 1 and current_sizes[1] > 0:
-            self._bottom_output_last_height = current_sizes[1]
-        splitter.setSizes([1, 0])
-        panel.hide()
+        output_controller.set_bottom_output_panel_visible(self, visible)
 
     def _set_embedded_terminal_panel_visible(self, visible: bool) -> None:
         """Backward-compatible wrapper for the old terminal-only panel API."""
-        self._set_bottom_output_panel_visible(visible)
+        output_controller.set_embedded_terminal_panel_visible(self, visible)
 
     def show_embedded_terminal_panel(self, run_dir: str) -> bool:
         """Open the embedded terminal panel for the requested run directory."""
-        if not hasattr(self, "_embedded_terminal"):
-            return False
-        self._set_bottom_output_panel_visible(True)
-        self._bottom_output_panel.show_terminal_tab()
-        QApplication.processEvents()
-        if not self._embedded_terminal.show_for_directory(run_dir):
-            return False
-        return True
+        return output_controller.show_embedded_terminal_panel(self, run_dir)
 
     def hide_embedded_terminal_panel(self) -> None:
         """Close the embedded terminal session and collapse the bottom panel."""
-        if not hasattr(self, "_embedded_terminal"):
-            return
-        self._embedded_terminal.stop_terminal()
-        self._set_bottom_output_panel_visible(False)
+        output_controller.hide_embedded_terminal_panel(self)
 
     def hide_bottom_output_panel(self) -> None:
         """Collapse the bottom output panel without stopping the terminal session."""
-        self._set_bottom_output_panel_visible(False)
+        output_controller.hide_bottom_output_panel(self)
 
     def show_log_output_panel(self) -> None:
         """Open the bottom output area and switch to the session log tab."""
-        if not hasattr(self, "_bottom_output_panel"):
-            return
-        self._set_bottom_output_panel_visible(True)
-        self._bottom_output_panel.show_log_tab()
+        output_controller.show_log_output_panel(self)
 
     def get_embedded_terminal_status_message(self) -> str:
         """Return the current embedded-terminal status text, if any."""
-        if hasattr(self, "_embedded_terminal"):
-            return self._embedded_terminal.status_message()
-        return ""
+        return output_controller.get_embedded_terminal_status_message(self)
 
     def _setup_keyboard_shortcuts(self):
         """Setup global keyboard shortcuts"""
@@ -344,39 +265,23 @@ class MainWindow(QMainWindow):
 
     def _focus_search(self):
         """Focus the search input - shows the embedded filter in header"""
-        if hasattr(self, 'quick_search_input'):
-            self.quick_search_input.setFocus()
-            self.quick_search_input.selectAll()
-        elif hasattr(self, 'header'):
-            self.header.show_filter()
+        search_ui_controller.focus_search(self)
 
     def _set_quick_search_text(self, text):
         """Update the persistent search field without triggering another filter pass."""
-        if hasattr(self, 'quick_search_input'):
-            was_blocked = self.quick_search_input.blockSignals(True)
-            self.quick_search_input.setText(text)
-            self.quick_search_input.blockSignals(was_blocked)
+        search_ui_controller.set_quick_search_text(self, text)
 
     def _set_header_filter_text_silent(self, text):
         """Update the header search state without emitting filter_changed again."""
-        if not hasattr(self, 'header'):
-            return
-
-        self.header._filter_text = text
-        if self.header.filter_edit:
-            was_blocked = self.header.filter_edit.blockSignals(True)
-            self.header.filter_edit.setText(text)
-            self.header.filter_edit.blockSignals(was_blocked)
+        search_ui_controller.set_header_filter_text_silent(self, text)
 
     def _on_top_search_changed(self, text):
         """Keep the header search state in sync with the visible search field."""
-        self._set_header_filter_text_silent(text)
-        self.filter_tree(text)
+        search_ui_controller.on_top_search_changed(self, text)
 
     def _on_header_filter_changed(self, text):
         """Mirror header search edits back to the visible search field."""
-        self._set_quick_search_text(text)
-        self.filter_tree(text)
+        search_ui_controller.on_header_filter_changed(self, text)
 
     def _refresh_view(self):
         """Refresh the current view"""
@@ -489,48 +394,6 @@ class MainWindow(QMainWindow):
         self._set_quick_search_text("")
         self.is_search_mode = False
 
-    def _get_selected_targets_keep_search(self):
-        """Get selected targets while keeping search mode active.
-
-        This method gets selected targets without exiting search mode.
-        Used for operations that should maintain search state after execution.
-
-        Returns:
-            tuple: (selected_targets, search_context)
-        """
-        return action_controller.get_selected_targets_keep_search(self)
-
-    def _refresh_after_action(self, search_context):
-        """Refresh the view after an action, preserving search state if needed.
-
-        Args:
-            search_context: Captured search context from before the action
-        """
-        action_controller.refresh_after_action(self, search_context)
-
-    def _exit_search_mode_and_get_targets(self):
-        """Exit search mode if active and return selected targets.
-
-        This method handles the transition from search mode to normal mode:
-        1. Saves selected targets from search results
-        2. Clears search filter and restores full tree
-        3. Re-selects the saved targets in the restored tree
-        4. Returns the list of selected target names
-
-        Returns:
-            list: Selected target names
-        """
-        return action_controller.exit_search_mode_and_get_targets(self)
-
-    def _log_action_result(self, command: str, result: dict, include_returncode: bool = False) -> None:
-        """Log the outcome of a shell action using the existing UI logging policy."""
-        action_controller.log_action_result(
-            self,
-            command,
-            result,
-            include_returncode=include_returncode,
-        )
-
     def start(self, action):
         """Execute flow action and refresh view (runs command in background thread)."""
         action_controller.start(self, action)
@@ -619,135 +482,63 @@ class MainWindow(QMainWindow):
 
     def _is_main_tree_schema_active(self) -> bool:
         """Return whether the current model is the standard main-tree schema."""
-        if not hasattr(self, "model"):
-            return False
-        expected_headers = tree_rows.MAIN_TREE_HEADERS
-        if self.model.columnCount() < len(expected_headers):
-            return False
-        for index, header in enumerate(expected_headers):
-            if str(self.model.headerData(index, Qt.Horizontal) or "").strip().lower() != header:
-                return False
-        return True
+        return visibility_controller.is_main_tree_schema_active(self)
 
     def _get_visible_main_tree_columns(self):
         """Return currently visible main-tree columns."""
-        visible_columns = set()
-        for column in range(min(self.model.columnCount(), len(tree_rows.MAIN_TREE_HEADERS))):
-            if not self.tree.isColumnHidden(column):
-                visible_columns.add(column)
-        return visible_columns
+        return visibility_controller.get_visible_main_tree_columns(self)
 
     def _apply_main_tree_column_visibility(self, visible_columns, save_state=True):
         """Apply persisted main-tree column visibility to the tree widget."""
-        normalized_columns = set(int(column) for column in (visible_columns or []))
-        normalized_columns.update(self._locked_main_tree_columns)
-        max_columns = min(self.model.columnCount(), len(tree_rows.MAIN_TREE_HEADERS))
-        normalized_columns = {column for column in normalized_columns if 0 <= column < max_columns}
-
-        if save_state:
-            self._main_tree_visible_columns = set(normalized_columns)
-
-        if not self._is_main_tree_schema_active():
-            return
-
-        for column in range(max_columns):
-            self.tree.setColumnHidden(column, column not in normalized_columns)
-
-        self._apply_adaptive_target_column_width()
-        self._fill_trailing_blank_with_last_column()
+        visibility_controller.apply_main_tree_column_visibility(
+            self,
+            visible_columns,
+            save_state=save_state,
+        )
 
     def _update_column_visibility_control_state(self):
         """Enable the column-visibility control only for main-tree mode."""
-        if not hasattr(self, "column_menu"):
-            return
-        enabled = self._is_main_tree_schema_active() and not getattr(self, "is_all_status_view", False)
-        self.column_menu.menuAction().setEnabled(enabled)
-        if not enabled and self._column_visibility_picker is not None:
-            self._column_visibility_picker.hide()
+        visibility_controller.update_column_visibility_control_state(self)
 
     def _on_apply_column_visibility(self, visible_columns):
         """Apply user-picked visibility from the picker popup."""
-        if getattr(self, "is_all_status_view", False):
-            return
-        self._apply_main_tree_column_visibility(visible_columns, save_state=True)
-        if hasattr(self, "column_menu"):
-            self.column_menu.hideTearOffMenu()
-            self.column_menu.hide()
-        if hasattr(self, "setting_menu"):
-            self.setting_menu.hideTearOffMenu()
-            self.setting_menu.hide()
+        visibility_controller.on_apply_column_visibility(self, visible_columns)
 
     def _get_or_create_column_visibility_picker(self):
         """Return the shared column-visibility editor widget."""
-        if self._column_visibility_picker is None:
-            self._column_visibility_picker = ColumnVisibilityPicker(self)
-            self._column_visibility_picker.apply_requested.connect(self._on_apply_column_visibility)
-            self._column_visibility_picker.cancel_requested.connect(self._close_column_visibility_menu)
-        return self._column_visibility_picker
+        return visibility_controller.get_or_create_column_visibility_picker(self)
 
     def _prepare_column_visibility_menu(self):
         """Refresh the column-visibility editor before opening the menu."""
-        if getattr(self, "is_all_status_view", False) or not self._is_main_tree_schema_active():
-            return
-        picker = self._get_or_create_column_visibility_picker()
-        visible_columns = self._get_visible_main_tree_columns() or set(self._main_tree_visible_columns)
-        column_rows = [
-            (index, self.model.headerData(index, Qt.Horizontal) or tree_rows.MAIN_TREE_HEADERS[index])
-            for index in range(min(self.model.columnCount(), len(tree_rows.MAIN_TREE_HEADERS)))
-        ]
-        picker.set_columns(
-            column_rows,
-            visible_columns,
-            self._locked_main_tree_columns,
-        )
-        picker.show()
+        visibility_controller.prepare_column_visibility_menu(self)
 
     def _apply_top_button_visibility(self, visible_button_ids, save_state=True):
         """Apply persisted top-button visibility to the floating button area."""
-        normalized_ids = top_panel_builder.normalize_visible_top_buttons(visible_button_ids)
-        if save_state:
-            self._visible_top_buttons = set(normalized_ids)
-        top_panel_builder.rebuild_top_action_buttons(self)
+        visibility_controller.apply_top_button_visibility(
+            self,
+            visible_button_ids,
+            save_state=save_state,
+        )
 
     def _on_apply_button_visibility(self, visible_button_ids):
         """Apply user-picked top-button visibility from the picker popup."""
-        self._close_button_visibility_menu()
-        normalized_ids = list(visible_button_ids or [])
-        QTimer.singleShot(
-            0,
-            lambda ids=normalized_ids: self._apply_top_button_visibility(ids, save_state=True),
-        )
+        visibility_controller.on_apply_button_visibility(self, visible_button_ids)
 
     def _get_or_create_button_visibility_picker(self):
         """Return the shared top-button visibility editor widget."""
-        if self._button_visibility_picker is None:
-            self._button_visibility_picker = ButtonVisibilityPicker(self)
-            self._button_visibility_picker.apply_requested.connect(self._on_apply_button_visibility)
-            self._button_visibility_picker.cancel_requested.connect(self._close_button_visibility_menu)
-        return self._button_visibility_picker
+        return visibility_controller.get_or_create_button_visibility_picker(self)
 
     def _prepare_button_visibility_menu(self):
         """Refresh the top-button visibility editor before opening the menu."""
-        picker = self._get_or_create_button_visibility_picker()
-        picker.set_buttons(
-            top_panel_builder.get_top_button_choices(),
-            self._visible_top_buttons,
-        )
-        picker.show()
+        visibility_controller.prepare_button_visibility_menu(self)
 
     def _close_button_visibility_menu(self):
         """Close the button-visibility menu hierarchy."""
-        if hasattr(self, "button_menu"):
-            self.button_menu.hide()
-        if hasattr(self, "setting_menu"):
-            self.setting_menu.hide()
+        visibility_controller.close_button_visibility_menu(self)
 
     def _close_column_visibility_menu(self):
         """Close the column-visibility menu hierarchy."""
-        if hasattr(self, "column_menu"):
-            self.column_menu.hide()
-        if hasattr(self, "setting_menu"):
-            self.setting_menu.hide()
+        visibility_controller.close_column_visibility_menu(self)
 
     def _get_main_view_default_window_width(self):
         """Estimate the startup window width from the main-view column defaults."""
@@ -999,23 +790,15 @@ class MainWindow(QMainWindow):
 
     def _ensure_cached_collapsible_target_groups(self, run_name: str):
         """Load grouped display definitions for the active run when needed."""
-        normalized_run = run_name or ""
-        if (
-            normalized_run
-            and (
-                self._cached_collapsible_target_groups_run != normalized_run
-                or not self.cached_collapsible_target_groups
-            )
-        ):
-            self.cached_collapsible_target_groups = self.parse_collapsible_target_groups(normalized_run)
-            self._cached_collapsible_target_groups_run = normalized_run
-        return self.cached_collapsible_target_groups
+        return tree_display_controller.ensure_cached_collapsible_target_groups(self, run_name)
 
     def _build_display_level_groups(self, targets_by_level, run_name: str = None):
         """Build level/group/target display structure for the main tree."""
-        current_run = run_name if run_name is not None else self.combo.currentText()
-        collapsible_groups = self._ensure_cached_collapsible_target_groups(current_run)
-        return tree_structure.build_level_display_groups(targets_by_level, collapsible_groups)
+        return tree_display_controller.build_display_level_groups(
+            self,
+            targets_by_level,
+            run_name=run_name,
+        )
 
     def on_run_changed(self):
         """When combo box selection changes, rebuild tree with new run data."""
@@ -1070,22 +853,12 @@ class MainWindow(QMainWindow):
 
     def _build_target_row_items(self, level_text, target_name: str, status_value: str = None, run_name: str = None) -> list:
         """Build one standard main-tree row for a target."""
-        current_run = run_name if run_name is not None else self.combo.currentText()
-        row_status = self.get_target_status(current_run, target_name) if status_value is None else status_value
-        tune_files = self.get_tune_files(self.combo_sel, target_name)
-        start_time, end_time = self.get_target_times(current_run, target_name)
-        queue, cores, memory = self.get_bsub_params(self.combo_sel, target_name)
-        return tree_rows.build_target_row_items(
+        return tree_display_controller.build_target_row_items(
+            self,
             level_text,
             target_name,
-            row_status,
-            tune_files,
-            start_time,
-            end_time,
-            queue,
-            cores,
-            memory,
-            STATUS_COLORS,
+            status_value=status_value,
+            run_name=run_name,
         )
 
     def _build_container_row_items(
@@ -1098,188 +871,50 @@ class MainWindow(QMainWindow):
         status_key: str = "",
     ) -> list:
         """Build one synthetic main-tree row for a level or collapsible group container."""
-        return tree_rows.build_container_row_items(
+        return tree_display_controller.build_container_row_items(
             level_text,
             label_text,
             row_kind,
-            descendant_targets=descendant_targets,
+            descendant_targets,
             status_value=status_value,
             status_key=status_key,
-            status_colors=STATUS_COLORS,
         )
 
     def _summarize_group_row_status(self, target_names, run_name: str = None, status_value: str = None):
         """Return display text and dominant status key for one synthetic group row."""
-        current_run = run_name if run_name is not None else self.combo.currentText()
-        if status_value is not None:
-            normalized_status = (status_value or "").strip().lower()
-            if not normalized_status:
-                return "", ""
-            return f"all {normalized_status}", normalized_status
-
-        return status_summary.summarize_group_status(
+        return tree_display_controller.summarize_group_row_status(
+            self,
             target_names,
-            lambda target_name: self.get_target_status(current_run, target_name),
+            run_name=run_name,
+            status_value=status_value,
         )
 
     def _append_display_node_to_parent(self, parent_item, node: dict, run_name: str = None, status_value: str = None) -> int:
         """Append one display node and all descendants below an existing parent item."""
-        node_kind = node.get("kind", tree_rows.ROW_KIND_TARGET)
-        node_label = node.get("label", "")
-        node_targets = list(node.get("targets", []) or [])
-
-        if node_kind == tree_rows.ROW_KIND_TARGET:
-            child_row = self._build_target_row_items(
-                "",
-                node.get("target_name", node_label),
-                status_value=status_value,
-                run_name=run_name,
-            )
-            parent_item.appendRow(child_row)
-            return 1
-
-        group_status_text, group_status_key = self._summarize_group_row_status(
-            node_targets,
+        return tree_display_controller.append_display_node_to_parent(
+            self,
+            parent_item,
+            node,
             run_name=run_name,
             status_value=status_value,
         )
-        child_row = self._build_container_row_items(
-            "",
-            node_label,
-            node_kind,
-            node_targets,
-            status_value=group_status_text,
-            status_key=group_status_key,
-        )
-        parent_item.appendRow(child_row)
-
-        appended_count = 0
-        child_parent_item = child_row[0]
-        for child_node in node.get("children", []):
-            appended_count += self._append_display_node_to_parent(
-                child_parent_item,
-                child_node,
-                run_name=run_name,
-                status_value=status_value,
-            )
-        return appended_count
 
     def _split_level_anchor_target(self, child_nodes):
         """Return the top-level anchor target and remaining child nodes for one level."""
-        ordered_nodes = list(child_nodes or [])
-        if not ordered_nodes:
-            return "", []
-
-        first_node = ordered_nodes[0]
-        if first_node.get("kind") == tree_rows.ROW_KIND_TARGET:
-            return first_node.get("target_name", ""), ordered_nodes[1:]
-
-        if first_node.get("kind") == tree_rows.ROW_KIND_GROUP:
-            group_targets = list(first_node.get("targets", []) or [])
-            if not group_targets:
-                return "", ordered_nodes[1:]
-
-            anchor_target = group_targets[0]
-            remaining_targets = group_targets[1:]
-            remaining_children = list(first_node.get("children", []) or [])[1:]
-            remaining_nodes = []
-            if remaining_targets and remaining_children:
-                remaining_nodes.append(
-                    {
-                        "kind": tree_rows.ROW_KIND_GROUP,
-                        "label": first_node.get("label", ""),
-                        "target_name": "",
-                        "targets": remaining_targets,
-                        "children": remaining_children,
-                    }
-                )
-            remaining_nodes.extend(ordered_nodes[1:])
-            return anchor_target, remaining_nodes
-
-        return "", ordered_nodes[1:]
+        return tree_display_controller.split_level_anchor_target(child_nodes)
 
     def _get_level_root_group_node(self, targets, child_nodes):
         """Return the top-level group node when one level is fully generic-grouped."""
-        ordered_targets = list(targets or [])
-        ordered_nodes = list(child_nodes or [])
-        if len(ordered_nodes) != 1:
-            return None
-
-        first_node = ordered_nodes[0]
-        if first_node.get("kind") != tree_rows.ROW_KIND_GROUP:
-            return None
-
-        group_targets = list(first_node.get("targets", []) or [])
-        if not group_targets or len(group_targets) != len(ordered_targets):
-            return None
-
-        if group_targets != ordered_targets:
-            return None
-
-        return first_node
+        return tree_display_controller.get_level_root_group_node(targets, child_nodes)
 
     def _append_target_groups_to_model(self, display_groups, run_name: str = None, status_value: str = None) -> int:
         """Append grouped display nodes to the model using the standard main-tree structure."""
-        appended_target_count = 0
-        for display_group in display_groups:
-            level = display_group.get("level")
-            targets = list(display_group.get("targets", []) or [])
-            children = list(display_group.get("children", []) or [])
-
-            if not targets or not children:
-                continue
-
-            level_root_group = self._get_level_root_group_node(targets, children)
-            if level_root_group is not None:
-                group_status_text, group_status_key = self._summarize_group_row_status(
-                    level_root_group.get("targets", []),
-                    run_name=run_name,
-                    status_value=status_value,
-                )
-                parent_row = self._build_container_row_items(
-                    str(level),
-                    level_root_group.get("label", ""),
-                    tree_rows.ROW_KIND_GROUP,
-                    level_root_group.get("targets", []),
-                    status_value=group_status_text,
-                    status_key=group_status_key,
-                )
-                self.model.appendRow(parent_row)
-
-                level_parent_item = parent_row[0]
-                for child_node in level_root_group.get("children", []):
-                    appended_target_count += self._append_display_node_to_parent(
-                        level_parent_item,
-                        child_node,
-                        run_name=run_name,
-                        status_value=status_value,
-                    )
-                continue
-
-            anchor_target, remaining_children = self._split_level_anchor_target(children)
-            if not anchor_target:
-                anchor_target = targets[0]
-                remaining_children = children
-
-            parent_row = self._build_target_row_items(
-                str(level),
-                anchor_target,
-                status_value=status_value,
-                run_name=run_name,
-            )
-            self.model.appendRow(parent_row)
-            appended_target_count += 1
-
-            level_parent_item = parent_row[0]
-            for child_node in remaining_children:
-                appended_target_count += self._append_display_node_to_parent(
-                    level_parent_item,
-                    child_node,
-                    run_name=run_name,
-                    status_value=status_value,
-                )
-
-        return appended_target_count
+        return tree_display_controller.append_target_groups_to_model(
+            self,
+            display_groups,
+            run_name=run_name,
+            status_value=status_value,
+        )
 
     def _build_current_view_restore_plan(self, scroll_value: int) -> dict:
         """Describe the active filtered/tree mode so it can be replayed after rebuild."""

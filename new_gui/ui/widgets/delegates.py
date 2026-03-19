@@ -1,10 +1,12 @@
 from PyQt5.QtCore import QEvent, QRect, Qt
 from PyQt5.QtGui import QColor, QBrush, QPen
-from PyQt5.QtWidgets import QStyle, QStyleOptionViewItem, QStyledItemDelegate
+from PyQt5.QtWidgets import QComboBox, QStyle, QStyleOptionViewItem, QStyledItemDelegate
 
 from new_gui.config.settings import STATUS_CONFIG
 from new_gui.services import file_actions
 from new_gui.services import tree_rows
+from new_gui.ui.delegate_styles import build_tune_combo_editor_style
+from new_gui.ui.menu_styles import build_popup_menu_style
 from new_gui.ui.theme_runtime import StatusAnimator
 
 
@@ -115,33 +117,7 @@ class TuneComboBoxDelegate(QStyledItemDelegate):
     def createEditor(self, parent, option, index):
         """Create ComboBox editor"""
         combo = QComboBox(parent)
-        combo.setStyleSheet("""
-            QComboBox {
-                border: 1px solid #545F71;
-                border-radius: 4px;
-                padding: 2px 5px;
-                padding-right: 20px;
-                background: #ffffff;
-                color: #545F71;
-            }
-            QComboBox:hover {
-                border: 1px solid #545F71;
-                background: #f5f5f5;
-            }
-            QComboBox::drop-down {
-                border: none;
-                width: 18px;
-                subcontrol-origin: padding;
-                subcontrol-position: right center;
-            }
-            QComboBox QAbstractItemView {
-                color: #545F71;
-                background-color: #ffffff;
-                border: 1px solid #545F71;
-                selection-background-color: #EEF1F4;
-                selection-color: #545F71;
-            }
-        """)
+        combo.setStyleSheet(build_tune_combo_editor_style())
         combo.setAutoFillBackground(True)
         return combo
 
@@ -211,22 +187,12 @@ class TuneComboBoxDelegate(QStyledItemDelegate):
 
             # Create menu for dropdown
             menu = QMenu(self.tree_view)
-            menu.setStyleSheet("""
-                QMenu {
-                    background: white;
-                    border: 1px solid #ccc;
-                    padding: 0px;
-                }
-                QMenu::item {
-                    padding: 5px 20px;
-                    color: black;
-                    border: none;
-                }
-                QMenu::item:selected {
-                    background-color: #4A90D9;
-                    color: white;
-                }
-            """)
+            menu.setStyleSheet(
+                build_popup_menu_style(
+                    selected_background="#4A90D9",
+                    selected_text_color="#ffffff",
+                )
+            )
 
             # Populate menu
             tune_files = index.data(Qt.UserRole)

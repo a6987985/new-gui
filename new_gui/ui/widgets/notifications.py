@@ -19,6 +19,13 @@ from new_gui.config.settings import (
     NOTIFICATION_SPACING,
     NOTIFICATION_TYPES,
 )
+from new_gui.ui.notification_styles import (
+    build_notification_close_button_style,
+    build_notification_frame_style,
+    build_notification_icon_style,
+    build_notification_message_style,
+    build_notification_title_style,
+)
 
 
 class NotificationWidget(QFrame):
@@ -48,34 +55,18 @@ class NotificationWidget(QFrame):
         layout.setSpacing(10)
 
         icon_label = QLabel(config["icon"])
-        icon_label.setStyleSheet(
-            f"""
-            font-size: 24px;
-            color: {config['color']};
-        """
-        )
+        icon_label.setStyleSheet(build_notification_icon_style(config["color"]))
         layout.addWidget(icon_label)
 
         text_layout = QVBoxLayout()
         text_layout.setSpacing(2)
 
         title_label = QLabel(self.title)
-        title_label.setStyleSheet(
-            """
-            font-weight: bold;
-            font-size: 13px;
-            color: #333333;
-        """
-        )
+        title_label.setStyleSheet(build_notification_title_style())
         text_layout.addWidget(title_label)
 
         message_label = QLabel(self.message)
-        message_label.setStyleSheet(
-            """
-            font-size: 11px;
-            color: #666666;
-        """
-        )
+        message_label.setStyleSheet(build_notification_message_style())
         message_label.setWordWrap(True)
         text_layout.addWidget(message_label)
 
@@ -85,32 +76,11 @@ class NotificationWidget(QFrame):
         close_btn = QPushButton("×")
         close_btn.setFixedSize(20, 20)
         close_btn.setCursor(Qt.PointingHandCursor)
-        close_btn.setStyleSheet(
-            """
-            QPushButton {
-                border: none;
-                font-size: 16px;
-                color: #999999;
-                background: transparent;
-            }
-            QPushButton:hover {
-                color: #333333;
-            }
-        """
-        )
+        close_btn.setStyleSheet(build_notification_close_button_style())
         close_btn.clicked.connect(self._on_close)
         layout.addWidget(close_btn)
 
-        self.setStyleSheet(
-            f"""
-            NotificationWidget {{
-                background-color: white;
-                border: 1px solid #e0e0e0;
-                border-left: 4px solid {config['color']};
-                border-radius: 6px;
-            }}
-        """
-        )
+        self.setStyleSheet(build_notification_frame_style(config["color"]))
 
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(15)

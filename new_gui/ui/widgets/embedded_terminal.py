@@ -17,6 +17,8 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from new_gui.ui.output_panel_styles import build_embedded_terminal_style
+
 
 class EmbeddedTerminalWidget(QWidget):
     """Host a native xterm process inside the Qt layout when supported."""
@@ -32,48 +34,7 @@ class EmbeddedTerminalWidget(QWidget):
         self.setObjectName("embeddedTerminalPanel")
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.setMinimumHeight(180)
-        self.setStyleSheet(
-            """
-                QWidget#embeddedTerminalPanel {
-                    background-color: #f6f9fb;
-                    border-top: 1px solid #d6dee7;
-                }
-                QLabel#embeddedTerminalTitle {
-                    color: #526476;
-                    font-weight: 600;
-                    font-size: 12px;
-                }
-                QLabel#embeddedTerminalPath {
-                    color: #7b8794;
-                    font-size: 11px;
-                }
-                QLabel#embeddedTerminalMessage {
-                    color: #526476;
-                    font-size: 12px;
-                }
-                QFrame#embeddedTerminalHost {
-                    background-color: #ffffff;
-                    border: 1px solid #dbe3eb;
-                    border-radius: 6px;
-                }
-                QPushButton#embeddedTerminalButton {
-                    background-color: #fafcfd;
-                    border: 1px solid #d9e1e8;
-                    border-radius: 6px;
-                    color: #5c6d7e;
-                    font-weight: 600;
-                    padding: 3px 10px;
-                }
-                QPushButton#embeddedTerminalButton:hover {
-                    background-color: #eef3f7;
-                    border: 1px solid #c9d5e0;
-                }
-                QPushButton#embeddedTerminalButton:pressed {
-                    background-color: #e6edf4;
-                    border: 1px solid #bccbda;
-                }
-            """
-        )
+        self.setStyleSheet(build_embedded_terminal_style())
 
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(10, 7, 10, 9)

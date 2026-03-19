@@ -13,6 +13,12 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from new_gui.ui.visibility_picker_styles import (
+    build_visibility_label_style,
+    build_visibility_picker_style,
+    build_visibility_row_style,
+)
+
 
 class ButtonVisibilityRow(QFrame):
     """One picker row where only the checkbox itself toggles state."""
@@ -25,14 +31,7 @@ class ButtonVisibilityRow(QFrame):
 
     def _build_ui(self) -> None:
         self.setObjectName("buttonVisibilityRow")
-        self.setStyleSheet(
-            """
-            QFrame#buttonVisibilityRow {
-                background: transparent;
-                border: none;
-            }
-            """
-        )
+        self.setStyleSheet(build_visibility_row_style("buttonVisibilityRow"))
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -42,7 +41,7 @@ class ButtonVisibilityRow(QFrame):
         layout.addStretch()
 
         self.label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self.label.setStyleSheet("color: #263238;")
+        self.label.setStyleSheet(build_visibility_label_style())
 
     def mousePressEvent(self, event) -> None:
         event.accept()
@@ -67,29 +66,7 @@ class ButtonVisibilityPicker(QFrame):
         self._build_ui()
 
     def _build_ui(self) -> None:
-        self.setStyleSheet(
-            """
-            QFrame#buttonVisibilityPicker {
-                background: #ffffff;
-                border: 1px solid #d3d9e2;
-                border-radius: 8px;
-            }
-            QCheckBox {
-                color: #263238;
-                spacing: 6px;
-            }
-            QPushButton {
-                border: 1px solid #cfd8e3;
-                border-radius: 6px;
-                padding: 4px 10px;
-                background: #ffffff;
-                color: #314154;
-            }
-            QPushButton:hover {
-                background: #f4f8fc;
-            }
-            """
-        )
+        self.setStyleSheet(build_visibility_picker_style("buttonVisibilityPicker"))
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(10, 10, 10, 10)
