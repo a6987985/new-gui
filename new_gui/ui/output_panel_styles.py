@@ -128,22 +128,38 @@ def build_bottom_output_tab_style() -> str:
     """
 
 
+def build_bottom_output_corner_style() -> str:
+    """Return the corner-controls stylesheet for the bottom output area."""
+    return (
+        _build_panel_button_rules("QPushButton#bottomOutputActionButton")
+        + """
+        QToolButton#terminalFollowRunButton {
+            background-color: #fafcfd;
+            border: 1px solid #d9e1e8;
+            border-radius: 6px;
+            padding: 0px;
+        }
+        QToolButton#terminalFollowRunButton:hover {
+            background-color: #eef3f7;
+            border: 1px solid #c9d5e0;
+        }
+        QToolButton#terminalFollowRunButton:checked {
+            background-color: #e7f1fb;
+            border: 1px solid #5d8fcf;
+        }
+        QToolButton#terminalFollowRunButton:checked:hover {
+            background-color: #dcebf9;
+            border: 1px solid #4f83c6;
+        }
+        """
+    )
+
+
 def build_embedded_terminal_style() -> str:
     """Return the widget stylesheet for the embedded terminal area."""
-    return (
-        """
+    return """
         QWidget#embeddedTerminalPanel {
             background-color: #f6f9fb;
-            border-top: 1px solid #d6dee7;
-        }
-        QLabel#embeddedTerminalTitle {
-            color: #526476;
-            font-weight: 600;
-            font-size: 12px;
-        }
-        QLabel#embeddedTerminalPath {
-            color: #7b8794;
-            font-size: 11px;
         }
         QLabel#embeddedTerminalMessage {
             color: #526476;
@@ -154,6 +170,4 @@ def build_embedded_terminal_style() -> str:
             border: 1px solid #dbe3eb;
             border-radius: 6px;
         }
-        """
-        + _build_panel_button_rules("QPushButton#embeddedTerminalButton")
-    )
+    """

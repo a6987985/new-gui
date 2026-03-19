@@ -1,16 +1,15 @@
 """Embedded xterm-based terminal widget helpers."""
 
+import ctypes
 import os
 import shutil
 import sys
 
-from PyQt5.QtCore import QProcess, Qt, pyqtSignal
+from PyQt5.QtCore import QEvent, QProcess, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QFont, QFontMetrics
 from PyQt5.QtWidgets import (
     QFrame,
-    QHBoxLayout,
     QLabel,
-    QPushButton,
     QSizePolicy,
     QStackedLayout,
     QVBoxLayout,
@@ -29,46 +28,22 @@ class EmbeddedTerminalWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._process = None
+        self._embedded_child_win_id = None
         self._current_run_dir = ""
+        self._geometry_sync_attempts_remaining = 0
 
         self.setObjectName("embeddedTerminalPanel")
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.setMinimumHeight(180)
         self.setStyleSheet(build_embedded_terminal_style())
 
+        self._resize_sync_timer = QTimer(self)
+        self._resize_sync_timer.setSingleShot(True)
+        self._resize_sync_timer.timeout.connect(self._sync_embedded_window_geometry)
+
         root_layout = QVBoxLayout(self)
-        root_layout.setContentsMargins(10, 7, 10, 9)
-        root_layout.setSpacing(7)
-
-        header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(8)
-
-        title_label = QLabel("Embedded Terminal")
-        title_label.setObjectName("embeddedTerminalTitle")
-        header_layout.addWidget(title_label)
-
-        self._cwd_label = QLabel("")
-        self._cwd_label.setObjectName("embeddedTerminalPath")
-        self._cwd_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        header_layout.addWidget(self._cwd_label, 1)
-
-        self._restart_button = QPushButton("Restart")
-        self._restart_button.setObjectName("embeddedTerminalButton")
-        self._restart_button.clicked.connect(self.restart_terminal)
-        header_layout.addWidget(self._restart_button)
-
-        self._external_button = QPushButton("External")
-        self._external_button.setObjectName("embeddedTerminalButton")
-        self._external_button.clicked.connect(self.external_requested.emit)
-        header_layout.addWidget(self._external_button)
-
-        close_button = QPushButton("Close")
-        close_button.setObjectName("embeddedTerminalButton")
-        close_button.clicked.connect(self.close_requested.emit)
-        header_layout.addWidget(close_button)
-
-        root_layout.addLayout(header_layout)
+        root_layout.setContentsMargins(10, 6, 10, 10)
+        root_layout.setSpacing(0)
 
         body_container = QWidget()
         body_layout = QStackedLayout(body_container)
@@ -78,6 +53,7 @@ class EmbeddedTerminalWidget(QWidget):
         self._terminal_host.setObjectName("embeddedTerminalHost")
         self._terminal_host.setAttribute(Qt.WA_NativeWindow, True)
         self._terminal_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._terminal_host.installEventFilter(self)
         body_layout.addWidget(self._terminal_host)
 
         message_view = QWidget()
@@ -117,18 +93,18 @@ class EmbeddedTerminalWidget(QWidget):
             self._show_message("No run directory is selected.")
             return False
 
-        self._current_run_dir = run_dir
-        self._cwd_label.setText(run_dir)
+        previous_run_dir = os.path.abspath(self._current_run_dir or "")
 
         supported, reason = self._get_embedding_support()
         if not supported:
             self._show_message(reason)
             return False
 
-        if self.is_running() and self.current_run_dir() == run_dir:
+        if self.is_running() and previous_run_dir == run_dir:
             self._show_host()
             return True
 
+        self._current_run_dir = run_dir
         return self.restart_terminal()
 
     def restart_terminal(self) -> bool:
@@ -142,6 +118,8 @@ class EmbeddedTerminalWidget(QWidget):
             return False
 
         self.stop_terminal()
+        self._embedded_child_win_id = None
+        self._geometry_sync_attempts_remaining = 6
         self._show_host()
         self._terminal_host.show()
         self._terminal_host.update()
@@ -162,6 +140,7 @@ class EmbeddedTerminalWidget(QWidget):
             return False
 
         self._process = process
+        self._schedule_embedded_window_sync(delay_ms=120)
         return True
 
     def stop_terminal(self) -> None:
@@ -171,6 +150,9 @@ class EmbeddedTerminalWidget(QWidget):
 
         process = self._process
         self._process = None
+        self._embedded_child_win_id = None
+        self._geometry_sync_attempts_remaining = 0
+        self._resize_sync_timer.stop()
         if process.state() != QProcess.NotRunning:
             process.terminate()
             if not process.waitForFinished(1500):
@@ -190,6 +172,12 @@ class EmbeddedTerminalWidget(QWidget):
         """Display a centered status message instead of the terminal host."""
         self._message_label.setText(message)
         self._body_layout.setCurrentWidget(self._message_view)
+
+    def eventFilter(self, watched, event):
+        """Resize the embedded X11 child window when the host area changes size."""
+        if watched is self._terminal_host and event.type() in (QEvent.Resize, QEvent.Show):
+            self._schedule_embedded_window_sync()
+        return super().eventFilter(watched, event)
 
     def _build_xterm_arguments(self):
         """Return xterm arguments sized to the current host panel."""
@@ -230,8 +218,138 @@ class EmbeddedTerminalWidget(QWidget):
         rows = max(16, host_height // cell_height)
         return columns, rows
 
+    def _schedule_embedded_window_sync(self, delay_ms: int = 40) -> None:
+        """Queue one geometry sync for the embedded child window."""
+        if not self.is_running():
+            return
+        self._resize_sync_timer.start(max(0, delay_ms))
+
+    def _sync_embedded_window_geometry(self) -> None:
+        """Resize the embedded xterm child to fill the current host frame."""
+        if not self.is_running():
+            return
+
+        child_win_id = self._embedded_child_win_id or self._discover_embedded_child_window_id()
+        if not child_win_id:
+            if self._geometry_sync_attempts_remaining > 0:
+                self._geometry_sync_attempts_remaining -= 1
+                self._schedule_embedded_window_sync(delay_ms=120)
+            return
+
+        self._embedded_child_win_id = child_win_id
+        self._geometry_sync_attempts_remaining = 0
+
+        host_width = max(1, self._terminal_host.width() - 2)
+        host_height = max(1, self._terminal_host.height() - 2)
+        self._resize_x11_window(child_win_id, 1, 1, host_width, host_height)
+
+    def _discover_embedded_child_window_id(self):
+        """Return the current embedded child window id inside the host frame."""
+        if not sys.platform.startswith("linux") or not os.environ.get("DISPLAY"):
+            return None
+
+        host_win_id = int(self._terminal_host.winId())
+        if host_win_id <= 0:
+            return None
+
+        x11 = self._load_x11_library()
+        if x11 is None:
+            return None
+
+        display = x11.XOpenDisplay(os.environ["DISPLAY"].encode("utf-8"))
+        if not display:
+            return None
+
+        root_return = ctypes.c_ulong()
+        parent_return = ctypes.c_ulong()
+        children_return = ctypes.POINTER(ctypes.c_ulong)()
+        child_count = ctypes.c_uint()
+
+        try:
+            status = x11.XQueryTree(
+                display,
+                ctypes.c_ulong(host_win_id),
+                ctypes.byref(root_return),
+                ctypes.byref(parent_return),
+                ctypes.byref(children_return),
+                ctypes.byref(child_count),
+            )
+            if not status or child_count.value == 0:
+                return None
+            return int(children_return[child_count.value - 1])
+        finally:
+            if children_return:
+                x11.XFree(children_return)
+            x11.XCloseDisplay(display)
+
+    def _resize_x11_window(self, child_win_id: int, x: int, y: int, width: int, height: int) -> None:
+        """Resize and reposition one X11 child window inside the terminal host."""
+        if not sys.platform.startswith("linux") or not os.environ.get("DISPLAY"):
+            return
+
+        x11 = self._load_x11_library()
+        if x11 is None:
+            return
+
+        display = x11.XOpenDisplay(os.environ["DISPLAY"].encode("utf-8"))
+        if not display:
+            return
+
+        try:
+            x11.XMoveResizeWindow(
+                display,
+                ctypes.c_ulong(int(child_win_id)),
+                ctypes.c_int(x),
+                ctypes.c_int(y),
+                ctypes.c_uint(max(1, width)),
+                ctypes.c_uint(max(1, height)),
+            )
+            x11.XFlush(display)
+        finally:
+            x11.XCloseDisplay(display)
+
+    @staticmethod
+    def _load_x11_library():
+        """Return a configured ctypes handle for libX11, if available."""
+        try:
+            x11 = ctypes.cdll.LoadLibrary("libX11.so.6")
+        except OSError:
+            try:
+                x11 = ctypes.cdll.LoadLibrary("libX11.so")
+            except OSError:
+                return None
+
+        x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+        x11.XOpenDisplay.restype = ctypes.c_void_p
+        x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+        x11.XCloseDisplay.restype = ctypes.c_int
+        x11.XFlush.argtypes = [ctypes.c_void_p]
+        x11.XFlush.restype = ctypes.c_int
+        x11.XQueryTree.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_ulong,
+            ctypes.POINTER(ctypes.c_ulong),
+            ctypes.POINTER(ctypes.c_ulong),
+            ctypes.POINTER(ctypes.POINTER(ctypes.c_ulong)),
+            ctypes.POINTER(ctypes.c_uint),
+        ]
+        x11.XQueryTree.restype = ctypes.c_int
+        x11.XMoveResizeWindow.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_ulong,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint,
+            ctypes.c_uint,
+        ]
+        x11.XMoveResizeWindow.restype = ctypes.c_int
+        x11.XFree.argtypes = [ctypes.c_void_p]
+        x11.XFree.restype = ctypes.c_int
+        return x11
+
     def _on_process_error(self, _error) -> None:
         """Show a fallback message when the embedded xterm process fails."""
+        self._embedded_child_win_id = None
         self._show_message(
             "Embedded xterm failed to start or exited unexpectedly. Use the External button as a fallback."
         )
@@ -239,6 +357,9 @@ class EmbeddedTerminalWidget(QWidget):
     def _on_process_finished(self, _exit_code: int, _exit_status) -> None:
         """Report a clean terminal exit once the shell closes."""
         self._process = None
+        self._embedded_child_win_id = None
+        self._geometry_sync_attempts_remaining = 0
+        self._resize_sync_timer.stop()
         self._show_message("Embedded terminal exited. Click Restart to open a fresh shell.")
 
     @staticmethod

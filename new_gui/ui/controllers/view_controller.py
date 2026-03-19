@@ -382,6 +382,8 @@ def activate_selected_run_view(window, current_run: str, invalidate_snapshot: bo
 
     ui.update_status_bar()
     ui.update_column_visibility_control_state()
+    if ui.is_terminal_follow_run_enabled():
+        ui.sync_embedded_terminal_run_dir(ui.combo_sel)
 
 
 def populate_data(window, force_rebuild=False) -> None:

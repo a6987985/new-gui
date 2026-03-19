@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from new_gui.services import view_state
+from new_gui.ui.controllers import output_controller
 
 
 class ViewWindowBridge:
@@ -246,6 +247,14 @@ class ViewWindowBridge:
     def update_status_bar(self) -> None:
         """Refresh the visible status bar."""
         self._window.update_status_bar()
+
+    def is_terminal_follow_run_enabled(self) -> bool:
+        """Return whether the embedded terminal should follow run changes."""
+        return output_controller.is_terminal_follow_run_enabled(self._window)
+
+    def sync_embedded_terminal_run_dir(self, run_dir: str) -> bool:
+        """Sync the embedded terminal session to the active run when enabled."""
+        return output_controller.sync_embedded_terminal_run_dir(self._window, run_dir)
 
     def build_current_view_restore_plan(self, scroll_value: int) -> dict:
         """Build a restore plan for the current filtered view state."""

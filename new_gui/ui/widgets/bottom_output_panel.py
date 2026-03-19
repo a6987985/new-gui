@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Optional
 
-from PyQt5.QtCore import QObject, Qt, pyqtSignal
+from PyQt5.QtCore import QObject, QSize, Qt, pyqtSignal
 from PyQt5.QtGui import QTextCursor
 from PyQt5.QtWidgets import (
     QHBoxLayout,
@@ -17,11 +17,14 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
     QTabWidget,
     QTextBrowser,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
+from new_gui.ui.icon_factory import build_terminal_follow_run_icon
 from new_gui.ui.output_panel_styles import (
+    build_bottom_output_corner_style,
     build_bottom_output_panel_style,
     build_bottom_output_tab_style,
     build_session_log_document_style,
@@ -197,6 +200,8 @@ class SessionLogWidget(QWidget):
 class BottomOutputPanel(QWidget):
     """IDE-style bottom output area with Terminal and Log tabs."""
 
+    terminal_follow_run_changed = pyqtSignal(bool)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("bottomOutputPanel")
@@ -217,6 +222,42 @@ class BottomOutputPanel(QWidget):
         self.log_widget = SessionLogWidget(self)
         self._tabs.addTab(self.terminal_widget, "Terminal")
         self._tabs.addTab(self.log_widget, "Log")
+        self._tabs.currentChanged.connect(self._sync_corner_controls)
+
+        self._terminal_controls = QWidget(self)
+        self._terminal_controls.setStyleSheet(build_bottom_output_corner_style())
+        terminal_controls_layout = QHBoxLayout(self._terminal_controls)
+        terminal_controls_layout.setContentsMargins(0, 8, 12, 0)
+        terminal_controls_layout.setSpacing(8)
+
+        self._terminal_follow_run_button = QToolButton(self._terminal_controls)
+        self._terminal_follow_run_button.setObjectName("terminalFollowRunButton")
+        self._terminal_follow_run_button.setCheckable(True)
+        self._terminal_follow_run_button.setAutoRaise(False)
+        self._terminal_follow_run_button.setFixedSize(30, 30)
+        self._terminal_follow_run_button.setIcon(build_terminal_follow_run_icon())
+        self._terminal_follow_run_button.setIconSize(QSize(16, 16))
+        self._terminal_follow_run_button.toggled.connect(self._on_terminal_follow_run_toggled)
+        terminal_controls_layout.addWidget(self._terminal_follow_run_button)
+
+        restart_button = QPushButton("Restart")
+        restart_button.setObjectName("bottomOutputActionButton")
+        restart_button.clicked.connect(self.terminal_widget.restart_terminal)
+        terminal_controls_layout.addWidget(restart_button)
+
+        external_button = QPushButton("External")
+        external_button.setObjectName("bottomOutputActionButton")
+        external_button.clicked.connect(lambda: self.terminal_widget.external_requested.emit())
+        terminal_controls_layout.addWidget(external_button)
+
+        close_button = QPushButton("Close")
+        close_button.setObjectName("bottomOutputActionButton")
+        close_button.clicked.connect(lambda: self.terminal_widget.close_requested.emit())
+        terminal_controls_layout.addWidget(close_button)
+
+        self._tabs.setCornerWidget(self._terminal_controls, Qt.TopRightCorner)
+        self._refresh_terminal_follow_run_tooltip()
+        self._sync_corner_controls(self._tabs.currentIndex())
 
         root_layout.addWidget(self._tabs)
 
@@ -236,3 +277,32 @@ class BottomOutputPanel(QWidget):
     def append_log_entry(self, entry: GuiLogEntry) -> None:
         """Append one entry to the log tab."""
         self.log_widget.append_entry(entry)
+
+    def is_terminal_follow_run_enabled(self) -> bool:
+        """Return whether terminal rundir follows run selection changes."""
+        return self._terminal_follow_run_button.isChecked()
+
+    def set_terminal_follow_run_enabled(self, enabled: bool) -> None:
+        """Update the terminal follow-run toggle state."""
+        self._terminal_follow_run_button.setChecked(bool(enabled))
+
+    def _sync_corner_controls(self, current_index: int) -> None:
+        """Show terminal actions only while the terminal tab is active."""
+        current_widget = self._tabs.widget(current_index)
+        self._terminal_controls.setVisible(current_widget is self.terminal_widget)
+
+    def _on_terminal_follow_run_toggled(self, enabled: bool) -> None:
+        """Update tooltip text and propagate follow-run state changes."""
+        self._refresh_terminal_follow_run_tooltip()
+        self.terminal_follow_run_changed.emit(bool(enabled))
+
+    def _refresh_terminal_follow_run_tooltip(self) -> None:
+        """Update the tooltip for the terminal follow-run toggle."""
+        if self._terminal_follow_run_button.isChecked():
+            self._terminal_follow_run_button.setToolTip(
+                "Follow run enabled: terminal rundir follows current run selection"
+            )
+        else:
+            self._terminal_follow_run_button.setToolTip(
+                "Follow run disabled: terminal keeps the current rundir"
+            )

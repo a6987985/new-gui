@@ -89,6 +89,7 @@ class MainWindow(QMainWindow):
         self._visible_top_buttons = set(top_panel_builder.DEFAULT_TOP_BUTTON_IDS)
         self._button_visibility_picker = None
         self._bottom_output_last_height = 260
+        self._terminal_follow_run = False
         self._ui_log_dispatcher = None
         self._gui_log_handler = None
         self._gui_log_previous_logger_level = None
@@ -258,6 +259,18 @@ class MainWindow(QMainWindow):
     def get_embedded_terminal_status_message(self) -> str:
         """Return the current embedded-terminal status text, if any."""
         return output_controller.get_embedded_terminal_status_message(self)
+
+    def is_terminal_follow_run_enabled(self) -> bool:
+        """Return whether terminal rundir should follow run selection changes."""
+        return output_controller.is_terminal_follow_run_enabled(self)
+
+    def set_terminal_follow_run_enabled(self, enabled: bool) -> None:
+        """Update whether terminal rundir should follow run selection changes."""
+        output_controller.set_terminal_follow_run_enabled(self, enabled)
+
+    def sync_embedded_terminal_run_dir(self, run_dir: str) -> bool:
+        """Sync the embedded terminal session to a new run directory when enabled."""
+        return output_controller.sync_embedded_terminal_run_dir(self, run_dir)
 
     def _setup_keyboard_shortcuts(self):
         """Setup global keyboard shortcuts"""

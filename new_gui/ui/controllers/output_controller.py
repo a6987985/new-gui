@@ -169,3 +169,34 @@ def get_embedded_terminal_status_message(window) -> str:
     if hasattr(window, "_embedded_terminal"):
         return window._embedded_terminal.status_message()
     return ""
+
+
+def is_terminal_follow_run_enabled(window) -> bool:
+    """Return whether the embedded terminal should follow run selection changes."""
+    if hasattr(window, "_bottom_output_panel"):
+        return window._bottom_output_panel.is_terminal_follow_run_enabled()
+    return bool(getattr(window, "_terminal_follow_run", False))
+
+
+def set_terminal_follow_run_enabled(window, enabled: bool) -> None:
+    """Update the terminal follow-run preference in the window and panel."""
+    enabled = bool(enabled)
+    window._terminal_follow_run = enabled
+    if hasattr(window, "_bottom_output_panel"):
+        window._bottom_output_panel.set_terminal_follow_run_enabled(enabled)
+
+
+def sync_embedded_terminal_run_dir(window, run_dir: str) -> bool:
+    """Sync the embedded terminal session to the provided run directory when enabled."""
+    if not is_terminal_follow_run_enabled(window):
+        return False
+    if not hasattr(window, "_embedded_terminal"):
+        return False
+
+    terminal = window._embedded_terminal
+    if not run_dir:
+        return False
+    if not terminal.is_running() and not terminal.current_run_dir():
+        return False
+
+    return terminal.show_for_directory(run_dir)

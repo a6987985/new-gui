@@ -163,6 +163,8 @@ def init_top_panel(window) -> None:
     window._bottom_output_panel = BottomOutputPanel(window)
     window._embedded_terminal = window._bottom_output_panel.terminal_widget
     window._session_log_widget = window._bottom_output_panel.log_widget
+    window._bottom_output_panel.terminal_follow_run_changed.connect(window.set_terminal_follow_run_enabled)
+    window._bottom_output_panel.set_terminal_follow_run_enabled(window._terminal_follow_run)
     window._embedded_terminal.close_requested.connect(window.hide_embedded_terminal_panel)
     window._embedded_terminal.external_requested.connect(window.open_external_terminal)
     window._session_log_widget.close_requested.connect(window.hide_bottom_output_panel)
