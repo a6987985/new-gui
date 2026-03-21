@@ -445,7 +445,12 @@ def open_external_terminal(window, log_request: bool = True) -> None:
             details=ui.combo_sel,
         )
 
-    ui.submit_background(file_actions.open_terminal, ui.combo_sel)
+    ui.submit_background(
+        file_actions.open_terminal,
+        ui.combo_sel,
+        "XMeta_term",
+        ui.current_xmeta_background_color(),
+    )
 
 
 def retrace_tab(window, inout) -> None:

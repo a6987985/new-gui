@@ -162,6 +162,7 @@ def init_top_panel(window) -> None:
 
     window._bottom_output_panel = BottomOutputPanel(window)
     window._embedded_terminal = window._bottom_output_panel.terminal_widget
+    window._embedded_terminal.set_terminal_background(window._get_xmeta_background_color(), restart_if_running=False)
     window._session_log_widget = window._bottom_output_panel.log_widget
     window._bottom_output_panel.terminal_follow_run_changed.connect(window.set_terminal_follow_run_enabled)
     window._bottom_output_panel.set_terminal_follow_run_enabled(window._terminal_follow_run)

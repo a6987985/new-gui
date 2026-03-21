@@ -5,13 +5,24 @@ import os
 from PyQt5.QtGui import QColor
 
 from new_gui.config.settings import THEMES, logger
+from new_gui.services import flow_background
 from new_gui.ui import style_sheets
+from new_gui.ui.dialogs.xmeta_background_dialog import XMetaBackgroundDialog
 
 
 def get_xmeta_background_color(window):
     """Return the configured XMETA background color, if any."""
-    bg_color = os.environ.get("XMETA_BACKGROUND", "").strip()
-    return bg_color or None
+    bg_color = getattr(window, "_xmeta_background_color", None)
+    if bg_color:
+        return bg_color
+
+    launch_color = getattr(window, "_launch_xmeta_background", None)
+    resolved = flow_background.resolve_run_background(
+        getattr(window, "combo_sel", None),
+        fallback_color=launch_color,
+    )
+    window._xmeta_background_color = resolved
+    return resolved or None
 
 
 def toggle_theme(window) -> None:
@@ -21,12 +32,13 @@ def toggle_theme(window) -> None:
         window.apply_theme(new_theme)
 
 
-def apply_theme(window, theme_name) -> None:
+def apply_theme(window, theme_name, announce: bool = True) -> None:
     """Apply a theme to the application."""
     window.theme_manager.set_theme(theme_name)
     theme = window.theme_manager.get_theme()
     bg_color = window._get_xmeta_background_color()
     window_bg = bg_color or theme["window_bg"]
+    window.window_bg = window_bg
 
     if theme_name == "dark":
         scrollbar_bg = "#2d2d2d"
@@ -147,11 +159,80 @@ def apply_theme(window, theme_name) -> None:
 
     if hasattr(window, "_status_bar"):
         window._status_bar.update_theme(theme_name)
-    if bg_color:
-        window._init_top_panel_background()
+    window._init_top_panel_background()
 
-    theme_info = THEMES.get(theme_name, THEMES["light"])
-    window.show_notification("Theme", f"Applied {theme_info['name']} theme", "info")
+    if announce:
+        theme_info = THEMES.get(theme_name, THEMES["light"])
+        window.show_notification("Theme", f"Applied {theme_info['name']} theme", "info")
+
+
+def refresh_xmeta_background(window, run_dir: str = None, announce: bool = False):
+    """Reload the effective background from one run and re-apply the theme."""
+    launch_color = getattr(window, "_launch_xmeta_background", None)
+    resolved = flow_background.resolve_run_background(
+        run_dir or getattr(window, "combo_sel", None),
+        fallback_color=launch_color,
+    )
+    window._xmeta_background_color = resolved
+
+    if resolved:
+        os.environ["XMETA_BACKGROUND"] = resolved
+    elif launch_color:
+        os.environ["XMETA_BACKGROUND"] = launch_color
+    else:
+        os.environ.pop("XMETA_BACKGROUND", None)
+
+    if hasattr(window, "_embedded_terminal"):
+        window._embedded_terminal.set_terminal_background(resolved, restart_if_running=True)
+
+    apply_theme(window, window.theme_manager.current_theme, announce=announce)
+    return resolved
+
+
+def open_xmeta_background_dialog(window) -> None:
+    """Open the background editor and write the chosen color to every discovered run flow."""
+    runs = flow_background.list_available_runs(window.run_base_dir)
+    if not runs:
+        window.show_notification("Background Color", "No runs were found in the current directory.", "warning")
+        return
+
+    dialog = XMetaBackgroundDialog(
+        initial_color=window._get_xmeta_background_color() or "",
+        run_count=len(runs),
+        parent=window,
+    )
+    if dialog.exec_() != dialog.Accepted:
+        return
+
+    result = flow_background.apply_background_to_all_runs(window.run_base_dir, dialog.selected_color())
+    failed_runs = result["failed_runs"]
+    updated_runs = result["updated_runs"]
+    updated_paths = result.get("updated_paths", [])
+
+    if not updated_runs:
+        detail = failed_runs[0][1] if failed_runs else "No runs were updated."
+        window.show_notification("Background Color", detail, "error")
+        return
+
+    refresh_xmeta_background(window, run_dir=getattr(window, "combo_sel", None), announce=False)
+    summary = (
+        f"Applied {result['color']} to {len(updated_runs)}/{result['run_count']} runs"
+        f" across {len(updated_paths)} flow cshrc file(s)."
+    )
+    if failed_runs:
+        summary += f" Failed: {len(failed_runs)}."
+        notification_type = "warning"
+    else:
+        notification_type = "success"
+
+    window.show_notification("Background Color", summary, notification_type)
+    if hasattr(window, "append_ui_log"):
+        window.append_ui_log(
+            "WARNING" if failed_runs else "INFO",
+            "params",
+            "Updated XMETA background across run flows.",
+            details=summary,
+        )
 
 
 def init_top_panel_background(window) -> None:

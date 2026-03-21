@@ -72,10 +72,23 @@ def open_file_with_editor(filepath: str, editor: str = "gvim", use_popen: bool =
         logger.error(f"Error opening file {filepath}: {exc}")
 
 
-def open_terminal(run_dir: str, terminal_command: str = "XMeta_term") -> None:
+def open_terminal(
+    run_dir: str,
+    terminal_command: str = "XMeta_term",
+    background_color: str = None,
+) -> None:
     """Open a terminal command in the requested run directory."""
     try:
-        subprocess.run([terminal_command], check=False, timeout=5, cwd=run_dir)
+        env = os.environ.copy()
+        if background_color:
+            env["XMETA_BACKGROUND"] = background_color
+        subprocess.run(
+            [terminal_command],
+            check=False,
+            timeout=5,
+            cwd=run_dir,
+            env=env,
+        )
     except subprocess.TimeoutExpired:
         pass
     except FileNotFoundError:

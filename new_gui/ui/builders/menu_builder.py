@@ -46,6 +46,11 @@ def init_menu_bar(window) -> None:
     button_picker_action = QWidgetAction(window)
     button_picker_action.setDefaultWidget(window._get_or_create_button_visibility_picker())
     button_menu.addAction(button_picker_action)
+    setting_menu.addSeparator()
+    background_color_action = QAction("Background Color...", window)
+    background_color_action.setToolTip("Apply a flow-backed XMETA background to all runs")
+    background_color_action.triggered.connect(window.open_xmeta_background_dialog)
+    setting_menu.addAction(background_color_action)
     window.setting_menu = setting_menu
     window.column_menu = column_menu
     window.button_menu = button_menu

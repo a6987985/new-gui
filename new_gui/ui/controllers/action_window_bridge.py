@@ -117,6 +117,12 @@ class ActionWindowBridge:
             return self._window.get_embedded_terminal_status_message()
         return ""
 
+    def current_xmeta_background_color(self) -> str:
+        """Return the effective XMETA background color for the current run."""
+        if hasattr(self._window, "_get_xmeta_background_color"):
+            return self._window._get_xmeta_background_color()
+        return ""
+
     def open_file_with_editor(self, filepath: str, editor: str = "gvim", use_popen: bool = False) -> None:
         """Open a file with the window-managed editor flow."""
         self._window._open_file_with_editor(filepath, editor=editor, use_popen=use_popen)

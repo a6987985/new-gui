@@ -248,6 +248,11 @@ class ViewWindowBridge:
         """Refresh the visible status bar."""
         self._window.update_status_bar()
 
+    def refresh_xmeta_background(self, run_dir: str = None) -> None:
+        """Reload and apply the run-backed XMETA background."""
+        if hasattr(self._window, "refresh_xmeta_background"):
+            self._window.refresh_xmeta_background(run_dir=run_dir, announce=False)
+
     def is_terminal_follow_run_enabled(self) -> bool:
         """Return whether the embedded terminal should follow run changes."""
         return output_controller.is_terminal_follow_run_enabled(self._window)

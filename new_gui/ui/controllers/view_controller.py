@@ -370,6 +370,7 @@ def activate_selected_run_view(window, current_run: str, invalidate_snapshot: bo
     ui.is_all_status_view = False
     ui.combo_sel = run_state["combo_sel"]
     logger.info(f"Run changed to: {ui.combo_sel}")
+    ui.refresh_xmeta_background(ui.combo_sel)
 
     ui.set_main_run_tab_state()
     ui.build_status_cache(run_state["run_name"])

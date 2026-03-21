@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from new_gui.services.flow_background import choose_terminal_foreground, normalize_background_color
 from new_gui.ui.output_panel_styles import build_embedded_terminal_style
 
 
@@ -31,6 +32,8 @@ class EmbeddedTerminalWidget(QWidget):
         self._embedded_child_win_id = None
         self._current_run_dir = ""
         self._geometry_sync_attempts_remaining = 0
+        self._background_color = "#ffffff"
+        self._foreground_color = "#111827"
 
         self.setObjectName("embeddedTerminalPanel")
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
@@ -85,6 +88,21 @@ class EmbeddedTerminalWidget(QWidget):
     def is_running(self) -> bool:
         """Return whether the embedded xterm process is active."""
         return self._process is not None and self._process.state() != QProcess.NotRunning
+
+    def set_terminal_background(self, background_color: str, restart_if_running: bool = True) -> None:
+        """Update the xterm background and foreground palette."""
+        normalized = normalize_background_color(background_color) or "#ffffff"
+        foreground = choose_terminal_foreground(normalized)
+        changed = (
+            normalized != self._background_color
+            or foreground != self._foreground_color
+        )
+
+        self._background_color = normalized
+        self._foreground_color = foreground
+
+        if changed and restart_if_running and self.is_running() and self.current_run_dir():
+            self.restart_terminal()
 
     def show_for_directory(self, run_dir: str) -> bool:
         """Show or restart the embedded terminal for the requested run directory."""
@@ -192,9 +210,9 @@ class EmbeddedTerminalWidget(QWidget):
             "-geometry",
             f"{columns}x{rows}",
             "-bg",
-            "white",
+            self._background_color,
             "-fg",
-            "black",
+            self._foreground_color,
             "-sb",
             "-sl",
             "5000",

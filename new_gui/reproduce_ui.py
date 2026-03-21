@@ -90,6 +90,8 @@ class MainWindow(QMainWindow):
         self._button_visibility_picker = None
         self._bottom_output_last_height = 260
         self._terminal_follow_run = False
+        self._launch_xmeta_background = os.environ.get("XMETA_BACKGROUND", "").strip() or None
+        self._xmeta_background_color = self._launch_xmeta_background
         self._ui_log_dispatcher = None
         self._gui_log_handler = None
         self._gui_log_previous_logger_level = None
@@ -183,6 +185,10 @@ class MainWindow(QMainWindow):
     def _get_xmeta_background_color(self):
         """Return the configured XMETA background color, if any."""
         return theme_controller.get_xmeta_background_color(self)
+
+    def refresh_xmeta_background(self, run_dir: str = None, announce: bool = False):
+        """Reload the run-backed XMETA background and refresh the current theme."""
+        return theme_controller.refresh_xmeta_background(self, run_dir=run_dir, announce=announce)
 
     def _detect_run_base_dir(self):
         """Detect the run base directory based on environment."""
@@ -315,6 +321,10 @@ class MainWindow(QMainWindow):
     def apply_theme(self, theme_name):
         """Apply a theme to the application"""
         theme_controller.apply_theme(self, theme_name)
+
+    def open_xmeta_background_dialog(self) -> None:
+        """Open the XMETA background editor for every run in the current directory."""
+        theme_controller.open_xmeta_background_dialog(self)
 
     def show_notification(self, title, message, notification_type="info"):
         """Show a notification message"""
