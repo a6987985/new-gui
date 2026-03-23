@@ -1,6 +1,6 @@
 """Custom combo box used by the main GUI."""
 
-from PyQt5.QtCore import QPointF, QTimer, Qt
+from PyQt5.QtCore import QPointF, QTimer, Qt, pyqtSignal
 from PyQt5.QtGui import QColor, QPainter, QPen
 from PyQt5.QtWidgets import QComboBox, QCompleter, QPushButton, QStyle, QStyleOptionComboBox
 
@@ -9,6 +9,8 @@ from new_gui.ui.widgets.scrollbars import RoundedScrollBar
 
 class BoundedComboBox(QComboBox):
     """Custom ComboBox with on-demand search mode and custom dropdown arrow."""
+
+    popup_about_to_show = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -142,6 +144,7 @@ class BoundedComboBox(QComboBox):
         self._position_search_button()
 
     def showPopup(self):
+        self.popup_about_to_show.emit()
         current_idx = self.currentIndex()
         if self._popup_hidden_row >= 0:
             self.view().setRowHidden(self._popup_hidden_row, False)

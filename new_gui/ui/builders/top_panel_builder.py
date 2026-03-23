@@ -62,6 +62,7 @@ def init_top_panel(window) -> None:
     window.combo = BoundedComboBox()
     window.populate_run_combo()
     window.combo.setMinimumWidth(300)
+    window.combo.popup_about_to_show.connect(window.refresh_available_runs)
     window.combo.currentIndexChanged.connect(window.on_run_changed)
     window.combo.setStyleSheet(build_run_selector_style())
 

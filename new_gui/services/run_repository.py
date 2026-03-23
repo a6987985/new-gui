@@ -23,9 +23,11 @@ from new_gui.services.run_status import (
     get_target_times,
 )
 from new_gui.services.run_tune_bsub import (
+    discover_available_queues,
     get_bsub_params,
     get_tune_candidates_from_cmd,
     get_tune_files,
+    is_editable_queue_name,
     save_bsub_param,
 )
 
@@ -34,6 +36,7 @@ __all__ = [
     "build_run_target_cache_key",
     "build_status_cache",
     "collect_all_status_overview",
+    "discover_available_queues",
     "get_active_targets",
     "get_bsub_params",
     "get_retrace_targets",
@@ -43,6 +46,7 @@ __all__ = [
     "get_tune_candidates_from_cmd",
     "get_tune_files",
     "invalidate_run_target_cache",
+    "is_editable_queue_name",
     "list_available_runs",
     "parse_collapsible_target_groups",
     "parse_dependency_file",

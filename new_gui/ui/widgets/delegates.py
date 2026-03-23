@@ -2,12 +2,23 @@ from PyQt5.QtCore import QEvent, QRect, Qt
 from PyQt5.QtGui import QColor, QBrush, QPen
 from PyQt5.QtWidgets import QComboBox, QStyle, QStyleOptionViewItem, QStyledItemDelegate
 
-from new_gui.config.settings import STATUS_CONFIG
 from new_gui.services import file_actions
 from new_gui.services import tree_rows
 from new_gui.ui.delegate_styles import build_tune_combo_editor_style
 from new_gui.ui.menu_styles import build_popup_menu_style
-from new_gui.ui.theme_runtime import StatusAnimator
+
+
+def _resolve_row_background(index):
+    """Return the stable row background brush from the model."""
+    bg_brush = index.data(Qt.BackgroundRole)
+    if not bg_brush:
+        return None
+
+    if isinstance(bg_brush, QBrush):
+        return bg_brush
+    if isinstance(bg_brush, QColor):
+        return QBrush(bg_brush)
+    return bg_brush
 
 
 class BorderItemDelegate(QStyledItemDelegate):
@@ -15,33 +26,16 @@ class BorderItemDelegate(QStyledItemDelegate):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._animator = StatusAnimator()
 
     def paint(self, painter, option, index):
         # 1. Manually draw background from model (Status Colors)
-        bg_brush = index.data(Qt.BackgroundRole)
-        original_color = None
+        bg_brush = _resolve_row_background(index)
 
         if bg_brush:
             painter.save()
             if isinstance(bg_brush, QBrush):
-                original_color = bg_brush.color()
-                # Check if this item has animation
-                status_text = ""
-                if index.column() == 2:  # Status column
-                    status_text = index.data(Qt.DisplayRole) or ""
-
-                status_config = STATUS_CONFIG.get(status_text.lower() if status_text else "", {})
-                animation_type = status_config.get("animation")
-
-                if animation_type == "pulse":
-                    # Apply pulse animation for running status
-                    animated_color = self._animator.get_animated_color(original_color, animation_type)
-                    painter.fillRect(option.rect, QBrush(animated_color))
-                else:
-                    painter.fillRect(option.rect, bg_brush)
+                painter.fillRect(option.rect, bg_brush)
             elif isinstance(bg_brush, QColor):
-                original_color = bg_brush
                 painter.fillRect(option.rect, bg_brush)
             painter.restore()
 
@@ -143,7 +137,7 @@ class TuneComboBoxDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
         """Custom paint to show ComboBox-like appearance"""
         # 1. Draw background from model (Status Colors)
-        bg_brush = index.data(Qt.BackgroundRole)
+        bg_brush = _resolve_row_background(index)
         if bg_brush:
             painter.save()
             if isinstance(bg_brush, QBrush):

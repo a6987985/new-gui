@@ -14,6 +14,7 @@ from new_gui.services import tree_editing
 from new_gui.services import tune_actions
 from new_gui.services import view_tabs
 from new_gui.ui.controllers.action_window_bridge import ActionWindowBridge
+from new_gui.ui.dialogs.queue_selection_dialog import QueueSelectionDialog
 from new_gui.ui.dialogs.tune_dialogs import CopyTuneSelectDialog, SelectTuneDialog
 
 
@@ -188,13 +189,16 @@ def on_tree_double_clicked(window, index) -> None:
     current_value = edit_context["current_value"]
     header = edit_context["header_text"]
 
-    new_value, ok = QInputDialog.getText(
-        window,
-        f"Edit {header}",
-        f"Enter new {param_type} value for '{target}':",
-        QLineEdit.Normal,
-        current_value,
-    )
+    if param_type == "queue":
+        new_value, ok = _select_queue_value(window, ui, target, current_value)
+    else:
+        new_value, ok = QInputDialog.getText(
+            window,
+            f"Edit {header}",
+            f"Enter new {param_type} value for '{target}':",
+            QLineEdit.Normal,
+            current_value,
+        )
 
     if ok and new_value != current_value:
         validation_error = tree_editing.validate_bsub_value(param_type, new_value)
@@ -211,6 +215,50 @@ def on_tree_double_clicked(window, index) -> None:
                 "Error",
                 f"Failed to update {param_type} for {target}. Check if .csh file exists.",
             )
+
+
+def _select_queue_value(window, ui, target: str, current_value: str) -> tuple:
+    """Prompt the user to choose one queue from the discovered queue list."""
+    if current_value and not run_repository.is_editable_queue_name(current_value):
+        QMessageBox.information(
+            window,
+            "Queue Selection",
+            "Only queues starting with 'pd_' can be changed in the GUI.",
+        )
+        return current_value, False
+
+    def discover():
+        return run_repository.discover_available_queues(
+            ui.combo_sel,
+            ui.run_base_dir,
+            current_value,
+        )
+
+    dialog = QueueSelectionDialog(
+        target,
+        current_value,
+        discover(),
+        refresh_callback=discover,
+        parent=window,
+    )
+
+    if not dialog.selected_queue():
+        QMessageBox.information(
+            window,
+            "Queue Selection",
+            "No editable queues starting with 'pd_' are available.",
+        )
+        return current_value, False
+
+    if dialog.exec_() != QDialog.Accepted:
+        return current_value, False
+
+    selected_queue = dialog.selected_queue().strip()
+    if not selected_queue:
+        QMessageBox.warning(window, "Queue Selection", "No queue was selected.")
+        return current_value, False
+
+    return selected_queue, True
 
 
 def open_file_with_editor(window, filepath: str, editor: str = "gvim", use_popen: bool = False) -> None:

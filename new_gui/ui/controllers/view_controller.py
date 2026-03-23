@@ -297,6 +297,44 @@ def restore_normal_view(window) -> None:
         ui.activate_selected_run_view(ui.current_run_name(), invalidate_snapshot=True)
 
 
+def refresh_run_list(window, prefer_cwd: bool = False, activate_if_selection_changed: bool = False) -> dict:
+    """Re-scan available runs and keep the combo-box entries in sync."""
+    ui = _bridge(window)
+    runs = run_repository.list_available_runs(ui.run_base_dir)
+    existing_entries = ui.combo_run_names()
+    current_run = ui.current_run_name()
+    existing_runs = [] if existing_entries == ["No runs found"] else existing_entries
+
+    desired_run = current_run if current_run in runs else ""
+    if prefer_cwd and not desired_run:
+        cwd_run = ui.current_working_run_name()
+        if cwd_run in runs:
+            desired_run = cwd_run
+    if not desired_run and runs:
+        desired_run = runs[0]
+
+    combo_needs_update = (
+        existing_runs != runs
+        or ui.is_combo_enabled() != bool(runs)
+        or (not runs and existing_entries != ["No runs found"])
+    )
+    selection_changed = False
+
+    if combo_needs_update:
+        effective_selection = ui.set_combo_run_names(runs, desired_run)
+        selection_changed = bool(effective_selection) and effective_selection != current_run
+        ui.combo_sel = os.path.join(ui.run_base_dir, effective_selection) if effective_selection else None
+
+        if activate_if_selection_changed and selection_changed:
+            ui.activate_selected_run_view(effective_selection, invalidate_snapshot=True)
+
+    return {
+        "runs": runs,
+        "selection_changed": selection_changed,
+        "selected_run": desired_run,
+    }
+
+
 def on_run_changed(window) -> None:
     """Rebuild the selected run view after combo-box selection changes."""
     ui = _bridge(window)
@@ -473,6 +511,10 @@ def populate_data(window, force_rebuild=False) -> None:
 
 def change_run(window) -> None:
     """Refresh visible row status and time fields for the active run."""
+    refresh_state = refresh_run_list(window, activate_if_selection_changed=True)
+    if refresh_state["selection_changed"]:
+        return
+
     ui = _bridge(window)
     if not ui.model or not ui.combo_sel:
         return

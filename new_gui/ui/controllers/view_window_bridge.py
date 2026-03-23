@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from new_gui.services import view_state
 from new_gui.ui.controllers import output_controller
 
@@ -134,6 +136,41 @@ class ViewWindowBridge:
     def current_run_name(self) -> str:
         """Return the current combo-box run selection."""
         return self._window.combo.currentText()
+
+    def combo_run_names(self):
+        """Return all visible combo-box run labels."""
+        combo = self._window.combo
+        return [combo.itemText(index) for index in range(combo.count())]
+
+    def is_combo_enabled(self) -> bool:
+        """Return whether the run combo currently accepts interaction."""
+        return self._window.combo.isEnabled()
+
+    def set_combo_run_names(self, run_names, selected_run_name: str = "") -> str:
+        """Replace combo-box contents while preserving one preferred selection."""
+        combo = self._window.combo
+        previous_state = combo.blockSignals(True)
+        combo.clear()
+
+        effective_selection = ""
+        if run_names:
+            combo.addItems(run_names)
+            combo.setEnabled(True)
+            effective_selection = (
+                selected_run_name if selected_run_name in run_names else run_names[0]
+            )
+            combo.setCurrentIndex(combo.findText(effective_selection))
+        else:
+            combo.addItem("No runs found")
+            combo.setEnabled(False)
+
+        combo.blockSignals(previous_state)
+        return effective_selection
+
+    @staticmethod
+    def current_working_run_name() -> str:
+        """Return the current working directory basename."""
+        return os.path.basename(os.getcwd())
 
     def ensure_cached_targets(self) -> None:
         """Populate run-level target caches when they are currently empty."""

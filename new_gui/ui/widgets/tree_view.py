@@ -1,7 +1,7 @@
 """Custom tree-view classes used by the main GUI."""
 
 from PyQt5.QtCore import QEvent, QModelIndex, QObject, QPoint, Qt
-from PyQt5.QtGui import QColor, QPen, QPolygon
+from PyQt5.QtGui import QBrush, QColor, QPen, QPolygon
 from PyQt5.QtWidgets import QTreeView
 
 from new_gui.ui.widgets.scrollbars import RoundedScrollBar
@@ -135,11 +135,23 @@ class ColorTreeView(QTreeView):
             self.viewport().update()
         super().leaveEvent(event)
 
+    def _resolve_row_background_brush(self, index):
+        """Return the stable row background brush for one visible branch area."""
+        brush = index.data(Qt.BackgroundRole)
+        if not brush:
+            return None
+
+        if isinstance(brush, QBrush):
+            return brush
+        if isinstance(brush, QColor):
+            return QBrush(brush)
+        return brush
+
     def drawBranches(self, painter, rect, index):
         selection_model = self.selectionModel()
         is_selected = selection_model.isSelected(index) if selection_model else False
         is_hovered = self._row_index_key(index) == self._row_index_key(self._hovered_row_index)
-        brush = index.data(Qt.BackgroundRole)
+        brush = self._resolve_row_background_brush(index)
 
         painter.save()
 

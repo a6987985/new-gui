@@ -774,30 +774,11 @@ class MainWindow(QMainWindow):
 
     def populate_run_combo(self):
         """Populate the combo box with available run directories."""
-        runs = self.scan_runs()
-        if runs:
-            self.combo.addItems(runs)
-            
-            # Try to detect current run from working directory
-            # If we are inside a run directory, the basename of cwd should match a run name
-            current_cwd_name = os.path.basename(os.getcwd())
-            
-            logger.info(f"Current working directory basename: {current_cwd_name}")
-            logger.info(f"Available runs: {runs}")
-            
-            if current_cwd_name in runs:
-                index = self.combo.findText(current_cwd_name)
-                if index >= 0:
-                    self.combo.setCurrentIndex(index)
-                    logger.info(f"Selected run: {current_cwd_name}")
-            else:
-                # Default to the first item if current cwd is not a valid run
-                self.combo.setCurrentIndex(0)
-                logger.info(f"Selected first run: {runs[0]}")
-        else:
-            # Fallback if no runs found
-            self.combo.addItem("No runs found")
-            self.combo.setEnabled(False)
+        view_controller.refresh_run_list(self, prefer_cwd=True)
+
+    def refresh_available_runs(self):
+        """Re-scan available runs and update the combo-box entries."""
+        return view_controller.refresh_run_list(self, activate_if_selection_changed=True)
 
     def parse_dependency_file(self, run_name):
         """Parse .target_dependency.csh file to extract target-level mappings.

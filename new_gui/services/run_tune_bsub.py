@@ -1,15 +1,24 @@
 """Tune-file and BSUB parameter helpers."""
 
+import getpass
+import glob
 import os
 import re
+import shlex
+import subprocess
 from typing import Dict, List, Set, Tuple
 
 from new_gui.config.settings import logger
+from new_gui.services.flow_background import find_flow_cshrc_paths
+from new_gui.services.run_catalog import list_available_runs
 from new_gui.services.run_cache import CacheKey, build_run_target_cache_key
 
 
 TuneFileEntry = Tuple[str, str]
 BsubParams = Tuple[str, str, str]
+QueueDiscoveryResult = Dict[str, object]
+_QUEUE_PATTERN = re.compile(r"-q\s+(\S+)")
+_EDITABLE_QUEUE_PREFIX = "pd_"
 
 
 def get_tune_files(
@@ -180,3 +189,147 @@ def save_bsub_param(run_dir: str, target_name: str, param_type: str, new_value: 
     except Exception as exc:
         logger.error(f"Error saving bsub param for {target_name}: {exc}")
         return False
+
+
+def discover_available_queues(
+    run_dir: str,
+    run_base_dir: str = "",
+    current_queue: str = "",
+) -> QueueDiscoveryResult:
+    """Return queue choices for the current user, preferring live LSF discovery."""
+    username = (getpass.getuser() or os.environ.get("USER") or "").strip()
+    queues, error_message = _discover_lsf_queues(run_dir, username)
+    source = "lsf"
+    message = f"Showing editable '{_EDITABLE_QUEUE_PREFIX}' queues available to user '{username}'."
+
+    if not queues:
+        queues = _collect_project_seen_queues(run_base_dir or run_dir)
+        source = "project"
+        if error_message:
+            message = (
+                f"LSF lookup failed. Showing editable '{_EDITABLE_QUEUE_PREFIX}' queues already "
+                f"used in this project. ({error_message})"
+            )
+        else:
+            message = (
+                f"No live LSF queues were returned. Showing editable "
+                f"'{_EDITABLE_QUEUE_PREFIX}' queues already used in this project."
+            )
+
+    queues = [queue_name for queue_name in queues if is_editable_queue_name(queue_name)]
+
+    normalized = []
+    seen = set()
+    fallback_current = [current_queue] if is_editable_queue_name(current_queue) else []
+    for queue_name in queues + fallback_current:
+        queue_name = str(queue_name or "").strip()
+        if not queue_name or queue_name in seen:
+            continue
+        seen.add(queue_name)
+        normalized.append(queue_name)
+
+    return {
+        "queues": normalized,
+        "source": source,
+        "message": message,
+        "username": username,
+        "error": error_message,
+    }
+
+
+def is_editable_queue_name(queue_name: str) -> bool:
+    """Return whether the queue can be edited through the GUI picker."""
+    return str(queue_name or "").strip().startswith(_EDITABLE_QUEUE_PREFIX)
+
+
+def _discover_lsf_queues(run_dir: str, username: str) -> Tuple[List[str], str]:
+    """Return live LSF queues visible to the provided user."""
+    if not username:
+        return [], "Unable to determine current user."
+
+    try:
+        result = _run_lsf_command(
+            run_dir,
+            ["bqueues", "-u", username, "-o", "queue_name status", "-noheader"],
+        )
+    except subprocess.TimeoutExpired:
+        return [], "LSF queue lookup timed out."
+    except OSError as exc:
+        return [], str(exc)
+
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        stdout = (result.stdout or "").strip()
+        details = stderr or stdout or f"exit code {result.returncode}"
+        return [], details
+
+    queues: List[str] = []
+    for raw_line in (result.stdout or "").splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        parts = stripped.split()
+        if len(parts) < 2:
+            continue
+        queue_name = parts[0].strip()
+        status = parts[1].strip().lower()
+        if queue_name and status.startswith("open"):
+            queues.append(queue_name)
+
+    return sorted(set(queues)), ""
+
+
+def _run_lsf_command(run_dir: str, argv: List[str]) -> subprocess.CompletedProcess:
+    """Run one LSF command, sourcing the flow cshrc when available."""
+    cshrc_paths = find_flow_cshrc_paths(run_dir)
+    env = os.environ.copy()
+
+    if cshrc_paths:
+        cshrc_path = cshrc_paths[0]
+        quoted_command = " ".join(shlex.quote(part) for part in argv)
+        shell_command = f"source {shlex.quote(cshrc_path)} >& /dev/null; {quoted_command}"
+        return subprocess.run(
+            ["/bin/csh", "-fc", shell_command],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=8,
+        )
+
+    return subprocess.run(
+        argv,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=8,
+    )
+
+
+def _collect_project_seen_queues(base_path: str) -> List[str]:
+    """Return queue names already referenced by make_targets csh files."""
+    if not base_path:
+        return []
+
+    candidate_runs: List[str] = []
+    if os.path.isdir(os.path.join(base_path, "make_targets")):
+        candidate_runs.append(base_path)
+    elif os.path.isdir(base_path):
+        for run_name in list_available_runs(base_path):
+            candidate_runs.append(os.path.join(base_path, run_name))
+
+    queues = set()
+    for run_dir in candidate_runs:
+        pattern = os.path.join(run_dir, "make_targets", "*.csh")
+        for csh_file in glob.glob(pattern):
+            try:
+                with open(csh_file, "r", encoding="utf-8", errors="ignore") as handle:
+                    content = handle.read()
+            except OSError:
+                continue
+
+            for match in _QUEUE_PATTERN.finditer(content):
+                queue_name = match.group(1).strip()
+                if is_editable_queue_name(queue_name):
+                    queues.add(queue_name)
+
+    return sorted(queues)
