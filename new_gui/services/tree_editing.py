@@ -13,6 +13,47 @@ EDITABLE_BSUB_COLUMNS = {
     8: "memory",
 }
 
+CORE_VALUE_OPTIONS = (
+    {
+        "value": "1",
+        "label": "1",
+        "tone": "warning",
+    },
+    {
+        "value": "2",
+        "label": "2",
+        "tone": "warning",
+    },
+    {
+        "value": "4",
+        "label": "4",
+        "tone": "recommended",
+    },
+    {
+        "value": "8",
+        "label": "8",
+        "tone": "recommended",
+    },
+    {
+        "value": "16",
+        "label": "16",
+        "tone": "recommended",
+    },
+    {
+        "value": "32",
+        "label": "32",
+        "tone": "danger",
+    },
+)
+
+MEMORY_VALUE_OPTIONS = (
+    {"value": "30000", "label": "30000"},
+    {"value": "60000", "label": "60000"},
+    {"value": "128000", "label": "128000"},
+    {"value": "256000", "label": "256000"},
+    {"value": "300000", "label": "300000"},
+)
+
 BsubEditContext = Dict[str, object]
 
 
@@ -54,8 +95,10 @@ def build_bsub_edit_context(model, index) -> Optional[BsubEditContext]:
 
 def validate_bsub_value(param_type: str, new_value: str) -> Optional[str]:
     """Validate a user-entered bsub value and return an error message or None."""
-    if param_type == "cores" and not new_value.isdigit():
-        return "Cores must be a number."
-    if param_type == "memory" and not new_value.isdigit():
-        return "Memory must be a number (MB)."
+    if param_type == "cores":
+        if new_value not in {option["value"] for option in CORE_VALUE_OPTIONS}:
+            return "Cores must be one of: 1, 2, 4, 8, 16, 32."
+    if param_type == "memory":
+        if new_value not in {option["value"] for option in MEMORY_VALUE_OPTIONS}:
+            return "Memory must be one of: 30000, 60000, 128000, 256000, 300000."
     return None

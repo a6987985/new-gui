@@ -3,7 +3,7 @@
 import os
 
 from PyQt5.QtGui import QClipboard
-from PyQt5.QtWidgets import QApplication, QDialog, QInputDialog, QLineEdit, QMessageBox
+from PyQt5.QtWidgets import QApplication, QInputDialog, QLineEdit, QMessageBox
 
 from new_gui.config.settings import logger
 from new_gui.services import action_flow
@@ -14,8 +14,8 @@ from new_gui.services import tree_editing
 from new_gui.services import tune_actions
 from new_gui.services import view_tabs
 from new_gui.ui.controllers.action_window_bridge import ActionWindowBridge
-from new_gui.ui.dialogs.queue_selection_dialog import QueueSelectionDialog
 from new_gui.ui.dialogs.tune_dialogs import CopyTuneSelectDialog, SelectTuneDialog
+from new_gui.ui.widgets.cell_option_popup import CellOptionPopup
 
 
 def _bridge(window) -> ActionWindowBridge:
@@ -190,7 +190,11 @@ def on_tree_double_clicked(window, index) -> None:
     header = edit_context["header_text"]
 
     if param_type == "queue":
-        new_value, ok = _select_queue_value(window, ui, target, current_value)
+        new_value, ok = _select_queue_value(window, ui, index, current_value)
+    elif param_type == "cores":
+        new_value, ok = _select_core_value(window, index, current_value)
+    elif param_type == "memory":
+        new_value, ok = _select_memory_value(window, index, current_value)
     else:
         new_value, ok = QInputDialog.getText(
             window,
@@ -217,7 +221,7 @@ def on_tree_double_clicked(window, index) -> None:
             )
 
 
-def _select_queue_value(window, ui, target: str, current_value: str) -> tuple:
+def _select_queue_value(window, ui, index, current_value: str) -> tuple:
     """Prompt the user to choose one queue from the discovered queue list."""
     if current_value and not run_repository.is_editable_queue_name(current_value):
         QMessageBox.information(
@@ -234,15 +238,12 @@ def _select_queue_value(window, ui, target: str, current_value: str) -> tuple:
             current_value,
         )
 
-    dialog = QueueSelectionDialog(
-        target,
-        current_value,
-        discover(),
-        refresh_callback=discover,
-        parent=window,
-    )
-
-    if not dialog.selected_queue():
+    discovery_result = discover()
+    queue_options = [
+        {"value": queue_name, "label": queue_name}
+        for queue_name in discovery_result.get("queues", [])
+    ]
+    if not queue_options:
         QMessageBox.information(
             window,
             "Queue Selection",
@@ -250,15 +251,47 @@ def _select_queue_value(window, ui, target: str, current_value: str) -> tuple:
         )
         return current_value, False
 
-    if dialog.exec_() != QDialog.Accepted:
-        return current_value, False
-
-    selected_queue = dialog.selected_queue().strip()
+    selected_queue = _choose_cell_option(window, index, queue_options, current_value)
     if not selected_queue:
-        QMessageBox.warning(window, "Queue Selection", "No queue was selected.")
         return current_value, False
 
     return selected_queue, True
+
+
+def _select_core_value(window, index, current_value: str) -> tuple:
+    """Prompt the user to choose one fixed core value with recommendations."""
+    selected_value = _choose_cell_option(window, index, tree_editing.CORE_VALUE_OPTIONS, current_value)
+    if not selected_value:
+        return current_value, False
+
+    if selected_value == "32":
+        confirmed = QMessageBox.warning(
+            window,
+            "Confirm 32 Cores",
+            "32 cores is strongly discouraged. Do you want to continue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if confirmed != QMessageBox.Yes:
+            return current_value, False
+
+    return selected_value, True
+
+
+def _select_memory_value(window, index, current_value: str) -> tuple:
+    """Prompt the user to choose one fixed memory value."""
+    selected_value = _choose_cell_option(window, index, tree_editing.MEMORY_VALUE_OPTIONS, current_value)
+    if not selected_value:
+        return current_value, False
+    return selected_value, True
+
+
+def _choose_cell_option(window, index, options, current_value: str) -> str:
+    """Open one compact popup anchored to the edited tree cell."""
+    visual_rect = window.tree.visualRect(index)
+    popup_pos = window.tree.viewport().mapToGlobal(visual_rect.bottomLeft())
+    popup = CellOptionPopup(options, current_value=current_value, parent=window.tree)
+    return popup.choose_at(popup_pos, min_width=max(visual_rect.width(), 120)).strip()
 
 
 def open_file_with_editor(window, filepath: str, editor: str = "gvim", use_popen: bool = False) -> None:
