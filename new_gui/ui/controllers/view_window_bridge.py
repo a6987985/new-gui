@@ -330,6 +330,14 @@ class ViewWindowBridge:
         """Return the target start and end times for the provided run."""
         return self._window.get_target_times(run_name, target_name)
 
+    def get_bsub_params(self, run_dir: str, target_name: str):
+        """Return the queue, cores, and memory values for one target."""
+        return self._window.get_bsub_params(run_dir, target_name)
+
+    def invalidate_bsub_cache(self, run_dir: str = None, target_name: str = None) -> None:
+        """Invalidate cached BSUB values for one run or target."""
+        self._window._invalidate_bsub_cache(run_dir, target_name)
+
     def minimum_size_hint_width(self) -> int:
         """Return the current minimum size-hint width of the window."""
         return self._window.minimumSizeHint().width()

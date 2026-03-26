@@ -225,19 +225,28 @@ def update_target_row_items(
     status_value: str,
     start_time: str,
     end_time: str,
+    queue: str,
+    cores: str,
+    memory: str,
     status_colors: StatusColors,
 ) -> None:
-    """Refresh status, colors, and times for an existing main-tree row."""
+    """Refresh status, colors, times, and BSUB fields for an existing main-tree row."""
     if len(row_items) < len(MAIN_TREE_HEADERS):
         return
 
     normalized_status = "" if status_value is None else str(status_value)
     normalized_start = "" if start_time is None else str(start_time)
     normalized_end = "" if end_time is None else str(end_time)
+    normalized_queue = "" if queue is None else str(queue)
+    normalized_cores = "" if cores is None else str(cores)
+    normalized_memory = "" if memory is None else str(memory)
 
     status_item = row_items[2]
     start_time_item = row_items[4]
     end_time_item = row_items[5]
+    queue_item = row_items[6]
+    cores_item = row_items[7]
+    memory_item = row_items[8]
 
     if status_item and normalized_status != status_item.text():
         status_item.setText(normalized_status)
@@ -250,3 +259,9 @@ def update_target_row_items(
         start_time_item.setText(normalized_start)
     if end_time_item and normalized_end != end_time_item.text():
         end_time_item.setText(normalized_end)
+    if queue_item and normalized_queue != queue_item.text():
+        queue_item.setText(normalized_queue)
+    if cores_item and normalized_cores != cores_item.text():
+        cores_item.setText(normalized_cores)
+    if memory_item and normalized_memory != memory_item.text():
+        memory_item.setText(normalized_memory)

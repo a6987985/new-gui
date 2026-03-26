@@ -433,6 +433,7 @@ def populate_data(window, force_rebuild=False) -> None:
         if not current_run:
             return
 
+        ui.invalidate_bsub_cache(ui.combo_sel)
         ui.set_tree_updates_enabled(False)
         try:
             def update_row(row_index, parent_item=None):
@@ -442,11 +443,15 @@ def populate_data(window, force_rebuild=False) -> None:
                 target_name = tree_rows.get_row_target_name(target_item)
                 if target_name:
                     status = ui.get_target_status(current_run, target_name)
+                    queue, cores, memory = ui.get_bsub_params(ui.combo_sel, target_name)
                     tree_rows.update_target_row_items(
                         row_items,
                         status,
                         row_items[4].text() if len(row_items) > 4 and row_items[4] else "",
                         row_items[5].text() if len(row_items) > 5 and row_items[5] else "",
+                        queue,
+                        cores,
+                        memory,
                         STATUS_COLORS,
                     )
                 elif row_kind == tree_rows.ROW_KIND_GROUP:
@@ -524,6 +529,7 @@ def change_run(window) -> None:
 
     current_run = os.path.basename(ui.combo_sel)
     ui.build_status_cache(current_run)
+    ui.invalidate_bsub_cache(ui.combo_sel)
 
     def update_row_status(row_idx, parent_item=None):
         row_items = tree_rows.get_row_items(ui.model, row_idx, parent_item)
@@ -533,7 +539,17 @@ def change_run(window) -> None:
         if target:
             status = ui.get_target_status(current_run, target)
             start_time, end_time = ui.get_target_times(current_run, target)
-            tree_rows.update_target_row_items(row_items, status, start_time, end_time, ui.colors)
+            queue, cores, memory = ui.get_bsub_params(ui.combo_sel, target)
+            tree_rows.update_target_row_items(
+                row_items,
+                status,
+                start_time,
+                end_time,
+                queue,
+                cores,
+                memory,
+                ui.colors,
+            )
         elif row_kind == tree_rows.ROW_KIND_GROUP:
             group_targets = tree_rows.get_row_targets(target_item)
             status_text, status_key = status_summary.summarize_group_status(

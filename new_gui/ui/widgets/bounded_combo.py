@@ -19,7 +19,6 @@ class BoundedComboBox(QComboBox):
         self._arrow_color = QColor("#555555")
         self._arrow_color_hover = QColor("#333333")
         self._delegate = None
-        self._popup_hidden_row = -1
 
         self.search_btn = QPushButton(self)
         self.search_btn.setCursor(Qt.PointingHandCursor)
@@ -45,7 +44,7 @@ class BoundedComboBox(QComboBox):
         self._popup_scrollbar.setFixedWidth(16)
         self._popup_scrollbar.setColors("#b5b5b5", "#9f9f9f", "#8b8b8b", "#f3f3f3")
         self.view().setVerticalScrollBar(self._popup_scrollbar)
-        self.view().setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        self.view().setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.view().setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
     def setArrowColor(self, color):
@@ -145,36 +144,13 @@ class BoundedComboBox(QComboBox):
 
     def showPopup(self):
         self.popup_about_to_show.emit()
-        current_idx = self.currentIndex()
-        if self._popup_hidden_row >= 0:
-            self.view().setRowHidden(self._popup_hidden_row, False)
-        self._popup_hidden_row = current_idx
-        if current_idx >= 0:
-            self.view().setRowHidden(current_idx, True)
-
         super().showPopup()
-
-        popup = self.view().parentWidget()
-        if popup:
-            hidden_rows = 1 if current_idx >= 0 else 0
-            visible_rows = max(1, min(self.count() - hidden_rows, self.maxVisibleItems()))
-            row_height = self.view().sizeHintForRow(0)
-            if row_height <= 0:
-                row_height = 28
-            frame_width = popup.frameWidth() if hasattr(popup, "frameWidth") else 0
-            popup_width = self.width()
-            popup_height = visible_rows * row_height + frame_width * 2
-            popup.resize(popup_width, popup_height)
-
+        popup = self.view().window()
+        if popup is not None:
             combo_bottom_left = self.mapToGlobal(self.rect().bottomLeft())
             popup.move(combo_bottom_left)
 
     def hidePopup(self):
-        if self._popup_hidden_row >= 0:
-            self.view().setRowHidden(self._popup_hidden_row, False)
-            self._popup_hidden_row = -1
-            self.view().doItemsLayout()
-            self.view().viewport().update()
         super().hidePopup()
 
     def focusOutEvent(self, event):
