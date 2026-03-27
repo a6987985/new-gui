@@ -89,6 +89,7 @@ class MainWindow(QMainWindow):
         self._visible_top_buttons = set(top_panel_builder.DEFAULT_TOP_BUTTON_IDS)
         self._button_visibility_picker = None
         self._bottom_output_last_height = 260
+        self._pending_tune_refresh = False
         self._terminal_follow_run = False
         self._launch_xmeta_background = os.environ.get("XMETA_BACKGROUND", "").strip() or None
         self._xmeta_background_color = self._launch_xmeta_background
@@ -978,6 +979,36 @@ class MainWindow(QMainWindow):
             self.status_watcher.addPath(status_dir)
             self.watched_status_dirs.add(status_dir)
             logger.debug(f"Now watching status directory: {status_dir}")
+
+    def setup_tune_watcher(self):
+        """Setup file system watcher for the current run's tune directories."""
+        if not self.combo_sel:
+            return
+
+        run_dir = self.combo_sel
+        tune_root = os.path.join(run_dir, "tune")
+
+        if self.watched_tune_dirs:
+            old_dirs = list(self.watched_tune_dirs)
+            self.tune_watcher.removePaths(old_dirs)
+            self.watched_tune_dirs.clear()
+
+        watched_dirs = [run_dir]
+        if os.path.isdir(tune_root):
+            watched_dirs.append(tune_root)
+            try:
+                for entry in os.listdir(tune_root):
+                    target_dir = os.path.join(tune_root, entry)
+                    if os.path.isdir(target_dir):
+                        watched_dirs.append(target_dir)
+            except OSError as exc:
+                logger.error(f"Failed to enumerate tune directory {tune_root}: {exc}")
+
+        existing_dirs = [path for path in watched_dirs if os.path.isdir(path)]
+        if existing_dirs:
+            self.tune_watcher.addPaths(existing_dirs)
+            self.watched_tune_dirs.update(existing_dirs)
+            logger.debug(f"Now watching tune directories: {existing_dirs}")
     
     def on_status_directory_changed(self, path):
         """Called when the status directory contents change (file added/removed)."""
@@ -992,6 +1023,24 @@ class MainWindow(QMainWindow):
         logger.debug(f"Status file changed: {path}")
 
         # Use debounce timer to batch rapid changes
+        if not self.debounce_timer.isActive():
+            self.debounce_timer.start(DEBOUNCE_DELAY_MS)
+
+    def on_tune_directory_changed(self, path):
+        """Called when the tune directory tree changes for the current run."""
+        logger.debug(f"Tune directory changed: {path}")
+
+        if not self.combo_sel:
+            return
+
+        run_dir = os.path.normpath(self.combo_sel)
+        tune_root = os.path.normpath(os.path.join(self.combo_sel, "tune"))
+        changed_path = os.path.normpath(path)
+
+        if changed_path in {run_dir, tune_root}:
+            self.setup_tune_watcher()
+
+        self._pending_tune_refresh = True
         if not self.debounce_timer.isActive():
             self.debounce_timer.start(DEBOUNCE_DELAY_MS)
 

@@ -412,12 +412,15 @@ def activate_selected_run_view(window, current_run: str, invalidate_snapshot: bo
 
     ui.set_main_run_tab_state()
     ui.build_status_cache(run_state["run_name"])
+    ui.invalidate_tune_cache(ui.combo_sel)
     ui.clear_model()
     ui.populate_data()
     ui.apply_main_tree_column_visibility(ui.main_tree_visible_columns, save_state=False)
 
     if ui.has_status_watcher():
         ui.setup_status_watcher()
+    if ui.has_tune_watcher():
+        ui.setup_tune_watcher()
 
     ui.update_status_bar()
     ui.update_column_visibility_control_state()
@@ -433,7 +436,10 @@ def populate_data(window, force_rebuild=False) -> None:
         if not current_run:
             return
 
+        refresh_tune = ui.consume_pending_tune_refresh()
         ui.invalidate_bsub_cache(ui.combo_sel)
+        if refresh_tune:
+            ui.invalidate_tune_cache(ui.combo_sel)
         ui.set_tree_updates_enabled(False)
         try:
             def update_row(row_index, parent_item=None):
@@ -444,6 +450,11 @@ def populate_data(window, force_rebuild=False) -> None:
                 if target_name:
                     status = ui.get_target_status(current_run, target_name)
                     queue, cores, memory = ui.get_bsub_params(ui.combo_sel, target_name)
+                    tune_files = (
+                        ui.get_tune_files(ui.combo_sel, target_name)
+                        if refresh_tune
+                        else None
+                    )
                     tree_rows.update_target_row_items(
                         row_items,
                         status,
@@ -453,6 +464,7 @@ def populate_data(window, force_rebuild=False) -> None:
                         cores,
                         memory,
                         STATUS_COLORS,
+                        tune_files=tune_files,
                     )
                 elif row_kind == tree_rows.ROW_KIND_GROUP:
                     group_targets = tree_rows.get_row_targets(target_item)
@@ -527,9 +539,12 @@ def change_run(window) -> None:
     if ui.is_all_status_view:
         return
 
+    refresh_tune = ui.consume_pending_tune_refresh()
     current_run = os.path.basename(ui.combo_sel)
     ui.build_status_cache(current_run)
     ui.invalidate_bsub_cache(ui.combo_sel)
+    if refresh_tune:
+        ui.invalidate_tune_cache(ui.combo_sel)
 
     def update_row_status(row_idx, parent_item=None):
         row_items = tree_rows.get_row_items(ui.model, row_idx, parent_item)
@@ -540,6 +555,7 @@ def change_run(window) -> None:
             status = ui.get_target_status(current_run, target)
             start_time, end_time = ui.get_target_times(current_run, target)
             queue, cores, memory = ui.get_bsub_params(ui.combo_sel, target)
+            tune_files = ui.get_tune_files(ui.combo_sel, target) if refresh_tune else None
             tree_rows.update_target_row_items(
                 row_items,
                 status,
@@ -549,6 +565,7 @@ def change_run(window) -> None:
                 cores,
                 memory,
                 ui.colors,
+                tune_files=tune_files,
             )
         elif row_kind == tree_rows.ROW_KIND_GROUP:
             group_targets = tree_rows.get_row_targets(target_item)

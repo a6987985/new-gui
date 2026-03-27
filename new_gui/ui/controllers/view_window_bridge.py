@@ -281,6 +281,14 @@ class ViewWindowBridge:
         """Refresh status watcher bindings."""
         self._window.setup_status_watcher()
 
+    def has_tune_watcher(self) -> bool:
+        """Return whether the window has an active tune watcher object."""
+        return hasattr(self._window, "tune_watcher")
+
+    def setup_tune_watcher(self) -> None:
+        """Refresh tune watcher bindings."""
+        self._window.setup_tune_watcher()
+
     def update_status_bar(self) -> None:
         """Refresh the visible status bar."""
         self._window.update_status_bar()
@@ -337,6 +345,20 @@ class ViewWindowBridge:
     def invalidate_bsub_cache(self, run_dir: str = None, target_name: str = None) -> None:
         """Invalidate cached BSUB values for one run or target."""
         self._window._invalidate_bsub_cache(run_dir, target_name)
+
+    def get_tune_files(self, run_dir: str, target_name: str):
+        """Return tune files for one target in one run."""
+        return self._window.get_tune_files(run_dir, target_name)
+
+    def invalidate_tune_cache(self, run_dir: str = None, target_name: str = None) -> None:
+        """Invalidate cached tune values for one run or target."""
+        self._window._invalidate_tune_cache(run_dir, target_name)
+
+    def consume_pending_tune_refresh(self) -> bool:
+        """Return and clear the queued tune-refresh flag."""
+        pending = bool(getattr(self._window, "_pending_tune_refresh", False))
+        self._window._pending_tune_refresh = False
+        return pending
 
     def minimum_size_hint_width(self) -> int:
         """Return the current minimum size-hint width of the window."""

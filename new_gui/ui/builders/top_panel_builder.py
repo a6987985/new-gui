@@ -197,6 +197,12 @@ def init_top_panel(window) -> None:
     window.watched_status_dirs = set()
     window.setup_status_watcher()
 
+    window.tune_watcher = QFileSystemWatcher(window)
+    window.tune_watcher.directoryChanged.connect(window.on_tune_directory_changed)
+
+    window.watched_tune_dirs = set()
+    window.setup_tune_watcher()
+
     window.backup_timer = QTimer()
     window.backup_timer.timeout.connect(window.change_run)
     window.backup_timer.start(BACKUP_TIMER_INTERVAL_MS)

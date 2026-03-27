@@ -229,8 +229,10 @@ def update_target_row_items(
     cores: str,
     memory: str,
     status_colors: StatusColors,
+    tune_files: Optional[Sequence[TuneFileEntry]] = None,
+    tune_display: Optional[str] = None,
 ) -> None:
-    """Refresh status, colors, times, and BSUB fields for an existing main-tree row."""
+    """Refresh status, colors, tune data, times, and BSUB fields for an existing row."""
     if len(row_items) < len(MAIN_TREE_HEADERS):
         return
 
@@ -240,8 +242,17 @@ def update_target_row_items(
     normalized_queue = "" if queue is None else str(queue)
     normalized_cores = "" if cores is None else str(cores)
     normalized_memory = "" if memory is None else str(memory)
+    normalized_tune_files = list(tune_files) if tune_files is not None else None
+    normalized_tune_display = None
+    if normalized_tune_files is not None:
+        normalized_tune_display = (
+            ", ".join([suffix for suffix, _ in normalized_tune_files])
+            if tune_display is None
+            else str(tune_display)
+        )
 
     status_item = row_items[2]
+    tune_item = row_items[3]
     start_time_item = row_items[4]
     end_time_item = row_items[5]
     queue_item = row_items[6]
@@ -259,6 +270,10 @@ def update_target_row_items(
         start_time_item.setText(normalized_start)
     if end_time_item and normalized_end != end_time_item.text():
         end_time_item.setText(normalized_end)
+    if tune_item and normalized_tune_files is not None:
+        if normalized_tune_display != tune_item.text():
+            tune_item.setText(normalized_tune_display)
+        tune_item.setData(normalized_tune_files, Qt.UserRole)
     if queue_item and normalized_queue != queue_item.text():
         queue_item.setText(normalized_queue)
     if cores_item and normalized_cores != cores_item.text():
