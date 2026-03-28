@@ -4,58 +4,39 @@ from PyQt5.QtCore import QItemSelectionModel
 from PyQt5.QtWidgets import QApplication, QMenu
 
 from new_gui.config.settings import STYLES
+from new_gui.ui.action_registry import (
+    get_action_definition,
+    get_execute_menu_action_ids,
+    get_file_menu_action_ids,
+    get_trace_menu_action_ids,
+)
+
+
+def _add_registered_action(window, menu: QMenu, action_id: str):
+    """Add one action from the shared action registry to the provided menu."""
+    definition = get_action_definition(action_id)
+    action = menu.addAction(definition.menu_label)
+    action.setToolTip(definition.tooltip)
+    action.triggered.connect(lambda _, trigger=definition.trigger: trigger(window))
+    return action
 
 
 def build_execute_menu(window, menu: QMenu) -> None:
     """Build the Execute submenu."""
     exec_menu = menu.addMenu("▶ Execute")
-
-    run_all_action = exec_menu.addAction("▶ Run All")
-    run_all_action.setToolTip("Run all targets (Ctrl+Shift+Enter)")
-    run_all_action.triggered.connect(lambda: window.start("XMeta_run all"))
-
-    run_action = exec_menu.addAction("▶ Run Selected")
-    run_action.setToolTip("Run selected targets (Ctrl+Enter)")
-    run_action.triggered.connect(lambda: window.start("XMeta_run"))
-
-    stop_action = exec_menu.addAction("■ Stop")
-    stop_action.setToolTip("Stop selected targets")
-    stop_action.triggered.connect(lambda: window.start("XMeta_stop"))
-
+    action_ids = list(get_execute_menu_action_ids())
+    for action_id in action_ids[:3]:
+        _add_registered_action(window, exec_menu, action_id)
     exec_menu.addSeparator()
-
-    skip_action = exec_menu.addAction("○ Skip")
-    skip_action.setToolTip("Skip selected targets")
-    skip_action.triggered.connect(lambda: window.start("XMeta_skip"))
-
-    unskip_action = exec_menu.addAction("● Unskip")
-    unskip_action.setToolTip("Unskip selected targets")
-    unskip_action.triggered.connect(lambda: window.start("XMeta_unskip"))
-
-    invalid_action = exec_menu.addAction("✕ Invalid")
-    invalid_action.setToolTip("Mark selected targets as invalid")
-    invalid_action.triggered.connect(lambda: window.start("XMeta_invalid"))
+    for action_id in action_ids[3:]:
+        _add_registered_action(window, exec_menu, action_id)
 
 
 def build_file_menu(window, menu: QMenu) -> None:
     """Build the Files submenu."""
     file_menu = menu.addMenu("📁 Files")
-
-    terminal_action = file_menu.addAction("⌘ Terminal")
-    terminal_action.setToolTip("Open the embedded terminal panel in the current run directory")
-    terminal_action.triggered.connect(window.open_terminal)
-
-    csh_action = file_menu.addAction("📄 csh")
-    csh_action.setToolTip("Open shell file for selected target")
-    csh_action.triggered.connect(window.handle_csh)
-
-    log_action = file_menu.addAction("📋 Log")
-    log_action.setToolTip("Open log file for selected target")
-    log_action.triggered.connect(window.handle_log)
-
-    cmd_action = file_menu.addAction("⚡ cmd")
-    cmd_action.setToolTip("Open command file for selected target")
-    cmd_action.triggered.connect(window.handle_cmd)
+    for action_id in get_file_menu_action_ids():
+        _add_registered_action(window, file_menu, action_id)
 
 
 def build_tune_menu(window, menu: QMenu, selected_targets: list) -> None:
@@ -100,14 +81,8 @@ def build_params_menu(window, menu: QMenu) -> None:
 def build_trace_menu(window, menu: QMenu) -> None:
     """Build the Trace submenu."""
     trace_menu = menu.addMenu("🔗 Trace")
-
-    trace_up_action = trace_menu.addAction("⬆ Trace Up (Ctrl+U)")
-    trace_up_action.setToolTip("Trace upstream dependencies")
-    trace_up_action.triggered.connect(lambda: window.retrace_tab("in"))
-
-    trace_down_action = trace_menu.addAction("⬇ Trace Down (Ctrl+D)")
-    trace_down_action.setToolTip("Trace downstream dependencies")
-    trace_down_action.triggered.connect(lambda: window.retrace_tab("out"))
+    for action_id in get_trace_menu_action_ids():
+        _add_registered_action(window, trace_menu, action_id)
 
     trace_menu.addSeparator()
 

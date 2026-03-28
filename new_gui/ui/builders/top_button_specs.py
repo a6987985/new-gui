@@ -7,102 +7,22 @@ from new_gui.ui.top_button_styles import (
     build_secondary_tight_top_button_style,
     build_warning_top_button_style,
 )
+from new_gui.ui.action_registry import get_top_button_action_ids
+from new_gui.ui.action_registry import get_top_button_choices as _registry_top_button_choices
+from new_gui.ui.action_registry import get_top_button_definitions
 
 
-DEFAULT_TOP_BUTTON_IDS = (
-    "run_all",
-    "run",
-    "stop",
-    "skip",
-    "unskip",
-    "invalid",
-)
+DEFAULT_TOP_BUTTON_IDS = get_top_button_action_ids()
 
-TOP_BUTTON_DEFINITIONS = (
+TOP_BUTTON_DEFINITIONS = tuple(
     {
-        "id": "run_all",
-        "label": "Run All",
-        "style": "primary",
-        "preferred_row": 1,
-        "callback": lambda window: window.start("XMeta_run all"),
-    },
-    {
-        "id": "run",
-        "label": "Run",
-        "style": "primary",
-        "preferred_row": 1,
-        "callback": lambda window: window.start("XMeta_run"),
-    },
-    {
-        "id": "stop",
-        "label": "Stop",
-        "style": "warning",
-        "preferred_row": 1,
-        "callback": lambda window: window.start("XMeta_stop"),
-    },
-    {
-        "id": "skip",
-        "label": "Skip",
-        "style": "warning",
-        "preferred_row": 1,
-        "callback": lambda window: window.start("XMeta_skip"),
-    },
-    {
-        "id": "unskip",
-        "label": "Unskip",
-        "style": "neutral",
-        "preferred_row": 1,
-        "callback": lambda window: window.start("XMeta_unskip"),
-    },
-    {
-        "id": "invalid",
-        "label": "Invalid",
-        "style": "warning",
-        "preferred_row": 1,
-        "callback": lambda window: window.start("XMeta_invalid"),
-    },
-    {
-        "id": "term",
-        "label": "Term",
-        "style": "neutral",
-        "preferred_row": 2,
-        "callback": lambda window: window.open_terminal(),
-    },
-    {
-        "id": "csh",
-        "label": "Csh",
-        "style": "neutral",
-        "preferred_row": 2,
-        "callback": lambda window: window.handle_csh(),
-    },
-    {
-        "id": "log",
-        "label": "Log",
-        "style": "neutral",
-        "preferred_row": 2,
-        "callback": lambda window: window.handle_log(),
-    },
-    {
-        "id": "cmd",
-        "label": "Cmd",
-        "style": "neutral",
-        "preferred_row": 2,
-        "callback": lambda window: window.handle_cmd(),
-    },
-    {
-        "id": "trace_up",
-        "label": "Trace Up",
-        "style": "neutral",
-        "preferred_row": 2,
-        "callback": lambda window: window.retrace_tab("in"),
-    },
-    {
-        "id": "trace_down",
-        "label": "Trace Down",
-        "style": "neutral",
-        "preferred_row": 2,
-        "callback": lambda window: window.retrace_tab("out"),
-    },
+        "id": definition.action_id,
+        "label": definition.button_label,
+        "style": definition.button_style,
+        "preferred_row": definition.preferred_row,
+        "callback": definition.trigger,
+    }
+    for definition in get_top_button_definitions()
 )
 
 TOP_BUTTON_STYLE_SHEETS = {
@@ -123,7 +43,7 @@ TOP_BUTTON_PANEL_ROW_Y_OFFSET = 10
 
 def get_top_button_choices():
     """Return top-button ids and labels in stable display order."""
-    return [(definition["id"], definition["label"]) for definition in TOP_BUTTON_DEFINITIONS]
+    return _registry_top_button_choices()
 
 
 def normalize_visible_top_buttons(button_ids):

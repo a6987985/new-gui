@@ -89,6 +89,10 @@ class ActionWindowBridge:
         """Persist one BSUB parameter edit through the window owner."""
         return self._window.save_bsub_param(run_dir, target, param_type, value)
 
+    def get_bsub_params(self, run_dir: str, target: str):
+        """Return queue, cores, and memory values for one target."""
+        return self._window.get_bsub_params(run_dir, target)
+
     def set_model_data(self, index, value) -> None:
         """Update the shared tree model at one index."""
         self._window.model.setData(index, value)

@@ -1,6 +1,6 @@
 """Top-panel and tree-area builder helpers for MainWindow."""
 
-from PyQt5.QtCore import QFileSystemWatcher, QTimer, Qt
+from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QColor, QStandardItemModel
 from PyQt5.QtWidgets import (
     QGraphicsDropShadowEffect,
@@ -13,9 +13,9 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from new_gui.config.settings import BACKUP_TIMER_INTERVAL_MS
 from new_gui.services import tree_rows, view_tabs
 from new_gui.ui import style_sheets
+from new_gui.ui.controllers import runtime_controller
 from new_gui.ui.top_panel_widget_styles import (
     build_run_selector_style,
     build_tab_close_button_style,
@@ -189,26 +189,5 @@ def init_top_panel(window) -> None:
     window._setup_keyboard_shortcuts()
     window._apply_initial_window_width()
     window.on_run_changed()
-
-    window.status_watcher = QFileSystemWatcher(window)
-    window.status_watcher.directoryChanged.connect(window.on_status_directory_changed)
-    window.status_watcher.fileChanged.connect(window.on_status_file_changed)
-
-    window.watched_status_dirs = set()
-    window.setup_status_watcher()
-
-    window.tune_watcher = QFileSystemWatcher(window)
-    window.tune_watcher.directoryChanged.connect(window.on_tune_directory_changed)
-
-    window.watched_tune_dirs = set()
-    window.setup_tune_watcher()
-
-    window.backup_timer = QTimer()
-    window.backup_timer.timeout.connect(window.change_run)
-    window.backup_timer.start(BACKUP_TIMER_INTERVAL_MS)
-
-    window.debounce_timer = QTimer()
-    window.debounce_timer.setSingleShot(True)
-    window.debounce_timer.timeout.connect(window.change_run)
-
+    runtime_controller.init_runtime_observers(window)
     window.expand_tree_default()

@@ -2,18 +2,15 @@
 
 import os
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont, QFontMetrics
-from PyQt5.QtWidgets import QHeaderView
-
 from new_gui.config.settings import STATUS_COLORS, WINDOW_HEIGHT, logger
 from new_gui.services import run_repository
 from new_gui.services import run_views
-from new_gui.services import status_summary
-from new_gui.services import tree_rows
+from new_gui.services import tree_refresh
 from new_gui.services import tree_structure
+from new_gui.services import view_layout
 from new_gui.services import view_modes
 from new_gui.services import view_restore
+from new_gui.services import view_run_selection as run_selection
 from new_gui.services import view_state
 from new_gui.services import view_tabs
 from new_gui.ui.controllers.view_window_bridge import ViewWindowBridge
@@ -62,14 +59,14 @@ def filter_tree(window, text) -> None:
         ui.populate_data()
         return
 
-    ui.ensure_cached_targets()
-    if not ui.has_cached_targets():
+    run_selection.ensure_cached_targets(window, ui.current_run_name())
+    if not run_selection.has_cached_targets(window):
         return
 
     ui.set_tree_updates_enabled(False)
     ui.reset_main_tree_model()
 
-    matching_groups = tree_structure.filter_level_groups_by_text(ui.cached_targets_by_level, text)
+    matching_groups = tree_structure.filter_level_groups_by_text(window.cached_targets_by_level, text)
     display_groups = ui.build_display_level_groups(dict(matching_groups))
     ui.append_target_groups_to_model(display_groups)
 
@@ -85,8 +82,8 @@ def filter_tree_by_status_flat(window, status):
     if not status_key:
         return 0
 
-    ui.ensure_cached_targets()
-    if not ui.has_cached_targets():
+    run_selection.ensure_cached_targets(window, ui.current_run_name())
+    if not run_selection.has_cached_targets(window):
         return 0
 
     ui.set_tree_updates_enabled(False)
@@ -94,7 +91,7 @@ def filter_tree_by_status_flat(window, status):
 
     current_run = ui.current_run_name()
     matched_groups = tree_structure.filter_level_groups_by_status(
-        ui.cached_targets_by_level,
+        window.cached_targets_by_level,
         lambda target_name: ui.get_target_status(current_run, target_name),
         status_key,
     )
@@ -144,140 +141,47 @@ def show_all_status(window) -> None:
 def apply_all_status_column_widths(window) -> None:
     """Apply adaptive widths for the four-column all-status overview."""
     ui = _bridge(window)
-    if ui.model.columnCount() < 4:
-        return
-
-    header = ui.tree.header()
-    if header is None:
-        return
-
-    header.setStretchLastSection(False)
-    for col in range(ui.model.columnCount()):
-        header.setSectionResizeMode(col, QHeaderView.Interactive)
-
-    ui.tree.resizeColumnToContents(0)
-    ui.tree.resizeColumnToContents(2)
-    ui.tree.resizeColumnToContents(3)
-
     header_min_widths = get_header_min_widths(window)
-    for col in range(4):
-        min_width = header_min_widths.get(col, 0)
-        if min_width > 0:
-            ui.tree.setColumnWidth(col, max(ui.tree.columnWidth(col), min_width))
-
+    view_layout.apply_all_status_column_widths(ui.tree, ui.model, header_min_widths)
     apply_adaptive_target_column_width(window)
 
 
 def get_header_min_widths(window):
     """Calculate per-column minimum widths to fully show header text."""
     ui = _bridge(window)
-
-    header = ui.tree.header()
-    if header is None:
-        return {}
-
-    header_font = QFont(header.font())
-    header_font.setPointSize(10)
-    header_font.setWeight(QFont.DemiBold)
-    font_metrics = QFontMetrics(header_font)
-    min_widths = {}
-
-    for col in range(ui.model.columnCount()):
-        header_text = ui.model.headerData(col, Qt.Horizontal) or ""
-        if hasattr(header, "get_minimum_width_for_text"):
-            text_based_min = header.get_minimum_width_for_text(str(header_text))
-        else:
-            text_based_min = font_metrics.horizontalAdvance(str(header_text)) + 30
-        style_based_min = header.sectionSizeFromContents(col).width() + 8
-        min_widths[col] = max(text_based_min, style_based_min)
-
-    return min_widths
+    return view_layout.get_header_min_widths(ui.model, ui.tree.header())
 
 
 def get_main_view_default_column_widths(window):
     """Return the default width plan for the main tree view."""
     ui = _bridge(window)
-    font_metrics = ui.tree.fontMetrics()
-    status_values = ["finish", "running", "failed", "skip", "scheduled", "pending"]
-    status_width = max(font_metrics.horizontalAdvance(status) for status in status_values) + 20
-
-    time_format = "YYYY-MM-DD HH:MM:SS"
-    time_width = font_metrics.horizontalAdvance(time_format) + 20
-
-    return {
-        0: 80,
-        1: 400,
-        2: status_width,
-        3: 120,
-        4: time_width,
-        5: time_width,
-        6: 100,
-        7: 60,
-        8: 80,
-    }
+    return view_layout.get_main_view_default_column_widths(ui.tree)
 
 
 def get_main_view_default_window_width(window):
     """Estimate the startup window width from the main-view column defaults."""
     ui = _bridge(window)
     column_widths = get_main_view_default_column_widths(window)
-    tree_content_width = sum(column_widths.values())
-    scrollbar_width = ui.tree.verticalScrollBar().sizeHint().width()
-    frame_width = ui.tree.frameWidth() * 2
-    return tree_content_width + scrollbar_width + frame_width
+    return view_layout.get_main_view_default_window_width(ui.tree, column_widths)
 
 
 def apply_adaptive_target_column_width(window, column: int = 1) -> None:
     """Stretch only the target column when the tree viewport width changes."""
     ui = _bridge(window)
-    if ui.model.columnCount() <= column:
-        return
-    if ui.tree.isColumnHidden(column):
-        return
-
-    viewport_width = ui.tree.viewport().width()
-    if viewport_width <= 0:
-        return
-
     header_min_widths = get_header_min_widths(window)
-    current_target_width = ui.tree.columnWidth(column)
-    min_target_width = header_min_widths.get(column, 0)
-    visible_columns = [col for col in range(ui.model.columnCount()) if not ui.tree.isColumnHidden(col)]
-    if not visible_columns:
-        return
-    current_total_width = sum(ui.tree.columnWidth(col) for col in visible_columns)
-    width_delta = viewport_width - current_total_width
-    new_target_width = max(min_target_width, current_target_width + width_delta)
-
-    if new_target_width != current_target_width:
-        ui.tree.setColumnWidth(column, new_target_width)
+    view_layout.apply_adaptive_column_width(
+        ui.tree,
+        ui.model,
+        header_min_widths,
+        column=column,
+    )
 
 
 def fill_trailing_blank_with_last_column(window) -> None:
     """Expand the last visible column to remove right-side blank space."""
     ui = _bridge(window)
-
-    visible_columns = [col for col in range(ui.model.columnCount()) if not ui.tree.isColumnHidden(col)]
-    if not visible_columns:
-        return
-
-    viewport_width = ui.tree.viewport().width()
-    if viewport_width <= 0:
-        return
-
-    last_column = visible_columns[-1]
-    current_total_width = sum(ui.tree.columnWidth(col) for col in visible_columns)
-    width_delta = viewport_width - current_total_width
-    if width_delta <= 0:
-        return
-
     header_min_widths = get_header_min_widths(window)
-    current_last_width = ui.tree.columnWidth(last_column)
-    min_last_width = header_min_widths.get(last_column, 0)
-    new_last_width = max(min_last_width, current_last_width + width_delta)
-
-    if new_last_width != current_last_width:
-        ui.tree.setColumnWidth(last_column, new_last_width)
+    view_layout.fill_trailing_blank_with_last_column(ui.tree, ui.model, header_min_widths)
 
 
 def apply_initial_window_width(window) -> None:
@@ -301,13 +205,13 @@ def refresh_run_list(window, prefer_cwd: bool = False, activate_if_selection_cha
     """Re-scan available runs and keep the combo-box entries in sync."""
     ui = _bridge(window)
     runs = run_repository.list_available_runs(ui.run_base_dir)
-    existing_entries = ui.combo_run_names()
+    existing_entries = run_selection.combo_run_names(window.combo)
     current_run = ui.current_run_name()
     existing_runs = [] if existing_entries == ["No runs found"] else existing_entries
 
     desired_run = current_run if current_run in runs else ""
     if prefer_cwd and not desired_run:
-        cwd_run = ui.current_working_run_name()
+        cwd_run = run_selection.current_working_run_name()
         if cwd_run in runs:
             desired_run = cwd_run
     if not desired_run and runs:
@@ -315,13 +219,13 @@ def refresh_run_list(window, prefer_cwd: bool = False, activate_if_selection_cha
 
     combo_needs_update = (
         existing_runs != runs
-        or ui.is_combo_enabled() != bool(runs)
+        or window.combo.isEnabled() != bool(runs)
         or (not runs and existing_entries != ["No runs found"])
     )
     selection_changed = False
 
     if combo_needs_update:
-        effective_selection = ui.set_combo_run_names(runs, desired_run)
+        effective_selection = run_selection.set_combo_run_names(window.combo, runs, desired_run)
         selection_changed = bool(effective_selection) and effective_selection != current_run
         ui.combo_sel = os.path.join(ui.run_base_dir, effective_selection) if effective_selection else None
 
@@ -442,50 +346,18 @@ def populate_data(window, force_rebuild=False) -> None:
             ui.invalidate_tune_cache(ui.combo_sel)
         ui.set_tree_updates_enabled(False)
         try:
-            def update_row(row_index, parent_item=None):
-                row_items = tree_rows.get_row_items(ui.model, row_index, parent_item)
-                target_item = row_items[1] if len(row_items) > 1 else None
-                row_kind = tree_rows.get_row_kind(target_item)
-                target_name = tree_rows.get_row_target_name(target_item)
-                if target_name:
-                    status = ui.get_target_status(current_run, target_name)
-                    queue, cores, memory = ui.get_bsub_params(ui.combo_sel, target_name)
-                    tune_files = (
-                        ui.get_tune_files(ui.combo_sel, target_name)
-                        if refresh_tune
-                        else None
-                    )
-                    tree_rows.update_target_row_items(
-                        row_items,
-                        status,
-                        row_items[4].text() if len(row_items) > 4 and row_items[4] else "",
-                        row_items[5].text() if len(row_items) > 5 and row_items[5] else "",
-                        queue,
-                        cores,
-                        memory,
-                        STATUS_COLORS,
-                        tune_files=tune_files,
-                    )
-                elif row_kind == tree_rows.ROW_KIND_GROUP:
-                    group_targets = tree_rows.get_row_targets(target_item)
-                    status_text, status_key = status_summary.summarize_group_status(
-                        group_targets,
-                        lambda grouped_target: ui.get_target_status(current_run, grouped_target),
-                    )
-                    tree_rows.update_container_row_items(
-                        row_items,
-                        status_text,
-                        status_key,
-                        STATUS_COLORS,
-                    )
-
-                level_item = row_items[0] if row_items else None
-                if level_item and level_item.hasChildren():
-                    for child_row in range(level_item.rowCount()):
-                        update_row(child_row, level_item)
-
-            for row in range(ui.model.rowCount()):
-                update_row(row)
+            tree_refresh.refresh_tree_rows(
+                ui.model,
+                current_run=current_run,
+                run_dir=ui.combo_sel,
+                refresh_tune=refresh_tune,
+                colors=STATUS_COLORS,
+                preserve_existing_times=True,
+                get_target_status=ui.get_target_status,
+                get_target_times=ui.get_target_times,
+                get_bsub_params=ui.get_bsub_params,
+                get_tune_files=ui.get_tune_files,
+            )
         finally:
             ui.set_tree_updates_enabled(True)
             ui.tree.viewport().update()
@@ -546,47 +418,18 @@ def change_run(window) -> None:
     if refresh_tune:
         ui.invalidate_tune_cache(ui.combo_sel)
 
-    def update_row_status(row_idx, parent_item=None):
-        row_items = tree_rows.get_row_items(ui.model, row_idx, parent_item)
-        target_item = row_items[1] if len(row_items) > 1 else None
-        row_kind = tree_rows.get_row_kind(target_item)
-        target = tree_rows.get_row_target_name(target_item)
-        if target:
-            status = ui.get_target_status(current_run, target)
-            start_time, end_time = ui.get_target_times(current_run, target)
-            queue, cores, memory = ui.get_bsub_params(ui.combo_sel, target)
-            tune_files = ui.get_tune_files(ui.combo_sel, target) if refresh_tune else None
-            tree_rows.update_target_row_items(
-                row_items,
-                status,
-                start_time,
-                end_time,
-                queue,
-                cores,
-                memory,
-                ui.colors,
-                tune_files=tune_files,
-            )
-        elif row_kind == tree_rows.ROW_KIND_GROUP:
-            group_targets = tree_rows.get_row_targets(target_item)
-            status_text, status_key = status_summary.summarize_group_status(
-                group_targets,
-                lambda grouped_target: ui.get_target_status(current_run, grouped_target),
-            )
-            tree_rows.update_container_row_items(
-                row_items,
-                status_text,
-                status_key,
-                ui.colors,
-            )
-
-        level_item = row_items[0] if row_items else None
-        if level_item and level_item.hasChildren():
-            for child_row in range(level_item.rowCount()):
-                update_row_status(child_row, level_item)
-
-    for row in range(ui.model.rowCount()):
-        update_row_status(row, None)
+    tree_refresh.refresh_tree_rows(
+        ui.model,
+        current_run=current_run,
+        run_dir=ui.combo_sel,
+        refresh_tune=refresh_tune,
+        colors=ui.colors,
+        preserve_existing_times=False,
+        get_target_status=ui.get_target_status,
+        get_target_times=ui.get_target_times,
+        get_bsub_params=ui.get_bsub_params,
+        get_tune_files=ui.get_tune_files,
+    )
 
     ui.update_status_bar()
     ui.tree.viewport().update()

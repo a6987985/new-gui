@@ -1,9 +1,4 @@
 import os
-import re
-import shlex
-import shutil
-import subprocess
-import time
 
 from PyQt5.QtCore import QModelIndex, Qt, QAbstractTableModel, QTimer
 from PyQt5.QtGui import QKeySequence
@@ -24,7 +19,8 @@ from PyQt5.QtWidgets import (
     QLabel,
 )
 
-from new_gui.config.settings import RE_PARAM_LINE, logger
+from new_gui.config.settings import logger
+from new_gui.services import params_editor_service
 from new_gui.ui.menu_styles import build_popup_menu_style
 from new_gui.ui.params_editor_styles import (
     build_params_editor_dialog_style,
@@ -285,24 +281,11 @@ class ParamsEditorDialog(QDialog):
             return
 
         try:
-            with open(self.params_file, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith('#'):
-                        continue
-                    match = RE_PARAM_LINE.match(line)
-                    if match:
-                        param_name = match.group(1)
-                        value = match.group(2).strip()
-                        # Remove quotes if present
-                        if (value.startswith('"') and value.endswith('"')) or \
-                           (value.startswith("'") and value.endswith("'")):
-                            value = value[1:-1]
-                        self.params_data[param_name] = value
-
-            # Set data to model
+            self.params_data = params_editor_service.load_params_file(self.params_file)
             self._model.set_data(self.params_data)
             self.status_label.setText(f"Loaded {len(self.params_data)} parameters")
+        except FileNotFoundError:
+            self.status_label.setText(f"File not found: {self.params_file}")
         except Exception as e:
             self.status_label.setText(f"Error loading file: {e}")
             logger.error(f"Error loading params file: {e}")
@@ -374,7 +357,7 @@ class ParamsEditorDialog(QDialog):
             self.status_label.setText("Error: Parameter name is required")
             return
 
-        if not re.match(r'^\w+$', param_name):
+        if not params_editor_service.is_valid_param_name(param_name):
             self.status_label.setText("Error: Parameter name must be alphanumeric")
             return
 
@@ -439,22 +422,11 @@ class ParamsEditorDialog(QDialog):
     def _save_params(self):
         """Save parameters to file"""
         try:
-            # Create backup
-            if os.path.exists(self.params_file):
-                backup_file = self.params_file + ".bak"
-                shutil.copy2(self.params_file, backup_file)
-
-            with open(self.params_file, 'w') as f:
-                f.write(f"# {self.params_type.title()} Parameters\n")
-                f.write(f"# Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-
-                for param_name, value in sorted(self.params_data.items()):
-                    # Quote value if it contains spaces or special chars
-                    if ' ' in value or not re.match(r'^[\w\.\-]+$', value):
-                        f.write(f'{param_name} = "{value}"\n')
-                    else:
-                        f.write(f'{param_name} = {value}\n')
-
+            params_editor_service.save_params_file(
+                self.params_file,
+                self.params_type,
+                self.params_data,
+            )
             self.modified = False
             self.status_label.setText(f"Saved to: {self.params_file}")
             logger.info(f"Saved params to: {self.params_file}")
@@ -492,38 +464,31 @@ class ParamsEditorDialog(QDialog):
         logger.info(f"Gen params - params_file: {self.params_file}")
         self.status_label.setText(f"Generating params in: {self.run_dir}")
 
-        command = ["XMeta_gen_params"]
-        command_display = f"cd {shlex.quote(self.run_dir)} && {shlex.join(command)}"
-        logger.info(f"Executing: {command_display}")
+        result = params_editor_service.execute_gen_params(self.run_dir, timeout=60)
+        logger.info(f"Executing: {result['command_display']}")
 
-        try:
-            process = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                cwd=self.run_dir  # Explicitly set working directory
-            )
-            stdout, stderr = process.communicate(timeout=60)
+        if result["stdout"]:
+            logger.info(result["stdout"])
+        if result["stderr"]:
+            logger.error(result["stderr"])
 
-            if stdout:
-                logger.info(stdout.decode())
-            if stderr:
-                logger.error(stderr.decode())
-
-            if process.returncode == 0:
-                self.status_label.setText("Params generated successfully!")
-                QMessageBox.information(self, "Success", "Params generated to flow successfully!")
-            else:
-                self.status_label.setText(f"Gen params failed (exit code: {process.returncode})")
-                QMessageBox.warning(self, "Warning", f"XMeta_gen_params exited with code {process.returncode}")
-
-        except subprocess.TimeoutExpired:
-            process.kill()
+        if result["timed_out"]:
             self.status_label.setText("Error: Command timed out")
-            logger.error(f"XMeta_gen_params timed out")
-        except Exception as e:
-            self.status_label.setText(f"Error: {e}")
-            logger.error(f"Error executing XMeta_gen_params: {e}")
+            logger.error("XMeta_gen_params timed out")
+            return
+
+        if result["error"]:
+            self.status_label.setText(f"Error: {result['error']}")
+            logger.error(f"Error executing XMeta_gen_params: {result['error']}")
+            return
+
+        if result["returncode"] == 0:
+            self.status_label.setText("Params generated successfully!")
+            QMessageBox.information(self, "Success", "Params generated to flow successfully!")
+            return
+
+        self.status_label.setText(f"Gen params failed (exit code: {result['returncode']})")
+        QMessageBox.warning(self, "Warning", f"XMeta_gen_params exited with code {result['returncode']}")
 
     def closeEvent(self, event):
         """Handle close event - prompt to save if modified"""

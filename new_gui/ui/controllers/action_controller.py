@@ -3,7 +3,7 @@
 import os
 
 from PyQt5.QtGui import QClipboard
-from PyQt5.QtWidgets import QApplication, QInputDialog, QLineEdit, QMessageBox
+from PyQt5.QtWidgets import QApplication, QMessageBox
 
 from new_gui.config.settings import logger
 from new_gui.services import action_flow
@@ -11,7 +11,7 @@ from new_gui.services import file_actions
 from new_gui.services import run_repository
 from new_gui.services import search_flow
 from new_gui.services import tree_editing
-from new_gui.services import tune_actions
+from new_gui.services import tune_workflow
 from new_gui.services import view_tabs
 from new_gui.ui.controllers.action_window_bridge import ActionWindowBridge
 from new_gui.ui.dialogs.tune_dialogs import CopyTuneSelectDialog, SelectTuneDialog
@@ -184,73 +184,80 @@ def on_tree_double_clicked(window, index) -> None:
     if not edit_context:
         return
 
-    target = edit_context["target_name"]
-    param_type = edit_context["param_type"]
-    current_value = edit_context["current_value"]
-    header = edit_context["header_text"]
+    edit_plan = tree_editing.build_bsub_edit_plan(
+        edit_context,
+        ui.get_selected_action_targets(),
+        ui.combo_sel,
+        ui.get_bsub_params,
+    )
+    target = str(edit_plan["target_name"])
+    param_type = str(edit_plan["param_type"])
+    edit_targets = list(edit_plan["edit_targets"])
+    popup_current_value = str(edit_plan["popup_current_value"])
 
     if param_type == "queue":
-        new_value, ok = _select_queue_value(window, ui, index, current_value)
+        new_value, ok = _select_queue_value(window, ui, index, popup_current_value, edit_targets)
     elif param_type == "cores":
-        new_value, ok = _select_core_value(window, index, current_value)
+        new_value, ok = _select_core_value(window, index, popup_current_value, len(edit_targets))
     elif param_type == "memory":
-        new_value, ok = _select_memory_value(window, index, current_value)
+        new_value, ok = _select_memory_value(window, index, popup_current_value)
     else:
-        new_value, ok = QInputDialog.getText(
-            window,
-            f"Edit {header}",
-            f"Enter new {param_type} value for '{target}':",
-            QLineEdit.Normal,
-            current_value,
-        )
+        return
 
-    if ok and new_value != current_value:
+    if ok and new_value != popup_current_value:
         validation_error = tree_editing.validate_bsub_value(param_type, new_value)
         if validation_error:
             QMessageBox.warning(window, "Invalid Input", validation_error)
             return
 
-        if ui.save_bsub_param(ui.combo_sel, target, param_type, new_value):
-            ui.set_model_data(index, new_value)
-            ui.notify("Saved", f"Updated {param_type} to {new_value} for {target}", "success")
-        else:
-            QMessageBox.warning(
-                window,
-                "Error",
-                f"Failed to update {param_type} for {target}. Check if .csh file exists.",
-            )
-
-
-def _select_queue_value(window, ui, index, current_value: str) -> tuple:
-    """Prompt the user to choose one queue from the discovered queue list."""
-    if current_value and not run_repository.is_editable_queue_name(current_value):
-        QMessageBox.information(
-            window,
-            "Queue Selection",
-            "Only queues starting with 'pd_' can be changed in the GUI.",
-        )
-        return current_value, False
-
-    def discover():
-        return run_repository.discover_available_queues(
+        result = tree_editing.apply_bsub_value_for_targets(
+            edit_targets,
             ui.combo_sel,
-            ui.run_base_dir,
-            current_value,
+            param_type,
+            new_value,
+            ui.save_bsub_param,
+            model=ui.model,
+            column=index.column(),
         )
+        if result["successes"]:
+            window.tree.viewport().update()
+        feedback = tree_editing.build_bsub_apply_feedback(
+            param_type,
+            new_value,
+            target,
+            edit_targets,
+            result,
+        )
+        if feedback["kind"] == "error":
+            QMessageBox.warning(window, feedback["title"], feedback["message"])
+            return
+        if feedback["kind"] == "warning":
+            ui.notify(feedback["title"], feedback["message"], "warning")
+            return
+        ui.notify(feedback["title"], feedback["message"], "success")
 
-    discovery_result = discover()
-    queue_options = [
-        {"value": queue_name, "label": queue_name}
-        for queue_name in discovery_result.get("queues", [])
-    ]
-    if not queue_options:
+
+def _select_queue_value(window, ui, index, current_value: str, target_names) -> tuple:
+    """Prompt the user to choose one queue from the discovered queue list."""
+    selection_context = tree_editing.build_queue_selection_context(
+        ui.combo_sel,
+        ui.run_base_dir,
+        current_value,
+        target_names,
+        ui.get_bsub_params,
+        run_repository.is_editable_queue_name,
+        run_repository.discover_available_queues,
+    )
+    blocked_message = str(selection_context.get("blocked_message") or "")
+    if blocked_message:
         QMessageBox.information(
             window,
             "Queue Selection",
-            "No editable queues starting with 'pd_' are available.",
+            blocked_message,
         )
         return current_value, False
 
+    queue_options = list(selection_context.get("options") or [])
     selected_queue = _choose_cell_option(window, index, queue_options, current_value)
     if not selected_queue:
         return current_value, False
@@ -258,17 +265,18 @@ def _select_queue_value(window, ui, index, current_value: str) -> tuple:
     return selected_queue, True
 
 
-def _select_core_value(window, index, current_value: str) -> tuple:
+def _select_core_value(window, index, current_value: str, target_count: int = 1) -> tuple:
     """Prompt the user to choose one fixed core value with recommendations."""
     selected_value = _choose_cell_option(window, index, tree_editing.CORE_VALUE_OPTIONS, current_value)
     if not selected_value:
         return current_value, False
 
     if selected_value == "32":
+        warning_text = tree_editing.build_core_32_warning_text(target_count)
         confirmed = QMessageBox.warning(
             window,
             "Confirm 32 Cores",
-            "32 cores is strongly discouraged. Do you want to continue?",
+            warning_text,
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -351,8 +359,13 @@ def create_tune(window) -> None:
     """Create a tune file from tunesource entries and open it."""
     ui = _bridge(window)
     selected_targets = exit_search_mode_and_get_targets(window)
-    if not ui.combo_sel or len(selected_targets) != 1:
-        QMessageBox.information(window, "Info", "Select exactly one target to create tune.")
+    validation_message = tune_workflow.validate_single_target_action(
+        selected_targets,
+        ui.combo_sel,
+        "create tune",
+    )
+    if validation_message:
+        QMessageBox.information(window, "Info", validation_message)
         return
 
     target = selected_targets[0]
@@ -361,7 +374,7 @@ def create_tune(window) -> None:
         QMessageBox.information(
             window,
             "Info",
-            f"No tunesource entries found in cmds/{target}.cmd",
+            tune_workflow.build_missing_tunesource_message(target),
         )
         return
 
@@ -372,7 +385,7 @@ def create_tune(window) -> None:
         title_prefix="Create Tune",
         instruction_text="Select a tune file name to create:",
     )
-    if dialog.exec_() != QDialog.Accepted:
+    if dialog.exec_() != dialog.Accepted:
         return
 
     selected_tune = dialog.get_selected_tune()
@@ -381,19 +394,8 @@ def create_tune(window) -> None:
 
     tune_file = selected_tune[1]
     try:
-        created = tune_actions.ensure_tune_file(tune_file)
-        if created:
-            ui.notify(
-                "Tune",
-                f"Created tune file: {os.path.basename(tune_file)}",
-                "success",
-            )
-        else:
-            ui.notify(
-                "Tune",
-                f"Tune file already exists: {os.path.basename(tune_file)}",
-                "info",
-            )
+        feedback = tune_workflow.apply_create_tune(tune_file)
+        ui.notify("Tune", feedback["message"], feedback["notification_type"])
 
         ui.invalidate_tune_cache(ui.combo_sel, target)
         ui.refresh_tune_cells_for_target(target)
@@ -418,7 +420,7 @@ def handle_tune(window) -> None:
     tune_files = ui.get_tune_files(target)
 
     if not tune_files:
-        QMessageBox.information(window, "Info", f"No tune file found for: {target}")
+        QMessageBox.information(window, "Info", tune_workflow.build_missing_tune_message(target))
         return
 
     if len(tune_files) == 1:
@@ -426,7 +428,7 @@ def handle_tune(window) -> None:
         return
 
     dialog = SelectTuneDialog(target, tune_files, window)
-    if dialog.exec_() == QDialog.Accepted:
+    if dialog.exec_() == dialog.Accepted:
         selected = dialog.get_selected_tune()
         if selected:
             ui.open_tune_file(selected[1])
@@ -448,18 +450,18 @@ def copy_tune_to_runs(window) -> None:
     tune_files = ui.get_tune_files(target)
 
     if not tune_files:
-        QMessageBox.information(window, "Info", f"No tune file found for: {target}")
+        QMessageBox.information(window, "Info", tune_workflow.build_missing_tune_message(target))
         return
 
     available_runs = run_repository.list_available_runs(ui.run_base_dir)
     if not available_runs:
-        QMessageBox.warning(window, "Warning", "No other runs available")
+        QMessageBox.warning(window, "Warning", tune_workflow.build_no_other_runs_message())
         return
 
-    current_run = os.path.basename(ui.combo_sel) if os.path.isabs(ui.combo_sel) else ui.combo_sel
+    current_run = tune_workflow.resolve_current_run_name(ui.combo_sel)
 
     dialog = CopyTuneSelectDialog(current_run, target, tune_files, available_runs, window)
-    if dialog.exec_() != QDialog.Accepted:
+    if dialog.exec_() != dialog.Accepted:
         return
 
     selected_runs = dialog.get_selected_runs()
@@ -467,7 +469,7 @@ def copy_tune_to_runs(window) -> None:
     if not selected_runs or not selected_tunes:
         return
 
-    result = tune_actions.copy_tune_files_to_runs(
+    result = tune_workflow.copy_tunes(
         selected_tunes,
         selected_runs,
         ui.run_base_dir,
@@ -479,11 +481,10 @@ def copy_tune_to_runs(window) -> None:
         run_dir = os.path.join(ui.run_base_dir, run)
         ui.invalidate_tune_cache(run_dir, target)
 
-    tune_names = ", ".join([suffix for suffix, _ in selected_tunes])
     QMessageBox.information(
         window,
         "Copy Complete",
-        f"Copied {len(selected_tunes)} tune file(s) ({tune_names})\nto {total_success}/{len(selected_runs)} runs",
+        tune_workflow.build_copy_tune_summary(selected_tunes, selected_runs, result),
     )
 
 
