@@ -70,7 +70,7 @@ class DependencyGraphRenderingMixin:
         rect_item.setBrush(QBrush(rect_item.brush().color().lighter(106)))
         rect_item.setZValue(120)
         self._set_node_opacity(node_name, 1.0)
-        self._set_node_scale(node_name, 1.06)
+        self._set_node_scale(node_name, 1.15)
 
         if node_name in self.node_texts:
             self.node_texts[node_name].setDefaultTextColor(QColor("#16324f"))

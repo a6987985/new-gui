@@ -216,7 +216,7 @@ class DependencyGraphDialog(
 
         locate_btn = QPushButton("Locate In Tree")
         locate_btn.setStyleSheet(btn_style)
-        locate_btn.setToolTip("Close the graph and locate the selected target in the main tree")
+        locate_btn.setToolTip("Locate the selected target in the main tree and keep the graph open")
         locate_btn.clicked.connect(self.locate_selected_target_in_tree)
         locate_btn.setEnabled(self._locate_target_callback is not None)
         secondary_toolbar.addWidget(locate_btn)

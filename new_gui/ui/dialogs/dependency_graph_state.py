@@ -217,7 +217,7 @@ class DependencyGraphStateMixin:
         self._pending_focus_target = None
 
     def locate_selected_target_in_tree(self):
-        """Close the dialog and locate the selected target in the main tree."""
+        """Locate the selected target in the main tree without closing the dialog."""
         if not self.selected_node:
             self._set_info_message("Select a target first, then use Locate In Tree.")
             return
@@ -226,8 +226,11 @@ class DependencyGraphStateMixin:
             return
 
         target_name = self._node_representative_target(self.selected_node)
-        self.accept()
         QTimer.singleShot(0, lambda: self._locate_target_callback(target_name))
+        self._set_info_message(
+            f"Locate requested for {self._node_display_name(self.selected_node)}. "
+            "The graph remains open."
+        )
 
     def _direct_adjacency(self, direction):
         """Return direct adjacency for the full graph in the requested direction."""
