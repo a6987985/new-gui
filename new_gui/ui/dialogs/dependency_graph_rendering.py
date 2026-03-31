@@ -19,6 +19,137 @@ from new_gui.config.settings import STATUS_CONFIG
 class DependencyGraphRenderingMixin:
     """Provide scene drawing and highlight behavior for the dependency graph dialog."""
 
+    def _set_node_opacity(self, node_name, opacity):
+        """Apply one opacity value across the node visuals."""
+        if node_name in self.node_rects:
+            self.node_rects[node_name].setOpacity(opacity)
+        if node_name in self.node_texts:
+            self.node_texts[node_name].setOpacity(opacity)
+        if node_name in self.node_icons:
+            self.node_icons[node_name].setOpacity(opacity)
+
+    def _set_node_scale(self, node_name, scale):
+        """Apply one scale value to the node body, text, and icon."""
+        if node_name in self.node_rects:
+            self.node_rects[node_name].setScale(scale)
+        if node_name in self.node_texts:
+            self.node_texts[node_name].setScale(scale)
+        if node_name in self.node_icons:
+            self.node_icons[node_name].setScale(scale)
+
+    def _restore_level_lanes(self):
+        """Restore all level-lane visuals to their default state."""
+        for lane_item in self.level_lane_items.values():
+            default_fill = lane_item.data(0)
+            default_border = lane_item.data(1)
+            lane_item.setBrush(QBrush(QColor(default_fill)))
+            lane_item.setPen(QPen(QColor(default_border), 1))
+
+    def _highlight_selected_level_lane(self, node_name):
+        """Highlight the level lane containing the selected node."""
+        selected_level = self.node_levels.get(node_name)
+        lane_item = self.level_lane_items.get(selected_level)
+        if lane_item is None:
+            return
+        lane_item.setBrush(QBrush(QColor("#dcebfa")))
+        lane_item.setPen(QPen(QColor("#97bbe0"), 1.5))
+
+    def _apply_deemphasis_to_other_nodes(self, active_nodes):
+        """Fade non-active nodes slightly into the background."""
+        active_node_set = set(active_nodes or [])
+        for node_name in self.node_rects.keys():
+            self._set_node_opacity(node_name, 1.0 if node_name in active_node_set else 0.74)
+
+    def _apply_selected_node_visual(self, node_name):
+        """Apply the focused visual treatment for the selected node."""
+        if node_name not in self.node_rects:
+            return
+
+        rect_item = self.node_rects[node_name]
+        rect_item.setPen(QPen(QColor("#2F80ED"), 3))
+        rect_item.setBrush(QBrush(rect_item.brush().color().lighter(106)))
+        rect_item.setZValue(120)
+        self._set_node_opacity(node_name, 1.0)
+        self._set_node_scale(node_name, 1.06)
+
+        if node_name in self.node_texts:
+            self.node_texts[node_name].setDefaultTextColor(QColor("#16324f"))
+            self.node_texts[node_name].setZValue(125)
+        if node_name in self.node_icons:
+            self.node_icons[node_name].setZValue(125)
+
+    def _reset_node_visuals(self):
+        """Restore node visuals to their default unselected state."""
+        for name, status in self.graph_data.get("nodes", []):
+            if name not in self.node_rects:
+                continue
+            color_hex = self._status_color(status)
+            self.node_rects[name].setPen(QPen(QColor("#333333"), 2))
+            self.node_rects[name].setBrush(QBrush(QColor(color_hex)))
+            self.node_rects[name].setZValue(0)
+            self._set_node_opacity(name, 1.0)
+            self._set_node_scale(name, 1.0)
+            if name in self.node_texts:
+                self.node_texts[name].setDefaultTextColor(QColor("#000000"))
+                self.node_texts[name].setZValue(0)
+            if name in self.node_icons:
+                self.node_icons[name].setZValue(0)
+
+    def _set_edge_item_hidden(self, edge_item):
+        """Hide one edge item from the default graph view."""
+        edge_item.setVisible(False)
+        edge_item.setZValue(-50)
+
+    def _set_edge_item_color(self, edge_item, color_hex, width=1.5):
+        """Apply one color treatment to an edge line or arrow item."""
+        color = QColor(color_hex)
+        edge_item.setVisible(True)
+        if isinstance(edge_item, QGraphicsLineItem):
+            edge_item.setPen(QPen(color, width))
+        else:
+            edge_item.setBrush(QBrush(color))
+            edge_item.setPen(QPen(color, 1))
+
+    def _hide_all_edges(self):
+        """Hide all graph edges in the default unselected state."""
+        for edge_item in self.edge_items:
+            self._set_edge_item_hidden(edge_item)
+
+    def _edge_touches_node(self, edge_item, node_name):
+        """Return whether the edge item connects to the requested node."""
+        source = edge_item.data(1)
+        target = edge_item.data(2)
+        return source == node_name or target == node_name
+
+    def _show_selected_node_edges(self, node_name):
+        """Show only the direct edges connected to the selected node."""
+        for edge_item in self.edge_items:
+            if self._edge_touches_node(edge_item, node_name):
+                self._set_edge_item_color(edge_item, "#4A90D9", 2.2)
+                edge_item.setZValue(80)
+            else:
+                self._set_edge_item_hidden(edge_item)
+
+    def _node_tooltip_text(self, node_name, status_label):
+        """Return the tooltip text for a dependency node."""
+        display_name = self._node_display_name(node_name)
+        members = self._node_members(node_name)
+        interaction_hint = self._node_interaction_hint()
+        if len(members) <= 1:
+            return f"Target: {display_name}\nStatus: {status_label}\n\n{interaction_hint}"
+
+        preview_members = ", ".join(members[:4])
+        remaining_count = len(members) - 4
+        if remaining_count > 0:
+            preview_members += f", and {remaining_count} more"
+        return (
+            f"Generic Group: {display_name}\n"
+            f"Status: {status_label}\n"
+            f"Members: {len(members)}\n"
+            f"Includes: {preview_members}\n\n"
+            f"{interaction_hint}"
+        )
+
     def _draw_level_guides(self, sorted_levels, levels, node_positions):
         """Draw background bands and labels to make level structure explicit."""
         if not sorted_levels or not node_positions:
@@ -31,7 +162,7 @@ class DependencyGraphRenderingMixin:
         lane_left = min(x_positions) - 220
         lane_right = max(x_positions) + 120
         lane_width = lane_right - lane_left
-        lane_height = 68
+        lane_height = 52
         label_font = QFont("Arial", 10, QFont.Bold)
         meta_font = QFont("Arial", 8)
         lane_colors = ["#f4f8fc", "#edf4f9"]
@@ -50,21 +181,24 @@ class DependencyGraphRenderingMixin:
             lane_item.setBrush(QBrush(lane_color))
             lane_item.setPen(QPen(lane_border, 1))
             lane_item.setZValue(-200)
+            lane_item.setData(0, lane_color.name())
+            lane_item.setData(1, lane_border.name())
             self.scene.addItem(lane_item)
+            self.level_lane_items[level] = lane_item
 
             label_item = QGraphicsTextItem(f"Level {level}")
             label_item.setFont(label_font)
             label_item.setDefaultTextColor(QColor("#5b6b7c"))
-            label_item.setPos(lane_left + 12, lane_top + 6)
+            label_item.setPos(lane_left + 12, lane_top + 4)
             label_item.setZValue(-150)
             self.scene.addItem(label_item)
 
             target_count = len(level_targets)
-            count_text = f"{target_count} target" if target_count == 1 else f"{target_count} targets"
+            count_text = f"{target_count} node" if target_count == 1 else f"{target_count} nodes"
             count_item = QGraphicsTextItem(count_text)
             count_item.setFont(meta_font)
             count_item.setDefaultTextColor(QColor("#7a8794"))
-            count_item.setPos(lane_left + 12, lane_top + 26)
+            count_item.setPos(lane_left + 12, lane_top + 21)
             count_item.setZValue(-150)
             self.scene.addItem(count_item)
 
@@ -75,6 +209,9 @@ class DependencyGraphRenderingMixin:
         self.edge_items.clear()
         self.node_rects.clear()
         self.node_texts.clear()
+        self.node_icons.clear()
+        self.node_levels.clear()
+        self.level_lane_items.clear()
         self.highlighted_nodes.clear()
         self.selected_node = None
 
@@ -97,9 +234,9 @@ class DependencyGraphRenderingMixin:
         self._find_btn.setEnabled(True)
 
         node_positions = {}
-        level_height = 100
+        level_height = 76
         node_width = 180
-        y_offset = 50
+        y_offset = 42
         sorted_levels = sorted(levels.keys())
 
         for level in sorted_levels:
@@ -110,12 +247,14 @@ class DependencyGraphRenderingMixin:
 
             for index, target_name in enumerate(level_targets):
                 node_positions[target_name] = (start_x + index * node_width, y_offset)
+                self.node_levels[target_name] = level
 
             y_offset += level_height
 
         self._draw_level_guides(sorted_levels, levels, node_positions)
         self._draw_edges(edges, node_positions)
         self._draw_nodes(nodes, node_positions)
+        self._hide_all_edges()
 
         self.view.setSceneRect(self.scene.itemsBoundingRect().adjusted(-50, -50, 50, 50))
         self._set_info_message()
@@ -138,14 +277,14 @@ class DependencyGraphRenderingMixin:
         status_label = self._status_label(status)
         color_hex = self._status_color(status)
         color = QColor(color_hex)
+        display_name = self._node_display_name(name)
 
         rect_item = InteractiveNodeItem(x_pos - width / 2, y_pos - height / 2, width, height, name, self)
         rect_item.setPen(QPen(QColor("#333333"), 2))
         rect_item.setBrush(QBrush(color))
-        rect_item.setToolTip(
-            f"Target: {name}\nStatus: {status_label}\n\n{self._node_interaction_hint()}"
-        )
+        rect_item.setToolTip(self._node_tooltip_text(name, status_label))
         rect_item.setCursor(Qt.PointingHandCursor)
+        rect_item.setTransformOriginPoint(rect_item.rect().center())
 
         self.scene.addItem(rect_item)
         self.node_rects[name] = rect_item
@@ -158,19 +297,28 @@ class DependencyGraphRenderingMixin:
             icon_item.setFont(QFont("Arial", 10, QFont.Bold))
             icon_item.setDefaultTextColor(QColor(config.get("text_color", "#333333")))
             icon_item.setPos(x_pos - width / 2 + 5, y_pos - icon_item.boundingRect().height() / 2)
+            icon_item.setTransformOriginPoint(icon_item.boundingRect().center())
             self.scene.addItem(icon_item)
             icon_reserved_width = 18
+            self.node_icons[name] = icon_item
 
         available_text_width = max(40, width - 16 - icon_reserved_width)
-        display_name = QFontMetrics(self._node_font).elidedText(name, Qt.ElideRight, available_text_width)
-        text_item = QGraphicsTextItem(display_name)
+        display_text = QFontMetrics(self._node_font).elidedText(
+            display_name,
+            Qt.ElideRight,
+            available_text_width,
+        )
+        text_item = QGraphicsTextItem(display_text)
         text_item.setFont(self._node_font)
         text_item.setDefaultTextColor(QColor("#000000"))
-        if display_name != name:
-            text_item.setToolTip(name)
+        if display_text != display_name:
+            text_item.setToolTip(display_name)
+        elif len(self._node_members(name)) > 1:
+            text_item.setToolTip(self._node_tooltip_text(name, status_label))
         text_rect = text_item.boundingRect()
         text_center_x = x_pos + (icon_reserved_width / 2)
         text_item.setPos(text_center_x - text_rect.width() / 2, y_pos - text_rect.height() / 2)
+        text_item.setTransformOriginPoint(text_item.boundingRect().center())
         self.scene.addItem(text_item)
         self.node_texts[name] = text_item
         self.node_items[name] = (x_pos, y_pos)
@@ -265,40 +413,44 @@ class DependencyGraphRenderingMixin:
     def _trace_dependencies(self, node, direction):
         """Trace and highlight dependencies from the selected node."""
         self.clear_highlights()
+        self.selected_node = node
 
         related_targets = self._get_trace_targets(node, direction)
-        nodes_to_highlight = {node, *related_targets}
+        related_node_set = set(related_targets)
+        nodes_to_highlight = {node, *related_node_set}
         self.highlighted_nodes = nodes_to_highlight
+        self._apply_deemphasis_to_other_nodes(nodes_to_highlight)
+        self._highlight_selected_level_lane(node)
+        self._apply_selected_node_visual(node)
 
-        for name, rect_item in self.node_rects.items():
-            if name in nodes_to_highlight:
-                rect_item.setPen(QPen(QColor("#ff6600"), 3))
-                rect_item.setZValue(100)
+        for name in related_node_set:
+            if name not in self.node_rects:
                 continue
-
-            base_color = rect_item.brush().color()
-            rect_item.setPen(QPen(QColor("#333333"), 1))
-            rect_item.setBrush(QBrush(QColor(base_color.red(), base_color.green(), base_color.blue(), 128)))
-            rect_item.setZValue(0)
+            self.node_rects[name].setPen(QPen(QColor("#ff8a3d"), 3))
+            self.node_rects[name].setZValue(100)
+            if name in self.node_texts:
+                self.node_texts[name].setDefaultTextColor(QColor("#6a2e00"))
+                self.node_texts[name].setZValue(105)
+            if name in self.node_icons:
+                self.node_icons[name].setZValue(105)
 
         for edge_item in self.edge_items:
             source = edge_item.data(1)
             target = edge_item.data(2)
             highlighted = source in nodes_to_highlight and target in nodes_to_highlight
             if highlighted and isinstance(edge_item, QGraphicsLineItem):
-                edge_item.setPen(QPen(QColor("#ff6600"), 2.5))
+                self._set_edge_item_color(edge_item, "#ff6600", 2.5)
             elif highlighted:
-                edge_item.setBrush(QBrush(QColor("#ff6600")))
-                edge_item.setPen(QPen(QColor("#ff6600"), 1))
-            elif isinstance(edge_item, QGraphicsLineItem):
-                edge_item.setPen(QPen(QColor("#cccccc"), 1))
+                self._set_edge_item_color(edge_item, "#ff6600", 2.5)
             else:
-                edge_item.setBrush(QBrush(QColor("#cccccc")))
-                edge_item.setPen(QPen(QColor("#cccccc"), 1))
-            edge_item.setZValue(100 if highlighted else 0)
+                self._set_edge_item_hidden(edge_item)
+            edge_item.setZValue(100 if highlighted else -50)
 
         action_label = self._trace_action_label(direction)
-        message = f"{action_label} highlighted {len(nodes_to_highlight)} targets from '{node}'."
+        message = (
+            f"{action_label} highlighted {len(nodes_to_highlight)} nodes from "
+            f"'{self._node_display_name(node)}'."
+        )
         if self._scope_mode == "local":
             message += " Results are limited to the current local scope."
         self._set_info_message(message)
@@ -307,22 +459,9 @@ class DependencyGraphRenderingMixin:
         """Clear all highlights and restore original colors."""
         self.selected_node = None
         self.highlighted_nodes.clear()
-
-        for name, status in self.graph_data.get("nodes", []):
-            if name not in self.node_rects:
-                continue
-            color_hex = self._status_color(status)
-            self.node_rects[name].setPen(QPen(QColor("#333333"), 2))
-            self.node_rects[name].setBrush(QBrush(QColor(color_hex)))
-            self.node_rects[name].setZValue(0)
-
-        for edge_item in self.edge_items:
-            if isinstance(edge_item, QGraphicsLineItem):
-                edge_item.setPen(QPen(QColor("#666666"), 1.5))
-            else:
-                edge_item.setBrush(QBrush(QColor("#666666")))
-                edge_item.setPen(QPen(QColor("#666666"), 1))
-            edge_item.setZValue(0)
+        self._reset_node_visuals()
+        self._restore_level_lanes()
+        self._hide_all_edges()
 
         self._set_info_message()
 
@@ -330,13 +469,13 @@ class DependencyGraphRenderingMixin:
         """Select a node for dependency tracing."""
         self.clear_highlights()
         self.selected_node = node_name
-
-        if node_name in self.node_rects:
-            rect_item = self.node_rects[node_name]
-            rect_item.setPen(QPen(QColor("#4A90D9"), 3))
-            rect_item.setZValue(100)
-
-        self._set_info_message(f"Selected target: {node_name}. Use Trace Up or Trace Down.")
+        self._apply_deemphasis_to_other_nodes({node_name})
+        self._highlight_selected_level_lane(node_name)
+        self._apply_selected_node_visual(node_name)
+        self._show_selected_node_edges(node_name)
+        self._set_info_message(
+            f"Selected target: {self._node_display_name(node_name)}. Use Trace Up or Trace Down."
+        )
 
 
 class InteractiveNodeItem(QGraphicsRectItem):
@@ -356,10 +495,9 @@ class InteractiveNodeItem(QGraphicsRectItem):
         super().mousePressEvent(event)
 
     def mouseDoubleClickEvent(self, event):
-        """Handle double-click to locate the node in the main tree."""
+        """Handle double-click without closing the graph dialog."""
         if event.button() == Qt.LeftButton:
             self.dialog.select_node(self.name)
-            self.dialog.locate_selected_target_in_tree()
             event.accept()
             return
         super().mouseDoubleClickEvent(event)
@@ -376,9 +514,9 @@ class InteractiveNodeItem(QGraphicsRectItem):
         if self._original_brush:
             self.setBrush(self._original_brush)
         if self.name == self.dialog.selected_node:
-            self.setPen(QPen(QColor("#4A90D9"), 3))
+            self.setPen(QPen(QColor("#2F80ED"), 3))
         elif self.name in self.dialog.highlighted_nodes:
-            self.setPen(QPen(QColor("#ff6600"), 3))
+            self.setPen(QPen(QColor("#ff8a3d"), 3))
         else:
             self.setPen(QPen(QColor("#333333"), 2))
         super().hoverLeaveEvent(event)

@@ -12,6 +12,32 @@ from new_gui.config.settings import STATUS_CONFIG
 class DependencyGraphStateMixin:
     """Provide stateful behavior shared by the dependency graph dialog shell."""
 
+    def _node_meta(self, node_name):
+        """Return metadata for the requested graph node."""
+        return (self.graph_data.get("node_meta", {}) or {}).get(node_name, {})
+
+    def _node_display_name(self, node_name):
+        """Return the display label for the requested graph node."""
+        return self._node_meta(node_name).get("display_name") or node_name
+
+    def _node_members(self, node_name):
+        """Return real target members represented by the requested graph node."""
+        metadata = self._node_meta(node_name)
+        members = list(metadata.get("members", []) or [])
+        return members or ([node_name] if node_name else [])
+
+    def _node_representative_target(self, node_name):
+        """Return the real target used for locate-in-tree actions."""
+        metadata = self._node_meta(node_name)
+        return metadata.get("representative_target") or node_name
+
+    def _resolve_graph_node(self, node_or_target_name):
+        """Resolve a real target name to its graph-node id when grouped."""
+        if not node_or_target_name:
+            return node_or_target_name
+        target_to_node = self.graph_data.get("target_to_node", {}) or {}
+        return target_to_node.get(node_or_target_name, node_or_target_name)
+
     def _normalize_status_key(self, status):
         """Return a normalized status key used by graph styling."""
         return (status or "").strip().lower()
@@ -60,9 +86,12 @@ class DependencyGraphStateMixin:
         if not self._node_count:
             return "No dependency data found for the current run."
 
-        message = "Select a target, then use Trace Up or Trace Down."
+        message = "Select a target to reveal connected edges, then use Trace Up or Trace Down."
         if self._scope_mode == "local":
-            message = "Local view active. Select a target, then use Trace Up or Trace Down. "
+            message = (
+                "Local view active. Select a target to reveal connected edges, "
+                "then use Trace Up or Trace Down. "
+            )
             message += self._local_scope_semantics_message()
             message += " Use Show Full to restore the full graph."
         if self._node_count >= 80 or self._edge_count >= 160 or self._level_count >= 12:
@@ -76,7 +105,7 @@ class DependencyGraphStateMixin:
     def _node_interaction_hint(self):
         """Return the node interaction hint shown in tooltips."""
         if self._locate_target_callback is not None:
-            return "Click to select\nDouble-click to locate in tree"
+            return "Click to select\nUse Locate In Tree to jump back"
         return "Click to select"
 
     def _update_scope_label(self):
@@ -84,7 +113,7 @@ class DependencyGraphStateMixin:
         if self._scope_mode == "local" and self._scope_target:
             depth_text = "Full" if self._scope_depth is None else str(self._scope_depth)
             self._scope_label.setText(
-                f"Scope: Local ({self._scope_target}, Depth {depth_text}, Trace in scope)"
+                f"Scope: Local ({self._node_display_name(self._scope_target)}, Depth {depth_text}, Trace in scope)"
             )
             return
         self._scope_label.setText("Scope: Full graph")
@@ -94,7 +123,7 @@ class DependencyGraphStateMixin:
         return (text or "").strip().lower()
 
     def _matching_targets(self, search_text):
-        """Return matching target names for a search query."""
+        """Return matching graph node ids for a search query."""
         normalized_text = self._normalize_search_text(search_text)
         if not normalized_text:
             return []
@@ -103,11 +132,15 @@ class DependencyGraphStateMixin:
             for target_name, _ in self.graph_data.get("nodes", [])
             if target_name in self.node_rects
         ]
-        return [
-            target_name
-            for target_name in ordered_targets
-            if normalized_text in target_name.lower()
-        ]
+        matches = []
+        for target_name in ordered_targets:
+            display_name = self._node_display_name(target_name).lower()
+            member_names = [member.lower() for member in self._node_members(target_name)]
+            if normalized_text in display_name or any(
+                normalized_text in member_name for member_name in member_names
+            ):
+                matches.append(target_name)
+        return matches
 
     def _reset_search_state(self):
         """Reset cached search navigation state."""
@@ -145,7 +178,8 @@ class DependencyGraphStateMixin:
         self.select_node(target_name)
         self.view.centerOn(self.node_rects[target_name])
         self._set_info_message(
-            f"Search match {self._search_match_index + 1}/{len(self._search_matches)}: {target_name}"
+            f"Search match {self._search_match_index + 1}/{len(self._search_matches)}: "
+            f"{self._node_display_name(target_name)}"
         )
 
     def find_next_target(self):
@@ -176,7 +210,7 @@ class DependencyGraphStateMixin:
             return
 
         self.fit_view()
-        focus_target = self._pending_focus_target
+        focus_target = self._resolve_graph_node(self._pending_focus_target)
         if focus_target and focus_target in self.node_rects:
             self.select_node(focus_target)
             self.view.centerOn(self.node_rects[focus_target])
@@ -191,7 +225,7 @@ class DependencyGraphStateMixin:
             self._set_info_message("Locate In Tree is not available in this context.")
             return
 
-        target_name = self.selected_node
+        target_name = self._node_representative_target(self.selected_node)
         self.accept()
         QTimer.singleShot(0, lambda: self._locate_target_callback(target_name))
 
@@ -280,6 +314,16 @@ class DependencyGraphStateMixin:
             "edges": local_edges,
             "levels": local_levels,
             "trace_targets": local_trace_targets,
+            "node_meta": {
+                target_name: metadata
+                for target_name, metadata in (self._full_graph_data.get("node_meta", {}) or {}).items()
+                if target_name in local_targets
+            },
+            "target_to_node": {
+                target_name: node_name
+                for target_name, node_name in (self._full_graph_data.get("target_to_node", {}) or {}).items()
+                if node_name in local_targets
+            },
         }
 
     def show_local_subgraph(self):

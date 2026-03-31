@@ -3,7 +3,7 @@
 import os
 import re
 from collections import deque
-from typing import Deque, Dict, List, Optional
+from typing import Callable, Deque, Dict, List, Optional
 
 from new_gui.config.settings import (
     RE_ACTIVE_TARGETS,
@@ -12,6 +12,7 @@ from new_gui.config.settings import (
     RE_LEVEL_LINE,
     logger,
 )
+from new_gui.services import status_summary, tree_structure
 from new_gui.services.run_status import build_status_cache, get_target_status
 
 
@@ -20,11 +21,13 @@ DependencyGraph = Dict[str, object]
 TraceLookup = Dict[str, List[str]]
 TraceTargets = Dict[str, TraceLookup]
 CollapsibleTargetGroups = Dict[str, List[str]]
+NodeMeta = Dict[str, Dict[str, object]]
 
 
 RE_INSTANCES_LIST_LINE = re.compile(r'^set\s+INSTANCES_LIST_([A-Za-z0-9_]+)\s*=\s*"([^"]*)"')
 COLLAPSIBLE_GROUP_MARKER = "Generic"
 MIN_COLLAPSIBLE_GROUP_SIZE = 3
+GRAPH_GROUP_PREFIX = "__group__"
 
 
 def parse_dependency_file(run_base_dir: str, run_name: str) -> TargetsByLevel:
@@ -302,6 +305,123 @@ def get_retrace_targets(run_dir: str, target: str, inout: str) -> List[str]:
     return list(trace_targets.get(direction_key, {}).get(target, []))
 
 
+def _build_graph_group_node_id(level: int, group_label: str) -> str:
+    """Return the synthetic graph node id used for grouped dependency nodes."""
+    safe_label = re.sub(r"[^A-Za-z0-9_]+", "_", group_label or "").strip("_") or "group"
+    return f"{GRAPH_GROUP_PREFIX}level_{level}_{safe_label}"
+
+
+def _build_grouped_graph_nodes(
+    targets_by_level: TargetsByLevel,
+    collapsible_groups: CollapsibleTargetGroups,
+    status_lookup: Callable[[str], str],
+) -> Dict[str, object]:
+    """Return grouped graph nodes, levels, metadata, and real-target mapping."""
+    nodes: List[tuple] = []
+    levels: Dict[int, List[str]] = {}
+    node_meta: NodeMeta = {}
+    target_to_node: Dict[str, str] = {}
+    display_groups = tree_structure.build_level_display_groups(targets_by_level, collapsible_groups)
+
+    for level_group in display_groups:
+        level = level_group.get("level")
+        level_node_ids: List[str] = []
+        for child_node in list(level_group.get("children", []) or []):
+            child_kind = child_node.get("kind", "target")
+            member_targets = list(child_node.get("targets", []) or [])
+            if child_kind == "group" and member_targets:
+                node_id = _build_graph_group_node_id(level, child_node.get("label", "Generic"))
+                status_text, status_key = status_summary.summarize_group_status(
+                    member_targets,
+                    status_lookup,
+                )
+                node_meta[node_id] = {
+                    "display_name": child_node.get("label", node_id),
+                    "kind": "group",
+                    "members": member_targets,
+                    "representative_target": member_targets[0],
+                    "status_text": status_text,
+                }
+                nodes.append((node_id, status_key))
+                for target_name in member_targets:
+                    target_to_node[target_name] = node_id
+            else:
+                target_name = child_node.get("target_name") or (member_targets[0] if member_targets else "")
+                if not target_name:
+                    continue
+                node_id = target_name
+                status_key = status_lookup(target_name)
+                node_meta[node_id] = {
+                    "display_name": target_name,
+                    "kind": "target",
+                    "members": [target_name],
+                    "representative_target": target_name,
+                    "status_text": status_key,
+                }
+                nodes.append((node_id, status_key))
+                target_to_node[target_name] = node_id
+            level_node_ids.append(node_id)
+        if level_node_ids:
+            levels[level] = level_node_ids
+
+    return {
+        "nodes": nodes,
+        "levels": levels,
+        "node_meta": node_meta,
+        "target_to_node": target_to_node,
+    }
+
+
+def _group_dependency_edges(
+    direct_downstream: TraceLookup,
+    all_targets: List[str],
+    target_to_node: Dict[str, str],
+) -> List[tuple]:
+    """Return graph edges grouped onto synthetic display nodes when applicable."""
+    edges: List[tuple] = []
+    seen_edges = set()
+    for source in all_targets:
+        source_node = target_to_node.get(source, source)
+        for downstream in direct_downstream.get(source, []):
+            target_node = target_to_node.get(downstream, downstream)
+            if not source_node or not target_node or source_node == target_node:
+                continue
+            edge_key = (source_node, target_node)
+            if edge_key in seen_edges:
+                continue
+            seen_edges.add(edge_key)
+            edges.append(edge_key)
+    return edges
+
+
+def _group_trace_targets(
+    raw_trace_targets: TraceTargets,
+    node_meta: NodeMeta,
+    target_to_node: Dict[str, str],
+) -> TraceTargets:
+    """Return grouped trace-target lookups keyed by display-node id."""
+    grouped_trace_targets: TraceTargets = {"upstream": {}, "downstream": {}}
+    for direction_key in ("upstream", "downstream"):
+        direction_lookup = raw_trace_targets.get(direction_key, {})
+        for node_id, metadata in node_meta.items():
+            member_targets = list(metadata.get("members", []) or [])
+            related_node_ids: List[str] = []
+            seen_node_ids = set()
+            for member_target in member_targets:
+                for related_target in direction_lookup.get(member_target, []):
+                    related_node_id = target_to_node.get(related_target, related_target)
+                    if (
+                        not related_node_id
+                        or related_node_id == node_id
+                        or related_node_id in seen_node_ids
+                    ):
+                        continue
+                    seen_node_ids.add(related_node_id)
+                    related_node_ids.append(related_node_id)
+            grouped_trace_targets[direction_key][node_id] = related_node_ids
+    return grouped_trace_targets
+
+
 def build_dependency_graph(
     run_base_dir: str,
     run_name: str,
@@ -322,24 +442,35 @@ def build_dependency_graph(
 
     try:
         targets_by_level = parse_dependency_file(run_base_dir, run_name)
-        graph_data["levels"] = targets_by_level
-
         all_targets = _list_all_targets(targets_by_level)
 
         effective_cache = status_cache
         if not effective_cache or effective_cache.get("run") != run_name:
             effective_cache = build_status_cache(run_base_dir, run_name)
 
-        for target in all_targets:
-            status = get_target_status(run_base_dir, run_name, target, effective_cache)
-            graph_data["nodes"].append((target, status))
+        def status_lookup(target_name: str) -> str:
+            return get_target_status(run_base_dir, run_name, target_name, effective_cache)
+
+        collapsible_groups = parse_collapsible_target_groups(run_base_dir, run_name)
+        grouped_graph = _build_grouped_graph_nodes(targets_by_level, collapsible_groups, status_lookup)
+        graph_data["nodes"] = grouped_graph["nodes"]
+        graph_data["levels"] = grouped_graph["levels"]
+        graph_data["node_meta"] = grouped_graph["node_meta"]
+        graph_data["target_to_node"] = grouped_graph["target_to_node"]
 
         content = _read_dependency_content(dep_file)
         direct_downstream = _build_direct_downstream_map(content, all_targets)
-        graph_data["trace_targets"] = _build_trace_targets_from_content(content, all_targets)
-        for source in all_targets:
-            for downstream in direct_downstream.get(source, []):
-                graph_data["edges"].append((source, downstream))
+        raw_trace_targets = _build_trace_targets_from_content(content, all_targets)
+        graph_data["trace_targets"] = _group_trace_targets(
+            raw_trace_targets,
+            graph_data.get("node_meta", {}),
+            graph_data.get("target_to_node", {}),
+        )
+        graph_data["edges"] = _group_dependency_edges(
+            direct_downstream,
+            all_targets,
+            graph_data.get("target_to_node", {}),
+        )
     except Exception as exc:
         logger.error(f"Error building dependency graph: {exc}")
 

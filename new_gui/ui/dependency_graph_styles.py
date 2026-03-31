@@ -18,8 +18,10 @@ def build_dependency_graph_toolbar_button_style() -> str:
         QPushButton {
             background-color: #ffffff;
             border: 1px solid #cccccc;
-            border-radius: 6px;
-            padding: 6px 16px;
+            border-radius: 5px;
+            padding: 3px 10px;
+            min-height: 24px;
+            font-size: 12px;
             font-weight: 600;
             color: #333333;
         }
@@ -39,10 +41,12 @@ def build_dependency_graph_depth_combo_style() -> str:
         QComboBox {
             background-color: #ffffff;
             border: 1px solid #cccccc;
-            border-radius: 6px;
-            padding: 4px 10px;
+            border-radius: 5px;
+            padding: 2px 8px;
+            min-height: 24px;
+            font-size: 12px;
             color: #333333;
-            min-width: 72px;
+            min-width: 64px;
         }
         QComboBox::drop-down {
             border: none;
@@ -56,8 +60,10 @@ def build_dependency_graph_search_input_style() -> str:
         QLineEdit {
             background-color: #ffffff;
             border: 1px solid #cccccc;
-            border-radius: 6px;
-            padding: 6px 10px;
+            border-radius: 5px;
+            padding: 3px 9px;
+            min-height: 24px;
+            font-size: 12px;
             color: #333333;
         }
         QLineEdit:focus {

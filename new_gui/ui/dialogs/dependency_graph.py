@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSizePolicy,
     QShortcut,
     QVBoxLayout,
 )
@@ -29,6 +30,31 @@ from new_gui.ui.dependency_graph_styles import (
 )
 
 
+class DependencyGraphView(QGraphicsView):
+    """Graphics view with wheel-based zoom behavior."""
+
+    def __init__(self, scene, dialog, parent=None):
+        super().__init__(scene, parent)
+        self._dialog = dialog
+
+    def wheelEvent(self, event):
+        """Zoom in on wheel-up and zoom out on wheel-down."""
+        delta_y = event.angleDelta().y()
+        if delta_y > 0:
+            self._dialog.zoom_in()
+            event.accept()
+            return
+        if delta_y < 0:
+            self._dialog.zoom_out()
+            event.accept()
+            return
+        super().wheelEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        """Swallow view-level double-click handling to avoid dialog-close side effects."""
+        event.accept()
+
+
 class DependencyGraphDialog(
     DependencyGraphExportMixin,
     DependencyGraphRenderingMixin,
@@ -38,6 +64,13 @@ class DependencyGraphDialog(
     """Enhanced dialog for displaying dependency graph visualization with interactive features."""
 
     _LEGEND_STATUS_ORDER = ["finish", "running", "failed", "skip", "scheduled", "pending", ""]
+
+    def _build_toolbar_row(self):
+        """Return one compact toolbar row layout."""
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        return row
 
     def __init__(self, graph_data, status_colors, initial_target=None, locate_target_callback=None, parent=None):
         """
@@ -49,7 +82,7 @@ class DependencyGraphDialog(
         """
         super().__init__(parent)
         self.setWindowTitle("Dependency Graph")
-        self.resize(1200, 800)
+        self.resize(920, 980)
         self._full_graph_data = graph_data
         self.graph_data = graph_data
         self.status_colors = status_colors
@@ -59,6 +92,9 @@ class DependencyGraphDialog(
         self.edge_items = []  # Store edge items for highlighting
         self.node_rects = {}  # Store node rect items for interaction
         self.node_texts = {}  # Store node text items
+        self.node_icons = {}  # Store node icon items
+        self.node_levels = {}  # Store node-to-level mapping
+        self.level_lane_items = {}  # Store level lane background items
         self.highlighted_nodes = set()  # Currently highlighted nodes
         self.selected_node = None  # Currently selected node
         self._node_font = QFont("Arial", 9, QFont.Bold)
@@ -88,7 +124,7 @@ class DependencyGraphDialog(
 
         # Graphics View with enhanced interaction
         self.scene = QGraphicsScene()
-        self.view = QGraphicsView(self.scene)
+        self.view = DependencyGraphView(self.scene, self)
         self.view.setRenderHint(QPainter.Antialiasing)
         self.view.setDragMode(QGraphicsView.ScrollHandDrag)
         self.view.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
@@ -98,70 +134,70 @@ class DependencyGraphDialog(
         self.view.setStyleSheet(build_dependency_graph_view_style())
         layout.addWidget(self.view)
 
-        # Toolbar with enhanced buttons
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(10)
+        controls_layout = QVBoxLayout()
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(4)
 
         btn_style = build_dependency_graph_toolbar_button_style()
+        primary_toolbar = self._build_toolbar_row()
+        secondary_toolbar = self._build_toolbar_row()
+        search_toolbar = self._build_toolbar_row()
 
         # Navigation buttons
         zoom_in_btn = QPushButton("🔍+ Zoom In")
         zoom_in_btn.setStyleSheet(btn_style)
         zoom_in_btn.setToolTip("Zoom In (Ctrl++)")
         zoom_in_btn.clicked.connect(self.zoom_in)
-        toolbar.addWidget(zoom_in_btn)
+        primary_toolbar.addWidget(zoom_in_btn)
 
         zoom_out_btn = QPushButton("🔍- Zoom Out")
         zoom_out_btn.setStyleSheet(btn_style)
         zoom_out_btn.setToolTip("Zoom Out (Ctrl+-)")
         zoom_out_btn.clicked.connect(self.zoom_out)
-        toolbar.addWidget(zoom_out_btn)
+        primary_toolbar.addWidget(zoom_out_btn)
 
         fit_btn = QPushButton("⊞ Fit View")
         fit_btn.setStyleSheet(btn_style)
         fit_btn.setToolTip("Fit all nodes in view")
         fit_btn.clicked.connect(self.fit_view)
-        toolbar.addWidget(fit_btn)
+        primary_toolbar.addWidget(fit_btn)
 
         reset_btn = QPushButton("↺ Reset")
         reset_btn.setStyleSheet(btn_style)
         reset_btn.setToolTip("Reset zoom and position")
         reset_btn.clicked.connect(self.reset_view)
-        toolbar.addWidget(reset_btn)
-
-        toolbar.addSpacing(20)
+        primary_toolbar.addWidget(reset_btn)
 
         # Path highlighting buttons
         highlight_up_btn = QPushButton("⬆ Trace Up")
         highlight_up_btn.setStyleSheet(btn_style)
         highlight_up_btn.setToolTip("Trace Up from the selected target within the current scope")
         highlight_up_btn.clicked.connect(self.highlight_upstream)
-        toolbar.addWidget(highlight_up_btn)
+        primary_toolbar.addWidget(highlight_up_btn)
 
         highlight_down_btn = QPushButton("⬇ Trace Down")
         highlight_down_btn.setStyleSheet(btn_style)
         highlight_down_btn.setToolTip("Trace Down from the selected target within the current scope")
         highlight_down_btn.clicked.connect(self.highlight_downstream)
-        toolbar.addWidget(highlight_down_btn)
+        primary_toolbar.addWidget(highlight_down_btn)
 
         clear_btn = QPushButton("✕ Clear")
         clear_btn.setStyleSheet(btn_style)
         clear_btn.setToolTip("Clear all highlights")
         clear_btn.clicked.connect(self.clear_highlights)
-        toolbar.addWidget(clear_btn)
-
-        toolbar.addSpacing(20)
+        primary_toolbar.addWidget(clear_btn)
+        primary_toolbar.addStretch()
 
         depth_label = QLabel("Depth:")
         depth_label.setStyleSheet(build_dependency_graph_toolbar_label_style())
-        toolbar.addWidget(depth_label)
+        secondary_toolbar.addWidget(depth_label)
 
         self._depth_combo = QComboBox()
         self._depth_combo.addItems(["Full", "1", "2", "3"])
         self._depth_combo.setCurrentText("Full")
         self._depth_combo.setToolTip("Depth limits the visible local subgraph around the selected target")
         self._depth_combo.setStyleSheet(build_dependency_graph_depth_combo_style())
-        toolbar.addWidget(self._depth_combo)
+        secondary_toolbar.addWidget(self._depth_combo)
 
         focus_local_btn = QPushButton("Focus Local")
         focus_local_btn.setStyleSheet(btn_style)
@@ -170,52 +206,54 @@ class DependencyGraphDialog(
             "Trace actions stay within the current scope."
         )
         focus_local_btn.clicked.connect(self.show_local_subgraph)
-        toolbar.addWidget(focus_local_btn)
+        secondary_toolbar.addWidget(focus_local_btn)
 
         show_full_btn = QPushButton("Show Full")
         show_full_btn.setStyleSheet(btn_style)
         show_full_btn.setToolTip("Restore the full dependency graph")
         show_full_btn.clicked.connect(self.show_full_graph)
-        toolbar.addWidget(show_full_btn)
-
-        toolbar.addSpacing(20)
+        secondary_toolbar.addWidget(show_full_btn)
 
         locate_btn = QPushButton("Locate In Tree")
         locate_btn.setStyleSheet(btn_style)
         locate_btn.setToolTip("Close the graph and locate the selected target in the main tree")
         locate_btn.clicked.connect(self.locate_selected_target_in_tree)
         locate_btn.setEnabled(self._locate_target_callback is not None)
-        toolbar.addWidget(locate_btn)
+        secondary_toolbar.addWidget(locate_btn)
 
-        toolbar.addSpacing(20)
+        export_btn = QPushButton("📷 Export PNG")
+        export_btn.setStyleSheet(btn_style)
+        export_btn.clicked.connect(self.export_png)
+        secondary_toolbar.addWidget(export_btn)
+        secondary_toolbar.addStretch()
 
         self._search_input = QLineEdit()
         self._search_input.setPlaceholderText("Search targets...")
-        self._search_input.setMinimumWidth(220)
+        self._search_input.setMinimumWidth(160)
+        self._search_input.setMaximumWidth(280)
+        self._search_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._search_input.setClearButtonEnabled(True)
         self._search_input.setStyleSheet(build_dependency_graph_search_input_style())
         self._search_input.textChanged.connect(self._on_search_text_changed)
         self._search_input.returnPressed.connect(self.find_next_target)
-        toolbar.addWidget(self._search_input)
+        search_toolbar.addWidget(self._search_input)
 
         self._find_btn = QPushButton("Find Next")
         self._find_btn.setStyleSheet(btn_style)
         self._find_btn.setToolTip("Find the next target matching the search text")
         self._find_btn.clicked.connect(self.find_next_target)
-        toolbar.addWidget(self._find_btn)
+        search_toolbar.addWidget(self._find_btn)
+        search_toolbar.addStretch()
 
-        toolbar.addStretch()
-
-        # Export button
-        export_btn = QPushButton("📷 Export PNG")
-        export_btn.setStyleSheet(btn_style)
-        export_btn.clicked.connect(self.export_png)
-        toolbar.addWidget(export_btn)
-
-        layout.addLayout(toolbar)
+        controls_layout.addLayout(primary_toolbar)
+        controls_layout.addLayout(secondary_toolbar)
+        controls_layout.addLayout(search_toolbar)
+        layout.addLayout(controls_layout)
 
         # Legend with icons
         legend_layout = QHBoxLayout()
+        legend_layout.setContentsMargins(0, 0, 0, 0)
+        legend_layout.setSpacing(6)
         legend_label = QLabel("Legend: ")
         legend_label.setStyleSheet(build_dependency_graph_heading_label_style())
         legend_layout.addWidget(legend_label)
@@ -232,22 +270,28 @@ class DependencyGraphDialog(
             )
             legend_layout.addWidget(legend_item)
 
+        legend_layout.addStretch()
+        layout.addLayout(legend_layout)
+
+        meta_layout = QHBoxLayout()
+        meta_layout.setContentsMargins(0, 0, 0, 0)
+        meta_layout.setSpacing(10)
+
         self._scope_label = QLabel("Scope: Full graph")
         self._scope_label.setStyleSheet(build_dependency_graph_meta_label_style())
-        legend_layout.addWidget(self._scope_label)
+        meta_layout.addWidget(self._scope_label)
 
         self._summary_label = QLabel("Nodes: 0 | Edges: 0 | Levels: 0")
         self._summary_label.setStyleSheet(build_dependency_graph_meta_label_style())
-        legend_layout.addWidget(self._summary_label)
-
-        legend_layout.addStretch()
+        meta_layout.addWidget(self._summary_label)
+        meta_layout.addStretch()
+        layout.addLayout(meta_layout)
 
         # Info label
         self._info_label = QLabel("Select a target, then use Trace Up or Trace Down.")
         self._info_label.setStyleSheet(build_dependency_graph_meta_label_style())
-        legend_layout.addWidget(self._info_label)
-
-        layout.addLayout(legend_layout)
+        self._info_label.setWordWrap(True)
+        layout.addWidget(self._info_label)
 
         # Setup keyboard shortcuts
         self._setup_shortcuts()
