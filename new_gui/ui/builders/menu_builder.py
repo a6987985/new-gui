@@ -56,10 +56,6 @@ def init_menu_bar(window) -> None:
     window.button_menu = button_menu
 
     tools_menu = window.menu_bar.addMenu("Tools")
-    terminal_panel_action = QAction("Terminal Panel", window)
-    terminal_panel_action.setToolTip("Open the embedded terminal for the current run")
-    terminal_panel_action.triggered.connect(window.open_terminal)
-    tools_menu.addAction(terminal_panel_action)
     external_terminal_action = QAction("External Terminal", window)
     external_terminal_action.setToolTip("Open the external terminal for the current run")
     external_terminal_action.triggered.connect(window.open_external_terminal)

@@ -1,8 +1,9 @@
 """Top-button layout, measurement, and floating-row rebuild helpers."""
 
-from PyQt5.QtCore import QPoint, QTimer, Qt
+from PyQt5.QtCore import QPoint, QSize, QTimer, Qt
 from PyQt5.QtWidgets import QHBoxLayout, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
+from new_gui.ui.icon_factory import build_panel_stack_icon
 from new_gui.ui.top_button_styles import build_neutral_top_button_style
 from new_gui.ui.builders.top_button_specs import (
     DEFAULT_TOP_BUTTON_IDS,
@@ -153,6 +154,49 @@ def _build_row2_neutral_style(horizontal_padding: int) -> str:
     return build_neutral_top_button_style(horizontal_padding=horizontal_padding)
 
 
+def _build_top_icon_toggle_style() -> str:
+    """Return the stylesheet used by the top-left icon-only toggle button."""
+    return """
+        QPushButton {
+            background-color: #181818;
+            border: 1px solid #2b2b2b;
+            border-radius: 6px;
+            padding: 0px;
+        }
+        QPushButton:hover {
+            background-color: #363636;
+            border: 1px solid #727272;
+        }
+        QPushButton:pressed {
+            background-color: #303030;
+        }
+        QPushButton:checked {
+            background-color: #222222;
+            border: 1px solid #4a4a4a;
+        }
+        QPushButton:checked:hover {
+            background-color: #3a3a3a;
+            border: 1px solid #7a7a7a;
+        }
+    """
+
+
+def _build_visual_experiment_button(window) -> QPushButton:
+    """Return a left-side icon toggle button for the terminal panel."""
+    button = QPushButton("")
+    button.setCheckable(True)
+    button.setChecked(False)
+    button.setCursor(Qt.PointingHandCursor)
+    button.setFixedSize(34, 34)
+    button.setIcon(build_panel_stack_icon(size=18))
+    button.setIconSize(QSize(18, 18))
+    button.setStyleSheet(_build_top_icon_toggle_style())
+    button.setToolTip("Toggle terminal panel")
+    button.toggled.connect(lambda checked: window.toggle_terminal_output_panel())
+    window._top_panel_terminal_toggle_button = button
+    return button
+
+
 def _get_fixed_top_button_height() -> int:
     """Return one shared button height for both top-button rows."""
     measured_heights = []
@@ -248,6 +292,9 @@ def _build_top_button_row_widget(window, row_definitions, row_role: str, target_
     fixed_button_height = _get_fixed_top_button_height()
     if row2_layout is not None:
         row_layout.setSpacing(row2_layout["spacing"])
+
+    if row_role == "row1":
+        row_layout.addWidget(_build_visual_experiment_button(window))
 
     for definition in row_definitions:
         button = QPushButton(definition["label"])

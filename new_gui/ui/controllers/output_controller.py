@@ -117,6 +117,10 @@ def set_bottom_output_panel_visible(window, visible: bool) -> None:
         tree_height = max(220, total_height - output_height)
         splitter.setSizes([tree_height, output_height])
         panel.raise_()
+        if hasattr(window, "_top_panel_terminal_toggle_button"):
+            was_blocked = window._top_panel_terminal_toggle_button.blockSignals(True)
+            window._top_panel_terminal_toggle_button.setChecked(True)
+            window._top_panel_terminal_toggle_button.blockSignals(was_blocked)
         return
 
     current_sizes = splitter.sizes()
@@ -124,6 +128,10 @@ def set_bottom_output_panel_visible(window, visible: bool) -> None:
         window._bottom_output_last_height = current_sizes[1]
     splitter.setSizes([1, 0])
     panel.hide()
+    if hasattr(window, "_top_panel_terminal_toggle_button"):
+        was_blocked = window._top_panel_terminal_toggle_button.blockSignals(True)
+        window._top_panel_terminal_toggle_button.setChecked(False)
+        window._top_panel_terminal_toggle_button.blockSignals(was_blocked)
 
 
 def set_embedded_terminal_panel_visible(window, visible: bool) -> None:
@@ -154,6 +162,21 @@ def hide_embedded_terminal_panel(window) -> None:
 def hide_bottom_output_panel(window) -> None:
     """Collapse the bottom output panel without stopping the terminal session."""
     set_bottom_output_panel_visible(window, False)
+
+
+def toggle_terminal_output_panel(window) -> bool:
+    """Toggle the bottom terminal panel from the top icon button."""
+    panel = getattr(window, "_bottom_output_panel", None)
+    if panel is not None and panel.isVisible():
+        hide_bottom_output_panel(window)
+        return False
+
+    run_dir = getattr(window, "combo_sel", "")
+    if show_embedded_terminal_panel(window, run_dir):
+        return True
+
+    hide_bottom_output_panel(window)
+    return False
 
 
 def show_log_output_panel(window) -> None:

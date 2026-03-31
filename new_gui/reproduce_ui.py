@@ -259,6 +259,10 @@ class MainWindow(QMainWindow):
         """Collapse the bottom output panel without stopping the terminal session."""
         output_controller.hide_bottom_output_panel(self)
 
+    def toggle_terminal_output_panel(self) -> bool:
+        """Toggle the embedded terminal panel from the top icon button."""
+        return output_controller.toggle_terminal_output_panel(self)
+
     def show_log_output_panel(self) -> None:
         """Open the bottom output area and switch to the session log tab."""
         output_controller.show_log_output_panel(self)
