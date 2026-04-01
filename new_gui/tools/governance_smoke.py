@@ -154,6 +154,43 @@ def smoke_main_window(app: QApplication) -> None:
         "Ctrl+C in header search unexpectedly changed the search text.",
     )
 
+    window.model.removeRows(0, window.model.rowCount())
+    generic_group_row = tree_rows.build_container_row_items(
+        "1",
+        "Generic Alpha",
+        tree_rows.ROW_KIND_GROUP,
+        descendant_targets=["generic_member_a", "generic_member_b"],
+    )
+    standalone_target_row = tree_rows.build_target_row_items(
+        "1",
+        "standalone_target",
+        "finish",
+        [],
+        "",
+        "",
+        "pd_sim",
+        "4",
+        "30000",
+        window.colors,
+    )
+    window.model.appendRow(generic_group_row)
+    window.model.appendRow(standalone_target_row)
+
+    selection_model = window.tree.selectionModel()
+    select_flags = selection_model.Select | selection_model.Rows
+    selection_model.clearSelection()
+    selection_model.select(window.model.index(0, 1), select_flags)
+    selection_model.select(window.model.index(1, 1), select_flags)
+    _process_events(app)
+
+    QTest.keyClick(window.tree, Qt.Key_C, Qt.ControlModifier)
+    _process_events(app)
+    _require(
+        QApplication.clipboard().text()
+        == "generic_member_a\ngeneric_member_b\nstandalone_target",
+        "Ctrl+C did not include Generic-group targets when mixed with a leaf target.",
+    )
+
     window.header.hide_filter()
     _process_events(app)
     _require(window.header.filter_edit is not None, "Header search editor was unexpectedly destroyed.")

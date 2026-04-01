@@ -26,9 +26,9 @@ def _bridge(window) -> ActionWindowBridge:
 def copy_selected_target(window) -> None:
     """Copy selected target names to the clipboard."""
     ui = _bridge(window)
-    targets = ui.get_selected_targets()
+    targets = ui.get_selected_action_targets()
     if not targets:
-        targets = ui.get_selected_action_targets()
+        targets = ui.get_selected_targets()
 
     if not targets:
         ui.notify("Copy", "No target names available for the current selection", "info")
