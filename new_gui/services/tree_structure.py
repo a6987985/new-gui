@@ -167,6 +167,18 @@ def filter_level_groups_by_status(
     return groups
 
 
-def count_targets_in_groups(groups: List[LevelGroup]) -> int:
-    """Count total targets across grouped rows."""
-    return sum(len(targets) for _, targets in groups)
+def filter_level_groups_by_targets(
+    targets_by_level: TargetsByLevel,
+    targets_to_show,
+) -> List[LevelGroup]:
+    """Return sorted level groups containing only explicitly requested targets."""
+    requested_targets = set(targets_to_show or [])
+    if not requested_targets:
+        return []
+
+    groups: List[LevelGroup] = []
+    for level, targets in get_level_target_groups(targets_by_level):
+        matching_targets = [target for target in targets if target in requested_targets]
+        if matching_targets:
+            groups.append((level, matching_targets))
+    return groups

@@ -40,8 +40,8 @@ def close_tree_view(window) -> None:
         return
 
     if mode == "trace":
-        ui.clear_trace_filter()
         ui.set_filtered_main_view_tab_state()
+        ui.populate_data(force_rebuild=True)
         return
 
     ui.hide_tree()
@@ -55,8 +55,7 @@ def filter_tree(window, text) -> None:
     ui.set_search_mode(bool(text))
 
     if not text:
-        ui.clear_model()
-        ui.populate_data()
+        ui.populate_data(force_rebuild=True)
         return
 
     run_selection.ensure_cached_targets(window, ui.current_run_name())
@@ -64,15 +63,16 @@ def filter_tree(window, text) -> None:
         return
 
     ui.set_tree_updates_enabled(False)
-    ui.reset_main_tree_model()
+    try:
+        if ui.model.rowCount() > 0:
+            ui.model.removeRows(0, ui.model.rowCount())
 
-    matching_groups = tree_structure.filter_level_groups_by_text(window.cached_targets_by_level, text)
-    display_groups = ui.build_display_level_groups(dict(matching_groups))
-    ui.append_target_groups_to_model(display_groups)
-
-    ui.expand_tree_all()
-
-    ui.set_tree_updates_enabled(True)
+        matching_groups = tree_structure.filter_level_groups_by_text(window.cached_targets_by_level, text)
+        display_groups = ui.build_display_level_groups(dict(matching_groups))
+        ui.append_target_groups_to_model(display_groups)
+        ui.expand_tree_all()
+    finally:
+        ui.set_tree_updates_enabled(True)
 
 
 def filter_tree_by_status_flat(window, status):
@@ -104,6 +104,34 @@ def filter_tree_by_status_flat(window, status):
     matched_count = tree_structure.count_display_targets(display_groups)
 
     ui.set_tree_updates_enabled(True)
+    ui.expand_tree_all()
+    return matched_count
+
+
+def filter_tree_by_targets_flat(window, targets_to_show) -> int:
+    """Show only the requested dependency targets using the grouped main-tree layout."""
+    ui = _bridge(window)
+    if not targets_to_show:
+        return 0
+
+    run_selection.ensure_cached_targets(window, ui.current_run_name())
+    if not run_selection.has_cached_targets(window):
+        return 0
+
+    ui.set_tree_updates_enabled(False)
+    try:
+        ui.reset_main_tree_model()
+        current_run = ui.current_run_name()
+        matched_groups = tree_structure.filter_level_groups_by_targets(
+            window.cached_targets_by_level,
+            targets_to_show,
+        )
+        display_groups = ui.build_display_level_groups(dict(matched_groups), run_name=current_run)
+        ui.append_target_groups_to_model(display_groups, run_name=current_run)
+        matched_count = tree_structure.count_display_targets(display_groups)
+    finally:
+        ui.set_tree_updates_enabled(True)
+
     ui.expand_tree_all()
     return matched_count
 
@@ -258,7 +286,7 @@ def restore_view_from_plan(window, restore_plan: dict) -> str:
     return view_restore.apply_restore_plan(
         restore_plan,
         ui.get_retrace_target,
-        lambda targets_to_show: ui.filter_tree_by_targets(set(targets_to_show)),
+        lambda targets_to_show: filter_tree_by_targets_flat(window, set(targets_to_show)),
         lambda status: ui.apply_status_filter(status),
         ui.filter_tree,
         ui.restore_scroll_value,

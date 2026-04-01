@@ -28,6 +28,10 @@ class FilterHeaderView(QHeaderView):
         self.geometriesChanged.connect(self._update_filter_geometry)
 
     def _section_content_rect(self, logical_index: int) -> QRect:
+        section_count = self.count()
+        if logical_index < 0 or logical_index >= section_count:
+            return QRect()
+
         header_pos = self.sectionViewportPosition(logical_index)
         header_width = self.sectionSize(logical_index)
         if header_width <= 0:
@@ -86,8 +90,9 @@ class FilterHeaderView(QHeaderView):
         else:
             self._show_filter()
 
-    def _show_filter(self):
-        if self._filter_visible:
+    def _ensure_filter_edit(self):
+        """Create the embedded filter editor once and reuse it across show/hide cycles."""
+        if self.filter_edit is not None:
             return
 
         self.filter_edit = QLineEdit(self)
@@ -107,14 +112,23 @@ class FilterHeaderView(QHeaderView):
             """
         )
         self.filter_edit.setPlaceholderText("Search targets...")
-        self.filter_edit.setText(self._filter_text)
+        self.filter_edit.textChanged.connect(self._on_filter_changed)
+        self.filter_edit.installEventFilter(self)
+        self.filter_edit.hide()
+
+    def _show_filter(self):
+        if self._filter_visible:
+            return
+
+        self._ensure_filter_edit()
+        self.filter_edit.setPlaceholderText("Search targets...")
+        if self.filter_edit.text() != self._filter_text:
+            self.filter_edit.setText(self._filter_text)
         self._update_filter_geometry()
 
         self.filter_edit.show()
         self.filter_edit.setFocus()
         self.filter_edit.selectAll()
-        self.filter_edit.textChanged.connect(self._on_filter_changed)
-        self.filter_edit.installEventFilter(self)
 
         self._filter_visible = True
         self.viewport().update()
@@ -122,8 +136,7 @@ class FilterHeaderView(QHeaderView):
     def _hide_filter(self):
         if self.filter_edit:
             self._filter_text = self.filter_edit.text()
-            self.filter_edit.deleteLater()
-            self.filter_edit = None
+            self.filter_edit.hide()
         self._filter_visible = False
         self.viewport().update()
 
@@ -185,10 +198,6 @@ class FilterHeaderView(QHeaderView):
                     self._hide_filter()
                     return True
                 if event.key() in (Qt.Key_Enter, Qt.Key_Return, Qt.Key_Tab):
-                    self._hide_filter()
-                    return True
-            elif event.type() == QEvent.FocusOut:
-                if self.filter_edit and not self.filter_edit.hasFocus():
                     self._hide_filter()
                     return True
         return super().eventFilter(obj, event)

@@ -15,8 +15,6 @@ logger = logging.getLogger(__name__)
 # ========== Pre-compiled Regex Patterns ==========
 RE_LEVEL_LINE = re.compile(r'^set\s+LEVEL_(\d+)\s*=\s*"([^"]*)"')
 RE_ACTIVE_TARGETS = re.compile(r'set\s*ACTIVE_TARGETS\s*=\s*"([^"]*)"')
-RE_TARGET_LEVEL = re.compile(r'set\s*(TARGET_LEVEL_\w+)\s*=\s*(.*)')
-RE_QUOTED_STRING = re.compile(r"^['\"](.*)['\"]\s*$")
 RE_DEPENDENCY_OUT = re.compile(r'set\s+DEPENDENCY_OUT_(\w+)\s*=\s*"([^"]*)"')
 RE_ALL_RELATED = re.compile(r'set\s+ALL_RELATED_(\w+)\s*=\s*"([^"]*)"')
 RE_PARAM_LINE = re.compile(r'^\s*(\w+)\s*=\s*(.+?)\s*$')

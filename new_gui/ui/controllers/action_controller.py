@@ -26,7 +26,7 @@ def _bridge(window) -> ActionWindowBridge:
 def copy_selected_target(window) -> None:
     """Copy selected target names to the clipboard."""
     ui = _bridge(window)
-    targets = exit_search_mode_and_get_targets(window)
+    targets = ui.get_selected_targets()
     if not targets:
         targets = ui.get_selected_action_targets()
 

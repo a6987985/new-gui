@@ -15,9 +15,12 @@ PACKAGE_ROOT = REPO_ROOT / "new_gui"
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from PyQt5.QtCore import Qt
+from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication, QPushButton
 
 from new_gui.reproduce_ui import MainWindow
+from new_gui.services import tree_rows
 from new_gui.ui.controllers import action_controller
 from new_gui.ui.dialogs.dependency_graph import DependencyGraphDialog
 from new_gui.ui.widgets.bottom_output_panel import BottomOutputPanel, GuiLogEntry
@@ -101,7 +104,59 @@ def _row2_button_widths(window: MainWindow) -> dict[str, int]:
 def smoke_main_window(app: QApplication) -> None:
     """Verify the main window still supports the key governance seams."""
     window = MainWindow()
+    window.show()
     _process_events(app)
+
+    window.header.show_filter()
+    _process_events(app)
+    _require(window.header.filter_edit is not None, "Header search editor did not appear.")
+
+    window.header.filter_edit.setText("a")
+    _process_events(app)
+    _require(window.header.get_filter_text() == "a", "Header search text failed to update.")
+
+    window.header.filter_edit.setText("abc")
+    _process_events(app)
+    QTest.keyClick(window.header.filter_edit, Qt.Key_Backspace)
+    QTest.keyClick(window.header.filter_edit, Qt.Key_Backspace)
+    QTest.keyClick(window.header.filter_edit, Qt.Key_Backspace)
+    _process_events(app)
+    _require(window.header.get_filter_text() == "", "Header search text did not clear cleanly.")
+
+    target_row = tree_rows.build_target_row_items(
+        "1",
+        "smoke_target",
+        "finish",
+        [],
+        "",
+        "",
+        "pd_sim",
+        "4",
+        "30000",
+        window.colors,
+    )
+    window.model.appendRow(target_row)
+    selection_flags = window.tree.selectionModel().ClearAndSelect | window.tree.selectionModel().Rows
+    window.tree.selectionModel().select(window.model.index(0, 1), selection_flags)
+    window.is_search_mode = True
+    _process_events(app)
+
+    window.tree.setFocus()
+    _process_events(app)
+    QTest.keyClick(window.tree, Qt.Key_C, Qt.ControlModifier)
+    _process_events(app)
+    _require(
+        QApplication.clipboard().text() == "smoke_target",
+        "Ctrl+C on a selected search result did not copy the target.",
+    )
+    _require(
+        window.header.get_filter_text() == "",
+        "Ctrl+C in header search unexpectedly changed the search text.",
+    )
+
+    window.header.hide_filter()
+    _process_events(app)
+    _require(window.header.filter_edit is not None, "Header search editor was unexpectedly destroyed.")
 
     initial_entries = window._session_log_widget.entry_count()
     window.show_notification("Smoke", "Notification mirroring check", "warning")

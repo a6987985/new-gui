@@ -1257,7 +1257,7 @@ class MainWindow(QMainWindow):
     def filter_tree_by_targets(self, targets_to_show):
         """Filter tree to show only specific targets"""
         logger.debug(f"Filtering tree for {len(targets_to_show)} targets")
-        view_state.filter_tree_by_targets(self.tree, self.model, targets_to_show)
+        view_controller.filter_tree_by_targets_flat(self, targets_to_show)
 
     def retrace_tab(self, inout):
         """Execute trace and filter view (In-Place)"""
