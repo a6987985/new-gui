@@ -28,6 +28,14 @@ _STACK_PANEL_SVG_TEMPLATE = """
 </svg>
 """
 
+_SIDE_PANEL_SVG_TEMPLATE = """
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="4.5" y="4.5" width="15" height="15" rx="1.5" stroke="{stroke}" stroke-width="1.8"/>
+  <path d="M10.8 5.3V18.7" stroke="{stroke}" stroke-width="1.8" stroke-linecap="round"/>
+  {left_fill}
+</svg>
+"""
+
 
 def build_terminal_follow_run_icon(size: int = 16) -> QIcon:
     """Return a two-state link icon used by the terminal follow-run toggle."""
@@ -46,6 +54,16 @@ def build_panel_stack_icon(size: int = 16) -> QIcon:
     icon.addPixmap(_render_stack_panel_icon_pixmap(True, size), QIcon.Normal, QIcon.On)
     icon.addPixmap(_render_stack_panel_icon_pixmap(False, size, stroke="#FFFFFF"), QIcon.Active, QIcon.Off)
     icon.addPixmap(_render_stack_panel_icon_pixmap(True, size, stroke="#FFFFFF"), QIcon.Active, QIcon.On)
+    return icon
+
+
+def build_side_panel_icon(size: int = 16) -> QIcon:
+    """Return a two-state side-panel icon for left-bar placeholder toggle."""
+    icon = QIcon()
+    icon.addPixmap(_render_side_panel_icon_pixmap(False, size), QIcon.Normal, QIcon.Off)
+    icon.addPixmap(_render_side_panel_icon_pixmap(True, size), QIcon.Normal, QIcon.On)
+    icon.addPixmap(_render_side_panel_icon_pixmap(False, size, stroke="#FFFFFF"), QIcon.Active, QIcon.Off)
+    icon.addPixmap(_render_side_panel_icon_pixmap(True, size, stroke="#FFFFFF"), QIcon.Active, QIcon.On)
     return icon
 
 
@@ -105,5 +123,40 @@ def _render_stack_panel_icon_pixmap(selected: bool, size: int, stroke: str = "#F
     painter.drawLine(int(size * 0.24), int(size * 0.55), int(size * 0.78), int(size * 0.55))
     if selected:
         painter.fillRect(int(size * 0.24), int(size * 0.58), int(size * 0.53), int(size * 0.18), QColor("#D9D9D9"))
+    painter.end()
+    return pixmap
+
+
+def _render_side_panel_icon_pixmap(selected: bool, size: int, stroke: str = "#F4F4F4") -> QPixmap:
+    """Render the side-panel icon matching the requested selected state."""
+    left_fill = ""
+    if selected:
+        left_fill = '<rect x="5.4" y="5.4" width="4.6" height="13.2" rx="0.8" fill="#D9D9D9"/>'
+
+    if QSvgRenderer is not None:
+        svg = _SIDE_PANEL_SVG_TEMPLATE.format(
+            stroke=stroke,
+            left_fill=left_fill,
+        ).encode("utf-8")
+        renderer = QSvgRenderer(QByteArray(svg))
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        renderer.render(painter)
+        painter.end()
+        return pixmap
+
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(QColor(stroke), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(Qt.NoBrush)
+    painter.drawRoundedRect(int(size * 0.19), int(size * 0.19), int(size * 0.62), int(size * 0.62), 2, 2)
+    divider_x = int(size * 0.44)
+    painter.drawLine(divider_x, int(size * 0.24), divider_x, int(size * 0.78))
+    if selected:
+        painter.fillRect(int(size * 0.24), int(size * 0.24), int(size * 0.18), int(size * 0.53), QColor("#D9D9D9"))
     painter.end()
     return pixmap

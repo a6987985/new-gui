@@ -3,7 +3,7 @@
 from PyQt5.QtCore import QPoint, QSize, QTimer, Qt
 from PyQt5.QtWidgets import QHBoxLayout, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
-from new_gui.ui.icon_factory import build_panel_stack_icon
+from new_gui.ui.icon_factory import build_panel_stack_icon, build_side_panel_icon
 from new_gui.ui.top_button_styles import build_neutral_top_button_style
 from new_gui.ui.builders.top_button_specs import (
     DEFAULT_TOP_BUTTON_IDS,
@@ -16,6 +16,9 @@ from new_gui.ui.builders.top_button_specs import (
     TOP_BUTTON_STYLE_SHEETS,
     normalize_visible_top_buttons,
 )
+
+TOP_LEFT_TOGGLE_BUTTON_SIZE = 34
+TOP_LEFT_TOGGLE_BUTTON_COUNT = 2
 
 
 def rebuild_top_action_buttons(window) -> None:
@@ -51,11 +54,16 @@ def rebuild_top_action_buttons(window) -> None:
         container_layout.addWidget(row1_widget)
         row1_width = row1_widget.sizeHint().width()
     if row2_definitions:
+        row2_leading_offset = _get_row2_leading_offset() if row1_widget is not None else 0
+        row2_target_width = None
+        if row1_width and row1_width > row2_leading_offset:
+            row2_target_width = row1_width - row2_leading_offset
         row2_widget = _build_top_button_row_widget(
             window,
             row2_definitions,
             row_role="row2",
-            target_width=row1_width or None,
+            target_width=row2_target_width,
+            leading_offset=row2_leading_offset,
         )
         container_layout.addWidget(row2_widget)
 
@@ -154,6 +162,16 @@ def _build_row2_neutral_style(horizontal_padding: int) -> str:
     return build_neutral_top_button_style(horizontal_padding=horizontal_padding)
 
 
+def _get_row2_leading_offset() -> int:
+    """Return the row2 left offset so row2 buttons align with row1 action buttons."""
+    if TOP_LEFT_TOGGLE_BUTTON_COUNT <= 0:
+        return 0
+    return (
+        TOP_LEFT_TOGGLE_BUTTON_COUNT * TOP_LEFT_TOGGLE_BUTTON_SIZE
+        + TOP_LEFT_TOGGLE_BUTTON_COUNT * ROW1_BUTTON_SPACING
+    )
+
+
 def _build_top_icon_toggle_style() -> str:
     """Return the stylesheet used by the top-left icon-only toggle button."""
     return """
@@ -187,13 +205,28 @@ def _build_visual_experiment_button(window) -> QPushButton:
     button.setCheckable(True)
     button.setChecked(False)
     button.setCursor(Qt.PointingHandCursor)
-    button.setFixedSize(34, 34)
-    button.setIcon(build_panel_stack_icon(size=18))
-    button.setIconSize(QSize(18, 18))
+    button.setFixedSize(TOP_LEFT_TOGGLE_BUTTON_SIZE, TOP_LEFT_TOGGLE_BUTTON_SIZE)
+    button.setIcon(build_panel_stack_icon(size=20))
+    button.setIconSize(QSize(20, 20))
     button.setStyleSheet(_build_top_icon_toggle_style())
     button.setToolTip("Toggle terminal panel")
     button.toggled.connect(lambda checked: window.toggle_terminal_output_panel())
     window._top_panel_terminal_toggle_button = button
+    return button
+
+
+def _build_left_sidebar_placeholder_button(window) -> QPushButton:
+    """Return a left-side icon toggle button reserved for future side panel."""
+    button = QPushButton("")
+    button.setCheckable(True)
+    button.setChecked(False)
+    button.setCursor(Qt.PointingHandCursor)
+    button.setFixedSize(TOP_LEFT_TOGGLE_BUTTON_SIZE, TOP_LEFT_TOGGLE_BUTTON_SIZE)
+    button.setIcon(build_side_panel_icon(size=20))
+    button.setIconSize(QSize(20, 20))
+    button.setStyleSheet(_build_top_icon_toggle_style())
+    button.setToolTip("Toggle left panel (placeholder)")
+    window._top_panel_left_placeholder_toggle_button = button
     return button
 
 
@@ -279,14 +312,20 @@ def _get_fixed_row2_layout(target_width: int = None):
     }
 
 
-def _build_top_button_row_widget(window, row_definitions, row_role: str, target_width: int = None):
+def _build_top_button_row_widget(
+    window,
+    row_definitions,
+    row_role: str,
+    target_width: int = None,
+    leading_offset: int = 0,
+):
     """Build a single row of visible top action buttons."""
     row_widget = QWidget()
     row_widget.setAttribute(Qt.WA_TranslucentBackground, True)
     row_widget.setStyleSheet("background: transparent; border: none;")
     row_widget.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
     row_layout = QHBoxLayout(row_widget)
-    row_layout.setContentsMargins(0, 0, 0, 0)
+    row_layout.setContentsMargins(leading_offset if row_role == "row2" else 0, 0, 0, 0)
     row_layout.setSpacing(ROW1_BUTTON_SPACING if row_role == "row1" else ROW2_COMPACT_SPACING)
     row2_layout = _get_fixed_row2_layout(target_width) if row_role == "row2" else None
     fixed_button_height = _get_fixed_top_button_height()
@@ -294,6 +333,7 @@ def _build_top_button_row_widget(window, row_definitions, row_role: str, target_
         row_layout.setSpacing(row2_layout["spacing"])
 
     if row_role == "row1":
+        row_layout.addWidget(_build_left_sidebar_placeholder_button(window))
         row_layout.addWidget(_build_visual_experiment_button(window))
 
     for definition in row_definitions:
