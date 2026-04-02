@@ -60,6 +60,30 @@ def _process_events(app: QApplication) -> None:
     app.processEvents()
 
 
+def _count_visible_target_rows(window: MainWindow) -> int:
+    """Count currently visible target rows in the shared tree model."""
+    model = window.model
+    tree = window.tree
+
+    def walk(parent_item=None, parent_index=None) -> int:
+        row_count = parent_item.rowCount() if parent_item is not None else model.rowCount()
+        visible_count = 0
+        for row in range(row_count):
+            check_parent = parent_index if parent_index is not None else tree.rootIndex()
+            if tree.isRowHidden(row, check_parent):
+                continue
+            row_items = tree_rows.get_row_items(model, row, parent_item)
+            level_item = row_items[0] if row_items else None
+            target_item = row_items[1] if len(row_items) > 1 else None
+            if tree_rows.get_row_kind(target_item) == tree_rows.ROW_KIND_TARGET:
+                visible_count += 1
+            if level_item is not None and level_item.hasChildren():
+                visible_count += walk(level_item, level_item.index())
+        return visible_count
+
+    return walk()
+
+
 def _clear_line_edit_with_keys(edit) -> None:
     """Clear one line edit using keyboard events so textEdited is emitted."""
     edit.selectAll()
@@ -199,6 +223,111 @@ def smoke_search_stability(window: MainWindow, app: QApplication) -> None:
         "Repeated clear/delete eventually rebuilt the tree model.",
     )
 
+    _build_search_stability_tree(window)
+    _process_events(app)
+    baseline_visible_targets = _count_visible_target_rows(window)
+    _clear_line_edit_with_keys(window.header.filter_edit)
+    QTest.keyClicks(window.header.filter_edit, "alpha")
+    _process_events(app)
+    level_item = window.model.item(0, 0)
+    level_item.removeRow(1)
+    _process_events(app)
+    _clear_line_edit_with_keys(window.header.filter_edit)
+    _process_events(app)
+    _require(
+        _count_visible_target_rows(window) == baseline_visible_targets - 1,
+        "Search clear after structure change left hidden target rows behind.",
+    )
+
+
+def smoke_search_options(window: MainWindow, app: QApplication) -> None:
+    """Verify case/whole-word/regex option toggles change matching behavior."""
+    window.model.removeRows(0, window.model.rowCount())
+    level_row = tree_rows.build_container_row_items(
+        "1",
+        "Level 1",
+        tree_rows.ROW_KIND_LEVEL,
+        descendant_targets=["AlphaCase", "alphacase"],
+    )
+    level_item = level_row[0]
+    level_item.appendRow(
+        tree_rows.build_target_row_items(
+            "",
+            "AlphaCase",
+            "finish",
+            [],
+            "",
+            "",
+            "pd_sim",
+            "4",
+            "30000",
+            window.colors,
+        )
+    )
+    level_item.appendRow(
+        tree_rows.build_target_row_items(
+            "",
+            "alphacase",
+            "finish",
+            [],
+            "",
+            "",
+            "pd_sim",
+            "4",
+            "30000",
+            window.colors,
+        )
+    )
+    window.model.appendRow(level_row)
+    window.tree.expandAll()
+    _process_events(app)
+
+    window.header.show_filter()
+    _process_events(app)
+    _require(window.header.filter_edit is not None, "Header filter editor missing for search-option smoke.")
+
+    case_button = getattr(window.header.filter_edit, "_case_button", None)
+    whole_word_button = getattr(window.header.filter_edit, "_whole_word_button", None)
+    regex_button = getattr(window.header.filter_edit, "_regex_button", None)
+    _require(case_button is not None, "Case-sensitive search button was not created.")
+    _require(whole_word_button is not None, "Whole-word search button was not created.")
+    _require(regex_button is not None, "Regex search button was not created.")
+
+    _clear_line_edit_with_keys(window.header.filter_edit)
+    QTest.keyClicks(window.header.filter_edit, "alphacase")
+    _process_events(app)
+    parent_index = window.model.item(0, 0).index()
+    _require(window.tree.isRowHidden(0, parent_index) is False, "Case-insensitive search hid mixed-case row.")
+    _require(window.tree.isRowHidden(1, parent_index) is False, "Case-insensitive search hid lowercase row.")
+
+    QTest.mouseClick(case_button, Qt.LeftButton)
+    _process_events(app)
+    _require(window.tree.isRowHidden(0, parent_index) is True, "Case-sensitive search did not hide mixed-case row.")
+    _require(window.tree.isRowHidden(1, parent_index) is False, "Case-sensitive search hid lowercase row unexpectedly.")
+
+    _clear_line_edit_with_keys(window.header.filter_edit)
+    QTest.keyClicks(window.header.filter_edit, "alpha")
+    _process_events(app)
+    _require(window.tree.isRowHidden(1, parent_index) is False, "Substring search should still match lowercase row.")
+    QTest.mouseClick(whole_word_button, Qt.LeftButton)
+    _process_events(app)
+    _require(window.tree.isRowHidden(1, parent_index) is True, "Whole-word search did not tighten substring matching.")
+
+    QTest.mouseClick(whole_word_button, Qt.LeftButton)
+    QTest.mouseClick(regex_button, Qt.LeftButton)
+    _process_events(app)
+    _clear_line_edit_with_keys(window.header.filter_edit)
+    QTest.keyClicks(window.header.filter_edit, "^alphacase$")
+    _process_events(app)
+    _require(window.tree.isRowHidden(0, parent_index) is True, "Regex search unexpectedly matched mixed-case row.")
+    _require(window.tree.isRowHidden(1, parent_index) is False, "Regex search did not match exact lowercase row.")
+
+    QTest.mouseClick(whole_word_button, Qt.LeftButton)
+    QTest.mouseClick(case_button, Qt.LeftButton)
+    QTest.mouseClick(regex_button, Qt.LeftButton)
+    _clear_line_edit_with_keys(window.header.filter_edit)
+    _process_events(app)
+
 
 def smoke_main_window(app: QApplication) -> None:
     """Verify the main window still supports the key governance seams."""
@@ -241,6 +370,7 @@ def smoke_main_window(app: QApplication) -> None:
     window.header.show_filter()
     _process_events(app)
     smoke_search_stability(window, app)
+    smoke_search_options(window, app)
 
     window.model.removeRows(0, window.model.rowCount())
     target_row = tree_rows.build_target_row_items(

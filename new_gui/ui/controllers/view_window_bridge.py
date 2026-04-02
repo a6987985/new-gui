@@ -62,6 +62,11 @@ class ViewWindowBridge:
     def header_filter_text(self):
         return self._window.header.get_filter_text() if hasattr(self._window, "header") else ""
 
+    def header_filter_options(self):
+        if hasattr(self._window, "header") and hasattr(self._window.header, "get_filter_options"):
+            return self._window.header.get_filter_options()
+        return {}
+
     def restore_normal_view(self):
         self._window.restore_normal_view()
 

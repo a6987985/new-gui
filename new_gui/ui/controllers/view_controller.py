@@ -48,28 +48,22 @@ def close_tree_view(window) -> None:
     ui.hide_tab_bar()
 
 
-def filter_tree(window, text) -> None:
+def filter_tree(window, text, search_options=None) -> None:
     """Filter tree rows in place by toggling visibility on the existing model."""
     ui = _bridge(window)
     search_text = text or ""
+    normalized_options = dict(search_options or ui.header_filter_options() or {})
     logger.debug(f"filter_tree called with text='{search_text}'")
 
     if ui.is_all_status_view:
         return
 
     if not search_text:
-        was_search_mode = bool(getattr(window, "is_search_mode", False))
         ui.set_search_mode(False)
-        if was_search_mode:
-            if ui.restore_search_view_snapshot():
-                ui.invalidate_search_view_snapshot()
-                return
-            ui.clear_trace_filter()
+        ui.clear_trace_filter()
+        ui.expand_tree_default()
         ui.invalidate_search_view_snapshot()
         return
-
-    if not getattr(window, "is_search_mode", False) or not ui.has_search_view_snapshot():
-        ui.capture_search_view_snapshot()
 
     ui.set_search_mode(True)
     ui.set_tree_updates_enabled(False)
@@ -78,7 +72,7 @@ def filter_tree(window, text) -> None:
             ui.tree,
             ui.model,
             search_text,
-            base_snapshot=ui.search_view_snapshot(),
+            search_options=normalized_options,
         )
     finally:
         ui.set_tree_updates_enabled(True)

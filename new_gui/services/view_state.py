@@ -1,5 +1,6 @@
 """Tree/view state helpers for MainWindow."""
 
+import re
 from typing import Callable, Dict, List, Sequence, Set, Tuple
 
 from PyQt5.QtCore import QItemSelectionModel, QModelIndex, Qt
@@ -67,6 +68,33 @@ def _append_row_path(parent_path: RowPath, row_index: int) -> RowPath:
     return parent_path + (row_index,)
 
 
+def _capture_tree_structure_signature(model) -> Tuple[Tuple[int, ...], ...]:
+    """Capture a lightweight row-identity signature for restore safety checks."""
+    signature = []
+
+    def walk_rows(parent_item=None, parent_path: RowPath = ()) -> None:
+        row_count = parent_item.rowCount() if parent_item is not None else model.rowCount()
+        for row in range(row_count):
+            path = _append_row_path(parent_path, row)
+            row_items = tree_rows.get_row_items(model, row, parent_item)
+            level_item = row_items[0] if row_items else None
+            target_item = row_items[1] if len(row_items) > 1 else None
+            row_kind = tree_rows.get_row_kind(target_item)
+            row_label = (target_item.text() if target_item is not None else "") or ""
+            represented_targets = tuple(tree_rows.get_row_targets(target_item))
+            signature.append(
+                (
+                    *path,
+                    hash((row_kind, row_label, represented_targets)),
+                )
+            )
+            if level_item is not None and level_item.hasChildren():
+                walk_rows(level_item, path)
+
+    walk_rows()
+    return tuple(signature)
+
+
 def capture_tree_presentation_snapshot(model, tree, current_run: str) -> TreePresentationSnapshot:
     """Capture row visibility, expansion, and scroll state without cloning the model."""
     hidden_paths: List[RowPath] = []
@@ -91,6 +119,7 @@ def capture_tree_presentation_snapshot(model, tree, current_run: str) -> TreePre
         "run": current_run,
         "hidden_paths": hidden_paths,
         "expanded_paths": expanded_paths,
+        "structure_signature": _capture_tree_structure_signature(model),
         "scroll": tree.verticalScrollBar().value(),
     }
 
@@ -103,6 +132,8 @@ def restore_tree_presentation_snapshot(
 ) -> bool:
     """Restore one row-visibility snapshot captured from the current tree model."""
     if not snapshot or snapshot.get("run") != current_run:
+        return False
+    if snapshot.get("structure_signature") != _capture_tree_structure_signature(model):
         return False
 
     hidden_paths = {tuple(path) for path in snapshot.get("hidden_paths", [])}
@@ -128,10 +159,42 @@ def restore_tree_presentation_snapshot(
     return True
 
 
-def _row_matches_search_text(row_items, normalized_search_text: str) -> bool:
-    """Return whether one row represents a target matching the search text."""
-    if not normalized_search_text:
-        return True
+def _build_search_matcher(search_text: str, search_options: dict):
+    """Build one callable matcher from search text and options."""
+    normalized_text = search_text or ""
+    if not normalized_text:
+        return lambda _value: True
+
+    options = search_options or {}
+    case_sensitive = bool(options.get("case_sensitive", False))
+    whole_word = bool(options.get("whole_word", False))
+    regex_mode = bool(options.get("regex", False))
+
+    if regex_mode:
+        pattern = normalized_text
+    else:
+        pattern = re.escape(normalized_text)
+
+    if whole_word:
+        pattern = r"\b(?:%s)\b" % pattern
+
+    flags = 0 if case_sensitive else re.IGNORECASE
+
+    try:
+        compiled_pattern = re.compile(pattern, flags)
+    except re.error:
+        if regex_mode:
+            fallback_text = normalized_text if case_sensitive else normalized_text.casefold()
+            return lambda candidate: fallback_text in (
+                str(candidate or "") if case_sensitive else str(candidate or "").casefold()
+            )
+        return lambda _value: False
+
+    return lambda candidate: bool(compiled_pattern.search(str(candidate or "")))
+
+
+def _row_matches_search_text(row_items, value_matcher) -> bool:
+    """Return whether one row represents a target matching the active matcher."""
 
     target_item = row_items[1] if len(row_items) > 1 else None
     candidate_values = []
@@ -141,7 +204,7 @@ def _row_matches_search_text(row_items, normalized_search_text: str) -> bool:
     candidate_values.extend(tree_rows.get_row_targets(target_item))
 
     for candidate in candidate_values:
-        if normalized_search_text in str(candidate or "").casefold():
+        if value_matcher(candidate):
             return True
     return False
 
@@ -150,10 +213,11 @@ def filter_tree_by_text(
     tree,
     model,
     search_text: str,
+    search_options: dict = None,
     base_snapshot: TreePresentationSnapshot = None,
 ) -> int:
     """Apply search filtering in place by hiding non-matching rows."""
-    normalized_search_text = (search_text or "").strip().casefold()
+    value_matcher = _build_search_matcher((search_text or "").strip(), search_options or {})
     base_hidden_paths = {
         tuple(path)
         for path in (base_snapshot or {}).get("hidden_paths", [])
@@ -177,7 +241,7 @@ def filter_tree_by_text(
                 tree.setRowHidden(row_index, parent_index, True)
                 return False
 
-            row_match = _row_matches_search_text(row_items, normalized_search_text)
+            row_match = _row_matches_search_text(row_items, value_matcher)
             child_match = False
             if level_item is not None and level_item.hasChildren():
                 level_index = level_item.index()

@@ -24,6 +24,9 @@ def _apply_tree_filter(window, text) -> None:
     stale earlier keystrokes.
     """
     normalized_text = text or ""
+    search_options = {}
+    if hasattr(window, "header") and hasattr(window.header, "get_filter_options"):
+        search_options = window.header.get_filter_options()
     request_id = int(getattr(window, "_search_filter_request_id", 0)) + 1
     window._search_filter_request_id = request_id
 
@@ -34,7 +37,7 @@ def _apply_tree_filter(window, text) -> None:
         _set_header_rebuild_guard(window, True)
         runtime_controller.pause_runtime_observers(window)
         try:
-            window.filter_tree(normalized_text)
+            window.filter_tree(normalized_text, search_options=search_options)
         finally:
             def release_guards() -> None:
                 _set_header_rebuild_guard(window, False)

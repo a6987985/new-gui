@@ -1,6 +1,6 @@
 from PyQt5.QtCore import QPoint, QRect, Qt, pyqtSignal
 from PyQt5.QtGui import QColor, QFont, QPainter, QPen
-from PyQt5.QtWidgets import QHeaderView, QLineEdit
+from PyQt5.QtWidgets import QHeaderView, QLineEdit, QPushButton
 
 class HeaderFilterLineEdit(QLineEdit):
     """Standalone overlay editor used for the target-column filter."""
@@ -8,6 +8,7 @@ class HeaderFilterLineEdit(QLineEdit):
     escape_pressed = pyqtSignal()
     close_requested = pyqtSignal()
     focus_lost = pyqtSignal()
+    options_changed = pyqtSignal()
 
     def keyPressEvent(self, event):
         key = event.key()
@@ -25,11 +26,134 @@ class HeaderFilterLineEdit(QLineEdit):
         super().focusOutEvent(event)
         self.focus_lost.emit()
 
+    def resizeEvent(self, event):
+        """Reposition inline search-option buttons when geometry changes."""
+        super().resizeEvent(event)
+        self._position_option_buttons()
+
+    def _create_option_button(self, text: str, tooltip: str):
+        """Build one compact checkable option button for the search box."""
+        button = QPushButton(text, self)
+        button.setCheckable(True)
+        button.setFocusPolicy(Qt.NoFocus)
+        button.setCursor(Qt.PointingHandCursor)
+        button.setToolTip(tooltip)
+        button.setFixedHeight(20)
+        button.setStyleSheet(
+            """
+                QPushButton {
+                    border: none;
+                    background: transparent;
+                    color: #6b7280;
+                    font-size: 11px;
+                    font-weight: 600;
+                    padding: 0 2px;
+                }
+                QPushButton:hover {
+                    color: #374151;
+                }
+                QPushButton:checked {
+                    color: #1f2937;
+                    text-decoration: underline;
+                }
+            """
+        )
+        button.toggled.connect(lambda _checked: self.options_changed.emit())
+        return button
+
+    def _ensure_option_buttons(self) -> None:
+        """Create all inline search-option buttons once."""
+        if hasattr(self, "_regex_button"):
+            return
+
+        self._case_button = self._create_option_button("Aa", "Match case")
+        self._whole_word_button = self._create_option_button("ab", "Match whole word")
+        self._regex_button = self._create_option_button(".*", "Use regular expression")
+        self._option_button_order = [
+            self._case_button,
+            self._whole_word_button,
+            self._regex_button,
+        ]
+        self._position_option_buttons()
+
+    def _position_option_buttons(self) -> None:
+        """Place the inline option buttons near the right side of the editor."""
+        if not hasattr(self, "_option_button_order"):
+            return
+
+        right_padding = 10
+        spacing = 2
+        x = self.width() - right_padding
+        y = (self.height() - 20) // 2
+        for button in reversed(self._option_button_order):
+            text_width = self.fontMetrics().horizontalAdvance(button.text())
+            button_width = max(20, text_width + 6)
+            x -= button_width
+            button.setGeometry(x, y, button_width, 20)
+            x -= spacing
+
+    def _right_padding_for_options(self) -> int:
+        """Return line-edit right padding large enough for the option buttons."""
+        if not hasattr(self, "_option_button_order"):
+            return 10
+
+        width_sum = 0
+        for button in self._option_button_order:
+            text_width = self.fontMetrics().horizontalAdvance(button.text())
+            width_sum += max(20, text_width + 6)
+        spacing = max(0, len(self._option_button_order) - 1) * 2
+        return width_sum + spacing + 14
+
+    def setup_search_options_ui(self) -> None:
+        """Initialize and style inline search-option buttons."""
+        self._ensure_option_buttons()
+        right_padding = self._right_padding_for_options()
+        self.setStyleSheet(
+            f"""
+                QLineEdit {{
+                    background-color: #ffffff;
+                    border: 2px solid #7aa7d9;
+                    border-radius: 8px;
+                    padding: 4px 10px;
+                    padding-right: {right_padding}px;
+                    color: #334155;
+                    font-size: 12px;
+                }}
+                QLineEdit:focus {{
+                    border: 2px solid #4f8fda;
+                }}
+            """
+        )
+        self._position_option_buttons()
+
+    def set_search_options(self, options: dict) -> None:
+        """Apply one full search-options payload without emitting extra updates."""
+        self._ensure_option_buttons()
+        normalized = options or {}
+        for button, option_key in (
+            (self._case_button, "case_sensitive"),
+            (self._whole_word_button, "whole_word"),
+            (self._regex_button, "regex"),
+        ):
+            was_blocked = button.blockSignals(True)
+            button.setChecked(bool(normalized.get(option_key, False)))
+            button.blockSignals(was_blocked)
+
+    def get_search_options(self) -> dict:
+        """Return current search-option states from inline toggle buttons."""
+        self._ensure_option_buttons()
+        return {
+            "case_sensitive": bool(self._case_button.isChecked()),
+            "whole_word": bool(self._whole_word_button.isChecked()),
+            "regex": bool(self._regex_button.isChecked()),
+        }
+
 
 class FilterHeaderView(QHeaderView):
     """Custom header with embedded filter input for target column."""
 
     filter_changed = pyqtSignal(str)
+    filter_options_changed = pyqtSignal(dict)
     level_double_clicked = pyqtSignal()
 
     def __init__(self, orientation, parent=None, filter_column=1):
@@ -39,6 +163,11 @@ class FilterHeaderView(QHeaderView):
         self._filter_geometry_updates_enabled = True
         self._filter_visible = False
         self._filter_text = ""
+        self._filter_options = {
+            "case_sensitive": False,
+            "whole_word": False,
+            "regex": False,
+        }
         self._hovered_section = -1
         self._hovered_handle_section = -1
         self._section_gap = 6
@@ -154,26 +283,14 @@ class FilterHeaderView(QHeaderView):
 
         parent_widget = self.parentWidget() or self
         self.filter_edit = HeaderFilterLineEdit(parent_widget)
-        self.filter_edit.setStyleSheet(
-            """
-                QLineEdit {
-                    background-color: #ffffff;
-                    border: 2px solid #7aa7d9;
-                    border-radius: 8px;
-                    padding: 4px 10px;
-                    color: #334155;
-                    font-size: 12px;
-                }
-                QLineEdit:focus {
-                    border: 2px solid #4f8fda;
-                }
-            """
-        )
+        self.filter_edit.setup_search_options_ui()
         self.filter_edit.setPlaceholderText("Search targets...")
+        self.filter_edit.set_search_options(self._filter_options)
         self.filter_edit.textEdited.connect(self._on_filter_changed)
         self.filter_edit.escape_pressed.connect(self._hide_filter)
         self.filter_edit.close_requested.connect(self._hide_filter)
         self.filter_edit.focus_lost.connect(self._on_filter_focus_lost)
+        self.filter_edit.options_changed.connect(self._on_filter_options_changed)
         self.filter_edit.hide()
 
     def _show_filter(self):
@@ -204,6 +321,14 @@ class FilterHeaderView(QHeaderView):
     def _on_filter_changed(self, text):
         self._filter_text = text
         self.filter_changed.emit(text)
+
+    def _on_filter_options_changed(self):
+        """Mirror inline option toggles and trigger re-filter with current text."""
+        if not self.filter_edit:
+            return
+        self._filter_options = self.filter_edit.get_search_options()
+        self.filter_options_changed.emit(dict(self._filter_options))
+        self.filter_changed.emit(self._filter_text)
 
     def _on_filter_focus_lost(self):
         """Hide the filter editor only when it is empty and no longer focused."""
@@ -290,10 +415,25 @@ class FilterHeaderView(QHeaderView):
     def get_filter_text(self):
         return self._filter_text
 
+    def get_filter_options(self):
+        """Return active search behavior flags for header filtering."""
+        return dict(self._filter_options)
+
     def set_filter_text(self, text):
         self._filter_text = text
         if self.filter_edit:
             self.filter_edit.setText(text)
+
+    def set_filter_options(self, options: dict) -> None:
+        """Set active search behavior flags for header filtering."""
+        normalized = {
+            "case_sensitive": bool((options or {}).get("case_sensitive", False)),
+            "whole_word": bool((options or {}).get("whole_word", False)),
+            "regex": bool((options or {}).get("regex", False)),
+        }
+        self._filter_options = normalized
+        if self.filter_edit:
+            self.filter_edit.set_search_options(normalized)
 
     def show_filter(self):
         """Public method to show filter."""

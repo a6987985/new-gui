@@ -459,12 +459,9 @@ class MainWindow(QMainWindow):
         """Execute flow action and refresh view (runs command in background thread)."""
         action_controller.start(self, action)
 
-    def filter_tree(self, text):
-        """Filter tree items based on text input.
-        If text is empty, restore full hierarchy.
-        If text is present, show FLAT list of matching items (no parents).
-        """
-        view_controller.filter_tree(self, text)
+    def filter_tree(self, text, search_options=None):
+        """Filter tree items based on text input and active search options."""
+        view_controller.filter_tree(self, text, search_options=search_options)
 
     def toggle_tree_expansion(self):
         """Toggle between Expand All and Collapse All"""
