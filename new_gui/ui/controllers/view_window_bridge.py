@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from new_gui.services import view_state
-from new_gui.ui.controllers import output_controller
+from new_gui.ui.controllers import output_controller, runtime_controller
 
 
 class ViewWindowBridge:
@@ -70,6 +70,21 @@ class ViewWindowBridge:
 
     def restore_main_view_snapshot(self):
         return self._window._restore_main_view_snapshot()
+
+    def capture_search_view_snapshot(self):
+        self._window._capture_search_view_snapshot()
+
+    def restore_search_view_snapshot(self):
+        return self._window._restore_search_view_snapshot()
+
+    def invalidate_search_view_snapshot(self):
+        self._window._invalidate_search_view_snapshot()
+
+    def has_search_view_snapshot(self):
+        return bool(getattr(self._window, "_search_view_snapshot", None))
+
+    def search_view_snapshot(self):
+        return getattr(self._window, "_search_view_snapshot", None)
 
     def populate_data(self, force_rebuild=False):
         self._window.populate_data(force_rebuild=force_rebuild)
@@ -178,6 +193,18 @@ class ViewWindowBridge:
 
     def setup_tune_watcher(self):
         self._window.setup_tune_watcher()
+
+    def pause_runtime_observers(self):
+        runtime_controller.pause_runtime_observers(self._window)
+
+    def resume_runtime_observers(self):
+        runtime_controller.resume_runtime_observers(self._window)
+
+    def runtime_observers_paused(self):
+        return runtime_controller.runtime_observers_paused(self._window)
+
+    def mark_runtime_refresh_pending(self):
+        runtime_controller.mark_runtime_refresh_pending(self._window)
 
     def update_status_bar(self):
         self._window.update_status_bar()

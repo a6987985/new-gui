@@ -1,6 +1,29 @@
-from PyQt5.QtCore import QEvent, QRect, Qt, pyqtSignal
+from PyQt5.QtCore import QPoint, QRect, Qt, pyqtSignal
 from PyQt5.QtGui import QColor, QFont, QPainter, QPen
 from PyQt5.QtWidgets import QHeaderView, QLineEdit
+
+class HeaderFilterLineEdit(QLineEdit):
+    """Standalone overlay editor used for the target-column filter."""
+
+    escape_pressed = pyqtSignal()
+    close_requested = pyqtSignal()
+    focus_lost = pyqtSignal()
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        if key == Qt.Key_Escape:
+            self.escape_pressed.emit()
+            event.accept()
+            return
+        if key in (Qt.Key_Enter, Qt.Key_Return, Qt.Key_Tab):
+            self.close_requested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        self.focus_lost.emit()
 
 
 class FilterHeaderView(QHeaderView):
@@ -13,6 +36,7 @@ class FilterHeaderView(QHeaderView):
         super().__init__(orientation, parent)
         self.filter_column = filter_column
         self.filter_edit = None
+        self._filter_geometry_updates_enabled = True
         self._filter_visible = False
         self._filter_text = ""
         self._hovered_section = -1
@@ -71,12 +95,45 @@ class FilterHeaderView(QHeaderView):
     def _update_filter_geometry(self):
         if not self.filter_edit:
             return
+        if not self._filter_geometry_updates_enabled:
+            return
+
+        try:
+            if not self.filter_edit.isVisible():
+                return
+        except RuntimeError:
+            self.filter_edit = None
+            return
 
         content_rect = self._section_content_rect(self.filter_column)
         if not content_rect.isValid():
             return
 
-        self.filter_edit.setGeometry(content_rect.adjusted(2, 2, -2, -2))
+        parent_widget = self.filter_edit.parentWidget()
+        if parent_widget is None:
+            return
+
+        try:
+            top_left = self.mapTo(parent_widget, content_rect.topLeft() + QPoint(2, 2))
+        except RuntimeError:
+            self.filter_edit = None
+            return
+
+        try:
+            self.filter_edit.setGeometry(
+                top_left.x(),
+                top_left.y(),
+                max(0, content_rect.width() - 4),
+                max(0, content_rect.height() - 4),
+            )
+        except RuntimeError:
+            self.filter_edit = None
+
+    def set_filter_geometry_updates_enabled(self, enabled: bool) -> None:
+        """Enable or disable geometry syncing for the embedded filter editor."""
+        self._filter_geometry_updates_enabled = bool(enabled)
+        if self._filter_geometry_updates_enabled:
+            self._update_filter_geometry()
 
     def _on_double_click(self, logical_index):
         if logical_index == 0:
@@ -95,7 +152,8 @@ class FilterHeaderView(QHeaderView):
         if self.filter_edit is not None:
             return
 
-        self.filter_edit = QLineEdit(self)
+        parent_widget = self.parentWidget() or self
+        self.filter_edit = HeaderFilterLineEdit(parent_widget)
         self.filter_edit.setStyleSheet(
             """
                 QLineEdit {
@@ -112,8 +170,10 @@ class FilterHeaderView(QHeaderView):
             """
         )
         self.filter_edit.setPlaceholderText("Search targets...")
-        self.filter_edit.textChanged.connect(self._on_filter_changed)
-        self.filter_edit.installEventFilter(self)
+        self.filter_edit.textEdited.connect(self._on_filter_changed)
+        self.filter_edit.escape_pressed.connect(self._hide_filter)
+        self.filter_edit.close_requested.connect(self._hide_filter)
+        self.filter_edit.focus_lost.connect(self._on_filter_focus_lost)
         self.filter_edit.hide()
 
     def _show_filter(self):
@@ -124,9 +184,10 @@ class FilterHeaderView(QHeaderView):
         self.filter_edit.setPlaceholderText("Search targets...")
         if self.filter_edit.text() != self._filter_text:
             self.filter_edit.setText(self._filter_text)
-        self._update_filter_geometry()
 
         self.filter_edit.show()
+        self.filter_edit.raise_()
+        self._update_filter_geometry()
         self.filter_edit.setFocus()
         self.filter_edit.selectAll()
 
@@ -143,6 +204,16 @@ class FilterHeaderView(QHeaderView):
     def _on_filter_changed(self, text):
         self._filter_text = text
         self.filter_changed.emit(text)
+
+    def _on_filter_focus_lost(self):
+        """Hide the filter editor only when it is empty and no longer focused."""
+        if not self.filter_edit:
+            return
+        if self.filter_edit.hasFocus():
+            return
+        if (self.filter_edit.text() or "").strip():
+            return
+        self._hide_filter()
 
     def paintSection(self, painter: QPainter, rect: QRect, logical_index: int):
         if not rect.isValid():
@@ -190,17 +261,6 @@ class FilterHeaderView(QHeaderView):
         )
 
         painter.restore()
-
-    def eventFilter(self, obj, event):
-        if obj == self.filter_edit:
-            if event.type() == QEvent.KeyPress:
-                if event.key() == Qt.Key_Escape:
-                    self._hide_filter()
-                    return True
-                if event.key() in (Qt.Key_Enter, Qt.Key_Return, Qt.Key_Tab):
-                    self._hide_filter()
-                    return True
-        return super().eventFilter(obj, event)
 
     def mouseMoveEvent(self, event):
         hovered_section = self.logicalIndexAt(event.pos())

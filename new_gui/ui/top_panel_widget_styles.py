@@ -9,7 +9,7 @@ def build_run_selector_style() -> str:
             border: 1px solid #a0a0a0;
             border-radius: 6px;
             padding: 6px 12px;
-            padding-right: 32px;
+            padding-right: 52px;
             color: #000000;
             font-size: 14px;
             min-width: 200px;

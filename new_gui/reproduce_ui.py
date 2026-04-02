@@ -82,7 +82,9 @@ class MainWindow(QMainWindow):
         self._tune_files_cache = {}
         self._bsub_params_cache = {}
         self._main_view_snapshot = None
+        self._search_view_snapshot = None
         self._column_resize_guard = False
+        self._suspend_header_layout_updates = False
         self._locked_main_tree_columns = {0, 1}
         self._main_tree_visible_columns = set(range(len(tree_rows.MAIN_TREE_HEADERS)))
         self._column_visibility_picker = None
@@ -97,6 +99,11 @@ class MainWindow(QMainWindow):
         self._gui_log_handler = None
         self._gui_log_previous_logger_level = None
         self._gui_log_root_handler_levels = {}
+        self._runtime_observer_pause_depth = 0
+        self._runtime_refresh_pending = False
+        self._runtime_resume_refresh_scheduled = False
+        self._runtime_backup_timer_was_active = False
+        self._search_filter_request_id = 0
 
     def _init_ui_log_dispatcher(self) -> None:
         """Create the thread-safe log bridge used by the GUI session log."""
@@ -161,6 +168,10 @@ class MainWindow(QMainWindow):
         """Drop the in-memory main-view snapshot."""
         self._main_view_snapshot = None
 
+    def _invalidate_search_view_snapshot(self) -> None:
+        """Drop the in-memory search visibility snapshot."""
+        self._search_view_snapshot = None
+
     def _capture_main_view_snapshot(self) -> None:
         """Capture the current main-view tree for fast restore."""
         current_run = self.combo.currentText()
@@ -181,6 +192,26 @@ class MainWindow(QMainWindow):
             self.combo.currentText(),
             STATUS_COLORS,
             self.set_column_widths,
+        )
+
+    def _capture_search_view_snapshot(self) -> None:
+        """Capture the current row visibility state before entering search mode."""
+        current_run = self.combo.currentText()
+        if not current_run or current_run == "No runs found":
+            return
+        self._search_view_snapshot = view_state.capture_tree_presentation_snapshot(
+            self.model,
+            self.tree,
+            current_run,
+        )
+
+    def _restore_search_view_snapshot(self) -> bool:
+        """Restore the saved pre-search row visibility state."""
+        return view_state.restore_tree_presentation_snapshot(
+            self.model,
+            self.tree,
+            self._search_view_snapshot,
+            self.combo.currentText(),
         )
 
     def _get_xmeta_background_color(self):
@@ -411,6 +442,7 @@ class MainWindow(QMainWindow):
 
     def _rebuild_main_tree_now(self) -> None:
         """Rebuild the main tree immediately using the current run selection."""
+        self._invalidate_search_view_snapshot()
         self.model.clear()
         self.populate_data()
 
@@ -421,6 +453,7 @@ class MainWindow(QMainWindow):
             self.header.hide_filter()
         self._set_quick_search_text("")
         self.is_search_mode = False
+        self._invalidate_search_view_snapshot()
 
     def start(self, action):
         """Execute flow action and refresh view (runs command in background thread)."""
@@ -495,6 +528,8 @@ class MainWindow(QMainWindow):
     def _on_tree_header_section_resized(self, logical_index, old_size, new_size):
         """Keep the right edge flush after manual column resizing."""
         del old_size
+        if getattr(self, "_suspend_header_layout_updates", False):
+            return
         if self._column_resize_guard:
             return
 

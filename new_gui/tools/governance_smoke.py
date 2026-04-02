@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import py_compile
 import sys
+import tempfile
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -20,6 +21,7 @@ from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication, QPushButton
 
 from new_gui.reproduce_ui import MainWindow
+from new_gui.services import action_flow
 from new_gui.services import tree_rows
 from new_gui.ui.controllers import action_controller
 from new_gui.ui.dialogs.dependency_graph import DependencyGraphDialog
@@ -56,6 +58,12 @@ def _ensure_app() -> QApplication:
 def _process_events(app: QApplication) -> None:
     """Process pending Qt events once."""
     app.processEvents()
+
+
+def _clear_line_edit_with_keys(edit) -> None:
+    """Clear one line edit using keyboard events so textEdited is emitted."""
+    edit.selectAll()
+    QTest.keyClick(edit, Qt.Key_Delete)
 
 
 def run_py_compile_check() -> int:
@@ -101,6 +109,97 @@ def _row2_button_widths(window: MainWindow) -> dict[str, int]:
     }
 
 
+def _build_search_stability_tree(window: MainWindow) -> None:
+    """Build a deterministic tree used by search stability checks."""
+    window.model.removeRows(0, window.model.rowCount())
+    level_row = tree_rows.build_container_row_items(
+        "1",
+        "Level 1",
+        tree_rows.ROW_KIND_LEVEL,
+        descendant_targets=["alpha_target", "beta_target"],
+    )
+    level_item = level_row[0]
+    level_item.appendRow(
+        tree_rows.build_target_row_items(
+            "",
+            "alpha_target",
+            "finish",
+            [],
+            "",
+            "",
+            "pd_sim",
+            "4",
+            "30000",
+            window.colors,
+        )
+    )
+    level_item.appendRow(
+        tree_rows.build_target_row_items(
+            "",
+            "beta_target",
+            "finish",
+            [],
+            "",
+            "",
+            "pd_sim",
+            "4",
+            "30000",
+            window.colors,
+        )
+    )
+    window.model.appendRow(level_row)
+    window.tree.expandAll()
+
+
+def smoke_search_stability(window: MainWindow, app: QApplication) -> None:
+    """Verify search filtering keeps model identity stable across clear/delete cycles."""
+    _build_search_stability_tree(window)
+    _process_events(app)
+
+    root_item_before = window.model.item(0, 0)
+    _require(root_item_before is not None, "Search stability setup failed to create root row.")
+    root_identity = id(root_item_before)
+    parent_index = root_item_before.index()
+
+    window.header.show_filter()
+    _process_events(app)
+    _require(window.header.filter_edit is not None, "Header search editor did not appear for stability smoke.")
+
+    _clear_line_edit_with_keys(window.header.filter_edit)
+    QTest.keyClicks(window.header.filter_edit, "alpha")
+    _process_events(app)
+    _require(window.is_search_mode is True, "Search stability smoke did not enter search mode.")
+    _require(id(window.model.item(0, 0)) == root_identity, "Search unexpectedly rebuilt the tree model.")
+    _require(window.tree.isRowHidden(0, parent_index) is False, "Matching child row was unexpectedly hidden.")
+    _require(window.tree.isRowHidden(1, parent_index) is True, "Non-matching child row was not filtered out.")
+
+    _clear_line_edit_with_keys(window.header.filter_edit)
+    _process_events(app)
+    _require(window.is_search_mode is False, "Search stability smoke failed to exit search mode on clear.")
+    _require(id(window.model.item(0, 0)) == root_identity, "Clearing search unexpectedly rebuilt the tree model.")
+    _require(window.tree.isRowHidden(0, parent_index) is False, "First child row did not restore after clear.")
+    _require(window.tree.isRowHidden(1, parent_index) is False, "Second child row did not restore after clear.")
+    _require(bool(window._search_view_snapshot) is False, "Search snapshot was not cleared after restore.")
+
+    for _ in range(25):
+        _clear_line_edit_with_keys(window.header.filter_edit)
+        QTest.keyClicks(window.header.filter_edit, "alpha")
+        _process_events(app)
+        _clear_line_edit_with_keys(window.header.filter_edit)
+        _process_events(app)
+        QTest.keyClick(window.header.filter_edit, Qt.Key_Delete)
+        _process_events(app)
+
+    _require(
+        window.header.get_filter_text() == "",
+        "Repeated clear/delete changed search text unexpectedly.",
+    )
+    _require(
+        id(window.model.item(0, 0)) == root_identity,
+        "Repeated clear/delete eventually rebuilt the tree model.",
+    )
+
+
 def smoke_main_window(app: QApplication) -> None:
     """Verify the main window still supports the key governance seams."""
     window = MainWindow()
@@ -111,18 +210,39 @@ def smoke_main_window(app: QApplication) -> None:
     _process_events(app)
     _require(window.header.filter_edit is not None, "Header search editor did not appear.")
 
-    window.header.filter_edit.setText("a")
+    _clear_line_edit_with_keys(window.header.filter_edit)
+    QTest.keyClicks(window.header.filter_edit, "a")
     _process_events(app)
     _require(window.header.get_filter_text() == "a", "Header search text failed to update.")
+    _require(window.is_search_mode is True, "Header search did not enter search mode.")
 
-    window.header.filter_edit.setText("abc")
+    _clear_line_edit_with_keys(window.header.filter_edit)
+    QTest.keyClicks(window.header.filter_edit, "abc")
     _process_events(app)
     QTest.keyClick(window.header.filter_edit, Qt.Key_Backspace)
     QTest.keyClick(window.header.filter_edit, Qt.Key_Backspace)
     QTest.keyClick(window.header.filter_edit, Qt.Key_Backspace)
     _process_events(app)
     _require(window.header.get_filter_text() == "", "Header search text did not clear cleanly.")
+    _require(window.is_search_mode is False, "Header search did not exit search mode after clearing text.")
+    QTest.keyClick(window.header.filter_edit, Qt.Key_Delete)
+    QTest.keyClick(window.header.filter_edit, Qt.Key_Delete)
+    _process_events(app)
+    _require(window.header.get_filter_text() == "", "Header search text changed after extra Delete on empty input.")
+    _require(window.header.filter_edit.isVisible(), "Header search editor unexpectedly closed after extra Delete.")
+    _require(window.is_search_mode is False, "Extra Delete on empty search unexpectedly re-entered search mode.")
+    window.tree.setFocus()
+    _process_events(app)
+    _require(
+        window.header.filter_edit.isVisible() is False,
+        "Empty header search editor did not close after focus moved away.",
+    )
 
+    window.header.show_filter()
+    _process_events(app)
+    smoke_search_stability(window, app)
+
+    window.model.removeRows(0, window.model.rowCount())
     target_row = tree_rows.build_target_row_items(
         "1",
         "smoke_target",
@@ -327,6 +447,34 @@ def smoke_dependency_graph_dialog(app: QApplication) -> None:
     dialog.deleteLater()
 
 
+def smoke_action_flow_policy() -> None:
+    """Verify run actions preserve dependency order and stay free of GUI kill timeouts."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        run_base_dir = Path(temp_dir)
+        run_dir = run_base_dir / "sample_run"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / ".target_dependency.csh").write_text(
+            'set LEVEL_1 = "first_target"\nset LEVEL_2 = "second_target"\n',
+            encoding="utf-8",
+        )
+
+        request = action_flow.build_action_request(
+            str(run_base_dir),
+            "sample_run",
+            "XMeta_run",
+            ["second_target", "first_target"],
+        )
+
+        _require(
+            request["argv"] == ["XMeta_run", "first_target", "second_target"],
+            "Run action request did not normalize target order by dependency level.",
+        )
+        _require(
+            request["timeout"] is None,
+            "Run action request should not impose a GUI timeout on XMeta_run.",
+        )
+
+
 def main() -> int:
     """Run the governance smoke suite and print a compact report."""
     compiled_count = run_py_compile_check()
@@ -335,6 +483,7 @@ def main() -> int:
     smoke_bottom_output_panel(app)
     smoke_main_window(app)
     smoke_dependency_graph_dialog(app)
+    smoke_action_flow_policy()
 
     print(f"Governance smoke passed. Compiled {compiled_count} Python files under new_gui/.")
     return 0

@@ -176,25 +176,26 @@ def _build_top_icon_toggle_style() -> str:
     """Return the stylesheet used by the top-left icon-only toggle button."""
     return """
         QPushButton {
-            background-color: #181818;
-            border: 1px solid #2b2b2b;
+            background-color: #ffffff;
+            border: 1px solid #cfd8e3;
             border-radius: 6px;
             padding: 0px;
         }
         QPushButton:hover {
-            background-color: #363636;
-            border: 1px solid #727272;
+            background-color: #f7fbff;
+            border: 1px solid #7ba4d9;
         }
         QPushButton:pressed {
-            background-color: #303030;
+            background-color: #e7f1fb;
+            border: 1px solid #5d8fcf;
         }
         QPushButton:checked {
-            background-color: #222222;
-            border: 1px solid #4a4a4a;
+            background-color: #ffffff;
+            border: 1px solid #9fb5ce;
         }
         QPushButton:checked:hover {
-            background-color: #3a3a3a;
-            border: 1px solid #7a7a7a;
+            background-color: #f7fbff;
+            border: 1px solid #5d8fcf;
         }
     """
 

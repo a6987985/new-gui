@@ -49,30 +49,40 @@ def close_tree_view(window) -> None:
 
 
 def filter_tree(window, text) -> None:
-    """Filter tree items by text using the main-view grouped layout."""
+    """Filter tree rows in place by toggling visibility on the existing model."""
     ui = _bridge(window)
-    logger.debug(f"filter_tree called with text='{text}'")
-    ui.set_search_mode(bool(text))
+    search_text = text or ""
+    logger.debug(f"filter_tree called with text='{search_text}'")
 
-    if not text:
-        ui.populate_data(force_rebuild=True)
+    if ui.is_all_status_view:
         return
 
-    run_selection.ensure_cached_targets(window, ui.current_run_name())
-    if not run_selection.has_cached_targets(window):
+    if not search_text:
+        was_search_mode = bool(getattr(window, "is_search_mode", False))
+        ui.set_search_mode(False)
+        if was_search_mode:
+            if ui.restore_search_view_snapshot():
+                ui.invalidate_search_view_snapshot()
+                return
+            ui.clear_trace_filter()
+        ui.invalidate_search_view_snapshot()
         return
 
+    if not getattr(window, "is_search_mode", False) or not ui.has_search_view_snapshot():
+        ui.capture_search_view_snapshot()
+
+    ui.set_search_mode(True)
     ui.set_tree_updates_enabled(False)
     try:
-        if ui.model.rowCount() > 0:
-            ui.model.removeRows(0, ui.model.rowCount())
-
-        matching_groups = tree_structure.filter_level_groups_by_text(window.cached_targets_by_level, text)
-        display_groups = ui.build_display_level_groups(dict(matching_groups))
-        ui.append_target_groups_to_model(display_groups)
-        ui.expand_tree_all()
+        view_state.filter_tree_by_text(
+            ui.tree,
+            ui.model,
+            search_text,
+            base_snapshot=ui.search_view_snapshot(),
+        )
     finally:
         ui.set_tree_updates_enabled(True)
+        ui.tree.viewport().update()
 
 
 def filter_tree_by_status_flat(window, status):
@@ -86,6 +96,7 @@ def filter_tree_by_status_flat(window, status):
     if not run_selection.has_cached_targets(window):
         return 0
 
+    ui.invalidate_search_view_snapshot()
     ui.set_tree_updates_enabled(False)
     ui.reset_main_tree_model()
 
@@ -118,6 +129,7 @@ def filter_tree_by_targets_flat(window, targets_to_show) -> int:
     if not run_selection.has_cached_targets(window):
         return 0
 
+    ui.invalidate_search_view_snapshot()
     ui.set_tree_updates_enabled(False)
     try:
         ui.reset_main_tree_model()
@@ -156,6 +168,7 @@ def show_all_status(window) -> None:
     ui = _bridge(window)
     logger.debug("show_all_status called")
 
+    ui.invalidate_search_view_snapshot()
     ui.is_all_status_view = True
     ui.set_all_status_tab_state()
 
@@ -320,6 +333,7 @@ def set_all_status_tab_state(window) -> None:
 def populate_all_status_overview(window, overview_rows) -> None:
     """Populate the model with the four-column all-status overview."""
     ui = _bridge(window)
+    ui.invalidate_search_view_snapshot()
     ui.set_tree_updates_enabled(False)
     run_views.reset_all_status_model(ui.model)
     for row in overview_rows:
@@ -337,6 +351,7 @@ def activate_selected_run_view(window, current_run: str, invalidate_snapshot: bo
     if invalidate_snapshot:
         ui.invalidate_main_view_snapshot()
 
+    ui.invalidate_search_view_snapshot()
     ui.is_all_status_view = False
     ui.combo_sel = run_state["combo_sel"]
     logger.info(f"Run changed to: {ui.combo_sel}")
@@ -395,6 +410,7 @@ def populate_data(window, force_rebuild=False) -> None:
 
     ui.set_tree_updates_enabled(False)
     try:
+        ui.invalidate_search_view_snapshot()
         ui.reset_main_tree_model()
 
         current_run = ui.current_run_name()
@@ -428,11 +444,15 @@ def populate_data(window, force_rebuild=False) -> None:
 
 def change_run(window) -> None:
     """Refresh visible row status and time fields for the active run."""
+    ui = _bridge(window)
+    if ui.runtime_observers_paused():
+        ui.mark_runtime_refresh_pending()
+        return
+
     refresh_state = refresh_run_list(window, activate_if_selection_changed=True)
     if refresh_state["selection_changed"]:
         return
 
-    ui = _bridge(window)
     if not ui.model or not ui.combo_sel:
         return
 

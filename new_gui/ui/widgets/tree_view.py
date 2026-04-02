@@ -102,7 +102,8 @@ class ColorTreeView(QTreeView):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._hovered_row_index = QModelIndex()
+        self._hovered_row_path = None
+        self._tracked_model = None
         self._v_scrollbar = RoundedScrollBar(Qt.Vertical, self, show_step_buttons=True)
         self._h_scrollbar = RoundedScrollBar(Qt.Horizontal, self, show_step_buttons=True)
         self._v_scrollbar.setFixedWidth(16)
@@ -113,26 +114,78 @@ class ColorTreeView(QTreeView):
         self.setHorizontalScrollBar(self._h_scrollbar)
         self.setMouseTracking(True)
         self.viewport().setMouseTracking(True)
+        self._connect_model_signals(self.model())
 
-    def _row_index_key(self, index):
-        """Return a stable row identity for hover comparisons."""
+    def setModel(self, model):
+        """Reconnect transient-state guards whenever the backing model changes."""
+        self._disconnect_model_signals()
+        super().setModel(model)
+        self._connect_model_signals(model)
+        self._clear_transient_state()
+
+    def _connect_model_signals(self, model) -> None:
+        """Watch model lifecycle signals so stale hover state never survives a reset."""
+        if model is None:
+            self._tracked_model = None
+            return
+
+        self._tracked_model = model
+        for signal in (
+            model.modelAboutToBeReset,
+            model.layoutAboutToBeChanged,
+            model.rowsAboutToBeRemoved,
+            model.destroyed,
+        ):
+            signal.connect(self._clear_transient_state)
+
+    def _disconnect_model_signals(self) -> None:
+        """Detach model lifecycle hooks from the previously tracked model."""
+        if self._tracked_model is None:
+            return
+
+        for signal in (
+            self._tracked_model.modelAboutToBeReset,
+            self._tracked_model.layoutAboutToBeChanged,
+            self._tracked_model.rowsAboutToBeRemoved,
+            self._tracked_model.destroyed,
+        ):
+            try:
+                signal.disconnect(self._clear_transient_state)
+            except (TypeError, RuntimeError):
+                pass
+        self._tracked_model = None
+
+    def _clear_transient_state(self, *_args) -> None:
+        """Drop any hover state that would become unsafe across model changes."""
+        if self._hovered_row_path is None:
+            return
+        self._hovered_row_path = None
+        self.viewport().update()
+
+    def _row_path_key(self, index):
+        """Return a Python-only row path for hover comparisons."""
         if not index.isValid():
             return None
-        return (index.row(), index.parent())
+
+        path = []
+        current = index
+        while current.isValid():
+            path.append(current.row())
+            current = current.parent()
+        return tuple(reversed(path))
 
     def mouseMoveEvent(self, event):
         hovered_index = self.indexAt(event.pos())
         if hovered_index.isValid():
             hovered_index = hovered_index.sibling(hovered_index.row(), 0)
-        if self._row_index_key(hovered_index) != self._row_index_key(self._hovered_row_index):
-            self._hovered_row_index = hovered_index
+        hovered_row_path = self._row_path_key(hovered_index)
+        if hovered_row_path != self._hovered_row_path:
+            self._hovered_row_path = hovered_row_path
             self.viewport().update()
         super().mouseMoveEvent(event)
 
     def leaveEvent(self, event):
-        if self._hovered_row_index.isValid():
-            self._hovered_row_index = QModelIndex()
-            self.viewport().update()
+        self._clear_transient_state()
         super().leaveEvent(event)
 
     def _resolve_row_background_brush(self, index):
@@ -150,7 +203,7 @@ class ColorTreeView(QTreeView):
     def drawBranches(self, painter, rect, index):
         selection_model = self.selectionModel()
         is_selected = selection_model.isSelected(index) if selection_model else False
-        is_hovered = self._row_index_key(index) == self._row_index_key(self._hovered_row_index)
+        is_hovered = self._row_path_key(index) == self._hovered_row_path
         brush = self._resolve_row_background_brush(index)
 
         painter.save()

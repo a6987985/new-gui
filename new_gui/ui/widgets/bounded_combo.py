@@ -4,6 +4,7 @@ from PyQt5.QtCore import QPointF, QTimer, Qt, pyqtSignal
 from PyQt5.QtGui import QColor, QPainter, QPen
 from PyQt5.QtWidgets import QComboBox, QCompleter, QPushButton, QStyle, QStyleOptionComboBox
 
+from new_gui.ui.icon_factory import build_search_icon
 from new_gui.ui.widgets.scrollbars import RoundedScrollBar
 
 
@@ -11,6 +12,10 @@ class BoundedComboBox(QComboBox):
     """Custom ComboBox with on-demand search mode and custom dropdown arrow."""
 
     popup_about_to_show = pyqtSignal()
+    _DROP_DOWN_WIDTH = 24
+    _SEARCH_BUTTON_SIZE = 20
+    _SEARCH_ICON_SIZE = 16
+    _SEARCH_ARROW_GAP = 3
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -22,21 +27,20 @@ class BoundedComboBox(QComboBox):
 
         self.search_btn = QPushButton(self)
         self.search_btn.setCursor(Qt.PointingHandCursor)
-        self.search_btn.setFixedSize(18, 18)
+        self.search_btn.setFixedSize(self._SEARCH_BUTTON_SIZE, self._SEARCH_BUTTON_SIZE)
+        self.search_btn.setIcon(build_search_icon(size=self._SEARCH_ICON_SIZE))
+        self.search_btn.setIconSize(self.search_btn.icon().actualSize(self.search_btn.size()))
+        self.search_btn.setFocusPolicy(Qt.NoFocus)
+        self.search_btn.setToolTip("Search runs")
         self.search_btn.setStyleSheet(
             """
             QPushButton {
                 background-color: transparent;
                 border: none;
-                font-size: 12px;
-                color: #555;
-            }
-            QPushButton:hover {
-                color: #000;
+                padding: 0px;
             }
         """
         )
-        self.search_btn.setText("🔍")
         self.search_btn.clicked.connect(self.enable_search_mode)
         self.currentIndexChanged.connect(self.disable_search_mode)
 
@@ -99,25 +103,17 @@ class BoundedComboBox(QComboBox):
 
     def _position_search_button(self):
         """Position search button properly within the ComboBox."""
-        opt = QStyleOptionComboBox()
-        self.initStyleOption(opt)
-        arrow_rect = self.style().subControlRect(
-            QStyle.CC_ComboBox, opt, QStyle.SC_ComboBoxArrow, self
-        )
-
-        arrow_width = arrow_rect.width() if arrow_rect.width() > 0 else 20
         btn_size = self.search_btn.size()
         btn_width = btn_size.width()
         btn_height = btn_size.height()
 
-        margin_from_arrow = 2
-        x = self.width() - arrow_width - btn_width - margin_from_arrow
-        min_x = 5
-        x = max(min_x, x)
+        x = self.width() - self._DROP_DOWN_WIDTH - btn_width - self._SEARCH_ARROW_GAP
+        x = max(5, x)
 
         y = (self.height() - btn_height) // 2
         y = max(1, y)
         self.search_btn.move(x, y)
+        self.search_btn.raise_()
 
     def enable_search_mode(self):
         """Enable editing and focus the line edit."""

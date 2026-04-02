@@ -1,6 +1,6 @@
 """Tree/view state helpers for MainWindow."""
 
-from typing import Callable, Dict, List, Sequence, Set
+from typing import Callable, Dict, List, Sequence, Set, Tuple
 
 from PyQt5.QtCore import QItemSelectionModel, QModelIndex, Qt
 
@@ -9,7 +9,9 @@ from new_gui.services import tree_rows
 
 SerializedRow = Dict[str, object]
 SnapshotData = Dict[str, object]
+TreePresentationSnapshot = Dict[str, object]
 TargetNames = Sequence[str]
+RowPath = Tuple[int, ...]
 
 
 def serialize_tree_row(model, tree, row_index: int, parent_item=None) -> SerializedRow:
@@ -58,6 +60,147 @@ def capture_main_view_snapshot(model, tree, current_run: str) -> SnapshotData:
         "rows": rows,
         "scroll": tree.verticalScrollBar().value(),
     }
+
+
+def _append_row_path(parent_path: RowPath, row_index: int) -> RowPath:
+    """Build one immutable row path for a tree row."""
+    return parent_path + (row_index,)
+
+
+def capture_tree_presentation_snapshot(model, tree, current_run: str) -> TreePresentationSnapshot:
+    """Capture row visibility, expansion, and scroll state without cloning the model."""
+    hidden_paths: List[RowPath] = []
+    expanded_paths: List[RowPath] = []
+
+    def walk_rows(parent_item=None, parent_index=QModelIndex(), parent_path: RowPath = ()) -> None:
+        row_count = parent_item.rowCount() if parent_item is not None else model.rowCount()
+        for row in range(row_count):
+            path = _append_row_path(parent_path, row)
+            row_items = tree_rows.get_row_items(model, row, parent_item)
+            level_item = row_items[0] if row_items else None
+            if tree.isRowHidden(row, parent_index):
+                hidden_paths.append(path)
+            if level_item is not None and level_item.hasChildren():
+                level_index = level_item.index()
+                if tree.isExpanded(level_index):
+                    expanded_paths.append(path)
+                walk_rows(level_item, level_index, path)
+
+    walk_rows()
+    return {
+        "run": current_run,
+        "hidden_paths": hidden_paths,
+        "expanded_paths": expanded_paths,
+        "scroll": tree.verticalScrollBar().value(),
+    }
+
+
+def restore_tree_presentation_snapshot(
+    model,
+    tree,
+    snapshot: TreePresentationSnapshot,
+    current_run: str,
+) -> bool:
+    """Restore one row-visibility snapshot captured from the current tree model."""
+    if not snapshot or snapshot.get("run") != current_run:
+        return False
+
+    hidden_paths = {tuple(path) for path in snapshot.get("hidden_paths", [])}
+    expanded_paths = {tuple(path) for path in snapshot.get("expanded_paths", [])}
+
+    tree.setUpdatesEnabled(False)
+    try:
+        def walk_rows(parent_item=None, parent_index=QModelIndex(), parent_path: RowPath = ()) -> None:
+            row_count = parent_item.rowCount() if parent_item is not None else model.rowCount()
+            for row in range(row_count):
+                path = _append_row_path(parent_path, row)
+                row_items = tree_rows.get_row_items(model, row, parent_item)
+                level_item = row_items[0] if row_items else None
+                tree.setRowHidden(row, parent_index, path in hidden_paths)
+                if level_item is not None and level_item.hasChildren():
+                    level_index = level_item.index()
+                    tree.setExpanded(level_index, path in expanded_paths)
+                    walk_rows(level_item, level_index, path)
+    finally:
+        tree.setUpdatesEnabled(True)
+
+    tree.verticalScrollBar().setValue(snapshot.get("scroll", 0))
+    return True
+
+
+def _row_matches_search_text(row_items, normalized_search_text: str) -> bool:
+    """Return whether one row represents a target matching the search text."""
+    if not normalized_search_text:
+        return True
+
+    target_item = row_items[1] if len(row_items) > 1 else None
+    candidate_values = []
+    if target_item is not None:
+        candidate_values.append(target_item.text() or "")
+    candidate_values.append(tree_rows.get_row_target_name(target_item))
+    candidate_values.extend(tree_rows.get_row_targets(target_item))
+
+    for candidate in candidate_values:
+        if normalized_search_text in str(candidate or "").casefold():
+            return True
+    return False
+
+
+def filter_tree_by_text(
+    tree,
+    model,
+    search_text: str,
+    base_snapshot: TreePresentationSnapshot = None,
+) -> int:
+    """Apply search filtering in place by hiding non-matching rows."""
+    normalized_search_text = (search_text or "").strip().casefold()
+    base_hidden_paths = {
+        tuple(path)
+        for path in (base_snapshot or {}).get("hidden_paths", [])
+    }
+    matched_rows = 0
+
+    tree.setUpdatesEnabled(False)
+    try:
+        def check_visibility(
+            row_index: int,
+            parent_item=None,
+            parent_index=QModelIndex(),
+            parent_path: RowPath = (),
+        ) -> bool:
+            nonlocal matched_rows
+            path = _append_row_path(parent_path, row_index)
+            row_items = tree_rows.get_row_items(model, row_index, parent_item)
+            level_item = row_items[0] if row_items else None
+
+            if path in base_hidden_paths:
+                tree.setRowHidden(row_index, parent_index, True)
+                return False
+
+            row_match = _row_matches_search_text(row_items, normalized_search_text)
+            child_match = False
+            if level_item is not None and level_item.hasChildren():
+                level_index = level_item.index()
+                for child_row in range(level_item.rowCount()):
+                    if check_visibility(child_row, level_item, level_index, path):
+                        child_match = True
+
+            should_show = row_match or child_match
+            tree.setRowHidden(row_index, parent_index, not should_show)
+
+            if should_show:
+                matched_rows += 1
+                if level_item is not None and level_item.hasChildren():
+                    tree.expand(level_item.index())
+
+            return should_show
+
+        for row in range(model.rowCount()):
+            check_visibility(row)
+    finally:
+        tree.setUpdatesEnabled(True)
+
+    return matched_rows
 
 
 def restore_main_view_snapshot(
