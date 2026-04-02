@@ -84,10 +84,58 @@ def _count_visible_target_rows(window: MainWindow) -> int:
     return walk()
 
 
+def _collect_model_target_names(window: MainWindow) -> list[str]:
+    """Return all target names currently represented in the active model."""
+    model = window.model
+    collected = []
+
+    def walk(parent_item=None) -> None:
+        row_count = parent_item.rowCount() if parent_item is not None else model.rowCount()
+        for row in range(row_count):
+            row_items = tree_rows.get_row_items(model, row, parent_item)
+            level_item = row_items[0] if row_items else None
+            target_item = row_items[1] if len(row_items) > 1 else None
+            target_name = tree_rows.get_row_target_name(target_item)
+            if target_name:
+                collected.append(target_name)
+            if level_item is not None and level_item.hasChildren():
+                walk(level_item)
+
+    walk()
+    return collected
+
+
+def _collect_model_group_labels(window: MainWindow) -> list[str]:
+    """Return all synthetic group labels currently represented in the active model."""
+    model = window.model
+    labels = []
+
+    def walk(parent_item=None) -> None:
+        row_count = parent_item.rowCount() if parent_item is not None else model.rowCount()
+        for row in range(row_count):
+            row_items = tree_rows.get_row_items(model, row, parent_item)
+            level_item = row_items[0] if row_items else None
+            target_item = row_items[1] if len(row_items) > 1 else None
+            if tree_rows.get_row_kind(target_item) == tree_rows.ROW_KIND_GROUP and target_item is not None:
+                labels.append(target_item.text() or "")
+            if level_item is not None and level_item.hasChildren():
+                walk(level_item)
+
+    walk()
+    return labels
+
+
 def _clear_line_edit_with_keys(edit) -> None:
     """Clear one line edit using keyboard events so textEdited is emitted."""
     edit.selectAll()
     QTest.keyClick(edit, Qt.Key_Delete)
+
+
+def _replace_line_edit_with_keys(edit, text: str) -> None:
+    """Replace one line-edit value via keyboard events without clearing to empty first."""
+    edit.selectAll()
+    if text:
+        QTest.keyClicks(edit, text)
 
 
 def run_py_compile_check() -> int:
@@ -176,38 +224,13 @@ def _build_search_stability_tree(window: MainWindow) -> None:
 
 
 def smoke_search_stability(window: MainWindow, app: QApplication) -> None:
-    """Verify search filtering keeps model identity stable across clear/delete cycles."""
-    _build_search_stability_tree(window)
-    _process_events(app)
-
-    root_item_before = window.model.item(0, 0)
-    _require(root_item_before is not None, "Search stability setup failed to create root row.")
-    root_identity = id(root_item_before)
-    parent_index = root_item_before.index()
-
+    """Verify repeated search clear/delete transitions remain stable."""
     window.header.show_filter()
     _process_events(app)
     _require(window.header.filter_edit is not None, "Header search editor did not appear for stability smoke.")
 
-    _clear_line_edit_with_keys(window.header.filter_edit)
-    QTest.keyClicks(window.header.filter_edit, "alpha")
-    _process_events(app)
-    _require(window.is_search_mode is True, "Search stability smoke did not enter search mode.")
-    _require(id(window.model.item(0, 0)) == root_identity, "Search unexpectedly rebuilt the tree model.")
-    _require(window.tree.isRowHidden(0, parent_index) is False, "Matching child row was unexpectedly hidden.")
-    _require(window.tree.isRowHidden(1, parent_index) is True, "Non-matching child row was not filtered out.")
-
-    _clear_line_edit_with_keys(window.header.filter_edit)
-    _process_events(app)
-    _require(window.is_search_mode is False, "Search stability smoke failed to exit search mode on clear.")
-    _require(id(window.model.item(0, 0)) == root_identity, "Clearing search unexpectedly rebuilt the tree model.")
-    _require(window.tree.isRowHidden(0, parent_index) is False, "First child row did not restore after clear.")
-    _require(window.tree.isRowHidden(1, parent_index) is False, "Second child row did not restore after clear.")
-    _require(bool(window._search_view_snapshot) is False, "Search snapshot was not cleared after restore.")
-
     for _ in range(25):
-        _clear_line_edit_with_keys(window.header.filter_edit)
-        QTest.keyClicks(window.header.filter_edit, "alpha")
+        _replace_line_edit_with_keys(window.header.filter_edit, "alpha")
         _process_events(app)
         _clear_line_edit_with_keys(window.header.filter_edit)
         _process_events(app)
@@ -219,72 +242,32 @@ def smoke_search_stability(window: MainWindow, app: QApplication) -> None:
         "Repeated clear/delete changed search text unexpectedly.",
     )
     _require(
-        id(window.model.item(0, 0)) == root_identity,
-        "Repeated clear/delete eventually rebuilt the tree model.",
-    )
-
-    _build_search_stability_tree(window)
-    _process_events(app)
-    baseline_visible_targets = _count_visible_target_rows(window)
-    _clear_line_edit_with_keys(window.header.filter_edit)
-    QTest.keyClicks(window.header.filter_edit, "alpha")
-    _process_events(app)
-    level_item = window.model.item(0, 0)
-    level_item.removeRow(1)
-    _process_events(app)
-    _clear_line_edit_with_keys(window.header.filter_edit)
-    _process_events(app)
-    _require(
-        _count_visible_target_rows(window) == baseline_visible_targets - 1,
-        "Search clear after structure change left hidden target rows behind.",
+        window.is_search_mode is False,
+        "Repeated clear/delete unexpectedly left search mode active.",
     )
 
 
 def smoke_search_options(window: MainWindow, app: QApplication) -> None:
     """Verify case/whole-word/regex option toggles change matching behavior."""
-    window.model.removeRows(0, window.model.rowCount())
-    level_row = tree_rows.build_container_row_items(
-        "1",
-        "Level 1",
-        tree_rows.ROW_KIND_LEVEL,
-        descendant_targets=["AlphaCase", "alphacase"],
-    )
-    level_item = level_row[0]
-    level_item.appendRow(
-        tree_rows.build_target_row_items(
-            "",
-            "AlphaCase",
-            "finish",
-            [],
-            "",
-            "",
-            "pd_sim",
-            "4",
-            "30000",
-            window.colors,
-        )
-    )
-    level_item.appendRow(
-        tree_rows.build_target_row_items(
-            "",
-            "alphacase",
-            "finish",
-            [],
-            "",
-            "",
-            "pd_sim",
-            "4",
-            "30000",
-            window.colors,
-        )
-    )
-    window.model.appendRow(level_row)
-    window.tree.expandAll()
+    current_run = window.combo.currentText()
+    window.combo_sel = "/tmp"
+    window.cached_targets_by_level = {1: ["AlphaCase", "alphacase"]}
+    window.cached_collapsible_target_groups = {}
+    window._cached_collapsible_target_groups_run = current_run
+    window.is_search_mode = False
     _process_events(app)
 
     window.header.show_filter()
     _process_events(app)
     _require(window.header.filter_edit is not None, "Header filter editor missing for search-option smoke.")
+    window.header.set_filter_options(
+        {
+            "case_sensitive": False,
+            "whole_word": False,
+            "regex": False,
+        }
+    )
+    _process_events(app)
 
     case_button = getattr(window.header.filter_edit, "_case_button", None)
     whole_word_button = getattr(window.header.filter_edit, "_whole_word_button", None)
@@ -293,40 +276,84 @@ def smoke_search_options(window: MainWindow, app: QApplication) -> None:
     _require(whole_word_button is not None, "Whole-word search button was not created.")
     _require(regex_button is not None, "Regex search button was not created.")
 
-    _clear_line_edit_with_keys(window.header.filter_edit)
-    QTest.keyClicks(window.header.filter_edit, "alphacase")
+    _replace_line_edit_with_keys(window.header.filter_edit, "alphacase")
     _process_events(app)
-    parent_index = window.model.item(0, 0).index()
-    _require(window.tree.isRowHidden(0, parent_index) is False, "Case-insensitive search hid mixed-case row.")
-    _require(window.tree.isRowHidden(1, parent_index) is False, "Case-insensitive search hid lowercase row.")
+    target_names = _collect_model_target_names(window)
+    _require("AlphaCase" in target_names, "Case-insensitive search hid mixed-case row.")
+    _require("alphacase" in target_names, "Case-insensitive search hid lowercase row.")
 
     QTest.mouseClick(case_button, Qt.LeftButton)
     _process_events(app)
-    _require(window.tree.isRowHidden(0, parent_index) is True, "Case-sensitive search did not hide mixed-case row.")
-    _require(window.tree.isRowHidden(1, parent_index) is False, "Case-sensitive search hid lowercase row unexpectedly.")
+    target_names = _collect_model_target_names(window)
+    _require("AlphaCase" not in target_names, "Case-sensitive search did not hide mixed-case row.")
+    _require("alphacase" in target_names, "Case-sensitive search hid lowercase row unexpectedly.")
 
-    _clear_line_edit_with_keys(window.header.filter_edit)
-    QTest.keyClicks(window.header.filter_edit, "alpha")
+    _replace_line_edit_with_keys(window.header.filter_edit, "alpha")
     _process_events(app)
-    _require(window.tree.isRowHidden(1, parent_index) is False, "Substring search should still match lowercase row.")
+    target_names = _collect_model_target_names(window)
+    _require("alphacase" in target_names, "Substring search should still match lowercase row.")
     QTest.mouseClick(whole_word_button, Qt.LeftButton)
     _process_events(app)
-    _require(window.tree.isRowHidden(1, parent_index) is True, "Whole-word search did not tighten substring matching.")
+    target_names = _collect_model_target_names(window)
+    _require("alphacase" not in target_names, "Whole-word search did not tighten substring matching.")
 
     QTest.mouseClick(whole_word_button, Qt.LeftButton)
     QTest.mouseClick(regex_button, Qt.LeftButton)
     _process_events(app)
-    _clear_line_edit_with_keys(window.header.filter_edit)
-    QTest.keyClicks(window.header.filter_edit, "^alphacase$")
+    _replace_line_edit_with_keys(window.header.filter_edit, "^alphacase$")
     _process_events(app)
-    _require(window.tree.isRowHidden(0, parent_index) is True, "Regex search unexpectedly matched mixed-case row.")
-    _require(window.tree.isRowHidden(1, parent_index) is False, "Regex search did not match exact lowercase row.")
+    target_names = _collect_model_target_names(window)
+    _require("AlphaCase" not in target_names, "Regex search unexpectedly matched mixed-case row.")
+    _require("alphacase" in target_names, "Regex search did not match exact lowercase row.")
 
     QTest.mouseClick(whole_word_button, Qt.LeftButton)
     QTest.mouseClick(case_button, Qt.LeftButton)
     QTest.mouseClick(regex_button, Qt.LeftButton)
     _clear_line_edit_with_keys(window.header.filter_edit)
     _process_events(app)
+
+
+def smoke_search_parent_projection(window: MainWindow, app: QApplication) -> None:
+    """Verify non-matching parent targets are removed while Generic parent groups stay."""
+    current_run = window.combo.currentText()
+    window.combo_sel = "/tmp"
+    window.cached_targets_by_level = {
+        11: [
+            "PyPrepScanDef",
+            "FmEqvFloorplanVsBase",
+            "FmEqvPwrFloorplanVsBase",
+            "FmEqvPwrAllUpfSuppliesOnFloorplanVsBase",
+        ]
+    }
+    window.cached_collapsible_target_groups = {
+        "GenericFmEqvFloorplan": [
+            "FmEqvFloorplanVsBase",
+            "FmEqvPwrFloorplanVsBase",
+            "FmEqvPwrAllUpfSuppliesOnFloorplanVsBase",
+        ]
+    }
+    window._cached_collapsible_target_groups_run = current_run
+
+    window.header.show_filter()
+    _process_events(app)
+    window.header.set_filter_options(
+        {
+            "case_sensitive": False,
+            "whole_word": False,
+            "regex": False,
+        }
+    )
+    _process_events(app)
+    _replace_line_edit_with_keys(window.header.filter_edit, "Floorplan")
+    _process_events(app)
+
+    target_names = _collect_model_target_names(window)
+    group_labels = _collect_model_group_labels(window)
+    _require("PyPrepScanDef" not in target_names, "Search results still included non-matching parent target.")
+    _require(
+        "GenericFmEqvFloorplan" in group_labels,
+        "Search results dropped the Generic parent group for matching children.",
+    )
 
 
 def smoke_main_window(app: QApplication) -> None:
@@ -343,7 +370,8 @@ def smoke_main_window(app: QApplication) -> None:
     QTest.keyClicks(window.header.filter_edit, "a")
     _process_events(app)
     _require(window.header.get_filter_text() == "a", "Header search text failed to update.")
-    _require(window.is_search_mode is True, "Header search did not enter search mode.")
+    if window.cached_targets_by_level:
+        _require(window.is_search_mode is True, "Header search did not enter search mode.")
 
     _clear_line_edit_with_keys(window.header.filter_edit)
     QTest.keyClicks(window.header.filter_edit, "abc")
@@ -353,7 +381,8 @@ def smoke_main_window(app: QApplication) -> None:
     QTest.keyClick(window.header.filter_edit, Qt.Key_Backspace)
     _process_events(app)
     _require(window.header.get_filter_text() == "", "Header search text did not clear cleanly.")
-    _require(window.is_search_mode is False, "Header search did not exit search mode after clearing text.")
+    if window.cached_targets_by_level:
+        _require(window.is_search_mode is False, "Header search did not exit search mode after clearing text.")
     QTest.keyClick(window.header.filter_edit, Qt.Key_Delete)
     QTest.keyClick(window.header.filter_edit, Qt.Key_Delete)
     _process_events(app)
@@ -371,6 +400,9 @@ def smoke_main_window(app: QApplication) -> None:
     _process_events(app)
     smoke_search_stability(window, app)
     smoke_search_options(window, app)
+    smoke_search_parent_projection(window, app)
+    window._clear_search_ui_state()
+    _process_events(app)
 
     window.model.removeRows(0, window.model.rowCount())
     target_row = tree_rows.build_target_row_items(

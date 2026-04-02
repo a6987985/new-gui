@@ -49,7 +49,7 @@ def close_tree_view(window) -> None:
 
 
 def filter_tree(window, text, search_options=None) -> None:
-    """Filter tree rows in place by toggling visibility on the existing model."""
+    """Filter tree rows using a search-result model built from matching targets."""
     ui = _bridge(window)
     search_text = text or ""
     normalized_options = dict(search_options or ui.header_filter_options() or {})
@@ -60,20 +60,33 @@ def filter_tree(window, text, search_options=None) -> None:
 
     if not search_text:
         ui.set_search_mode(False)
-        ui.clear_trace_filter()
-        ui.expand_tree_default()
+        ui.populate_data(force_rebuild=True)
         ui.invalidate_search_view_snapshot()
+        return
+
+    run_selection.ensure_cached_targets(window, ui.current_run_name())
+    if not run_selection.has_cached_targets(window):
         return
 
     ui.set_search_mode(True)
     ui.set_tree_updates_enabled(False)
     try:
-        view_state.filter_tree_by_text(
-            ui.tree,
-            ui.model,
-            search_text,
-            search_options=normalized_options,
-        )
+        ui.reset_main_tree_model()
+        value_matcher = view_state.build_search_value_matcher(search_text, normalized_options)
+
+        matching_targets_by_level = {}
+        for level, targets in tree_structure.get_level_target_groups(window.cached_targets_by_level):
+            matching_targets = [target for target in targets if value_matcher(target)]
+            if matching_targets:
+                matching_targets_by_level[level] = matching_targets
+
+        if matching_targets_by_level:
+            display_groups = ui.build_display_level_groups(
+                matching_targets_by_level,
+                run_name=ui.current_run_name(),
+            )
+            ui.append_target_groups_to_model(display_groups, run_name=ui.current_run_name())
+            ui.expand_tree_all()
     finally:
         ui.set_tree_updates_enabled(True)
         ui.tree.viewport().update()

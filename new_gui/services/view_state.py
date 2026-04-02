@@ -159,7 +159,7 @@ def restore_tree_presentation_snapshot(
     return True
 
 
-def _build_search_matcher(search_text: str, search_options: dict):
+def build_search_value_matcher(search_text: str, search_options: dict):
     """Build one callable matcher from search text and options."""
     normalized_text = search_text or ""
     if not normalized_text:
@@ -217,7 +217,7 @@ def filter_tree_by_text(
     base_snapshot: TreePresentationSnapshot = None,
 ) -> int:
     """Apply search filtering in place by hiding non-matching rows."""
-    value_matcher = _build_search_matcher((search_text or "").strip(), search_options or {})
+    value_matcher = build_search_value_matcher((search_text or "").strip(), search_options or {})
     base_hidden_paths = {
         tuple(path)
         for path in (base_snapshot or {}).get("hidden_paths", [])

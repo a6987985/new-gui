@@ -34,14 +34,19 @@ def build_target_row_items(
 ) -> list:
     """Build one standard main-tree row for a target."""
     current_run = run_name if run_name is not None else window.combo.currentText()
+    run_dir = getattr(window, "combo_sel", None)
     row_status = (
         window.get_target_status(current_run, target_name)
         if status_value is None
         else status_value
     )
-    tune_files = window.get_tune_files(window.combo_sel, target_name)
+    tune_files = window.get_tune_files(run_dir, target_name) if run_dir else []
     start_time, end_time = window.get_target_times(current_run, target_name)
-    queue, cores, memory = window.get_bsub_params(window.combo_sel, target_name)
+    queue, cores, memory = (
+        window.get_bsub_params(run_dir, target_name)
+        if run_dir
+        else ("", "", "")
+    )
     return tree_rows.build_target_row_items(
         level_text,
         target_name,
