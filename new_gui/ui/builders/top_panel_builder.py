@@ -7,7 +7,6 @@ from PyQt5.QtGui import QColor, QStandardItemModel
 from PyQt5.QtWidgets import (
     QGraphicsDropShadowEffect,
     QHBoxLayout,
-    QLabel,
     QPushButton,
     QSplitter,
     QSizePolicy,
@@ -19,6 +18,7 @@ from PyQt5.QtWidgets import (
 from new_gui.services import tree_rows, view_tabs
 from new_gui.ui import style_sheets
 from new_gui.ui.controllers import runtime_controller
+from new_gui.ui.controllers.transition_overlay import WidgetTransitionOverlayController
 from new_gui.ui.top_panel_widget_styles import (
     build_run_selector_style,
     build_tab_close_button_style,
@@ -199,6 +199,7 @@ def init_top_panel(window) -> None:
     window.left_sidebar.category_changed.connect(window.on_left_sidebar_category_changed)
 
     window._content_row = QWidget(window)
+    window._content_row_transition_controller = WidgetTransitionOverlayController()
     content_row_layout = QHBoxLayout(window._content_row)
     content_row_layout.setContentsMargins(0, 0, 0, 0)
     content_row_layout.setSpacing(0)
@@ -240,7 +241,8 @@ def set_left_sidebar_visible(window, visible: bool) -> None:
         window,
         target_sidebar_width,
     )
-    transition_revision = _show_content_row_transition_overlay(window)
+    transition_controller = getattr(window, "_content_row_transition_controller", None)
+    transition_revision = transition_controller.begin(window._content_row) if transition_controller else 0
     _begin_tree_layout_transaction(window)
     try:
         window._left_sidebar_visible = is_visible
@@ -265,7 +267,8 @@ def set_left_sidebar_visible(window, visible: bool) -> None:
     finally:
         _end_tree_layout_transaction(window)
         window._layout_target_viewport_width = previous_target_viewport_width
-        _schedule_content_row_transition_overlay_clear(window, transition_revision)
+        if transition_controller is not None:
+            transition_controller.schedule_clear(transition_revision)
 
 
 def _activate_layout_after_sidebar_toggle(window) -> None:
@@ -278,53 +281,6 @@ def _activate_layout_after_sidebar_toggle(window) -> None:
     if main_layout is not None:
         main_layout.activate()
     _sync_external_tree_scrollbar(window)
-
-
-def _show_content_row_transition_overlay(window) -> int:
-    """Freeze the visible content row while sidebar layout changes commit underneath."""
-    current_revision = int(getattr(window, "_content_row_transition_revision", 0)) + 1
-    window._content_row_transition_revision = current_revision
-    content_row = getattr(window, "_content_row", None)
-    if content_row is None or not content_row.isVisible():
-        return current_revision
-
-    width = content_row.width()
-    height = content_row.height()
-    if width <= 0 or height <= 0:
-        return current_revision
-
-    existing_overlay = getattr(window, "_content_row_transition_overlay", None)
-    if existing_overlay is not None:
-        existing_overlay.deleteLater()
-
-    overlay = QLabel(content_row)
-    overlay.setObjectName("contentRowTransitionOverlay")
-    overlay.setGeometry(content_row.rect())
-    overlay.setPixmap(content_row.grab())
-    overlay.setScaledContents(False)
-    overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-    overlay.show()
-    overlay.raise_()
-    window._content_row_transition_overlay = overlay
-    return current_revision
-
-
-def _schedule_content_row_transition_overlay_clear(window, revision: int) -> None:
-    """Clear one frozen content overlay after the final layout settles."""
-    QTimer.singleShot(0, lambda: _clear_content_row_transition_overlay(window, revision))
-
-
-def _clear_content_row_transition_overlay(window, revision: int) -> None:
-    """Drop one frozen content overlay when it still belongs to the latest transition."""
-    if revision != int(getattr(window, "_content_row_transition_revision", 0)):
-        return
-
-    overlay = getattr(window, "_content_row_transition_overlay", None)
-    if overlay is None:
-        return
-    window._content_row_transition_overlay = None
-    overlay.deleteLater()
-
 
 def _connect_external_tree_scrollbar(window) -> None:
     """Mirror the hidden internal tree scrollbar onto the fixed outer gutter."""

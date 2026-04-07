@@ -115,8 +115,6 @@ class MainWindow(QMainWindow):
         self._sidebar_filter_snapshot = None
         self._tree_layout_transaction_depth = 0
         self._layout_target_viewport_width = None
-        self._content_row_transition_overlay = None
-        self._content_row_transition_revision = 0
 
     def _init_ui_log_dispatcher(self) -> None:
         """Create the thread-safe log bridge used by the GUI session log."""

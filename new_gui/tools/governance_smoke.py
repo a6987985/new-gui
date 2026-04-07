@@ -557,7 +557,7 @@ def smoke_left_sidebar_hide_restores_full_targets(window: MainWindow, app: QAppl
             "Left sidebar did not collapse during the smoke test.",
         )
         _require(
-            getattr(window, "_content_row_transition_overlay", None) is None,
+            not getattr(window, "_content_row_transition_controller").is_active(),
             "Sidebar transition overlay did not clear after the layout transaction finished.",
         )
         _require(
