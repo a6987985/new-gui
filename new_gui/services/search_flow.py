@@ -28,10 +28,15 @@ def refresh_after_action(
     rebuild_main_tree: Callable[[], None],
     filter_tree: Callable[[str], None],
     set_scroll_value: Callable[[int], None],
+    refresh_tree_rows_stable: Callable[[], bool] = None,
 ) -> None:
     """Refresh the tree after an action and restore search filtering if needed."""
     if current_run and current_run != "No runs found":
         build_status_cache(current_run)
+
+    if refresh_tree_rows_stable is not None and refresh_tree_rows_stable():
+        set_scroll_value(search_context.get("scroll_value", 0))
+        return
 
     rebuild_main_tree()
 

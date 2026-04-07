@@ -54,6 +54,7 @@ def refresh_after_action(window, search_context) -> None:
         ui.rebuild_main_tree_now,
         ui.filter_tree,
         ui.restore_scroll_value,
+        refresh_tree_rows_stable=ui.refresh_tree_rows_stable,
     )
 
 

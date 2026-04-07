@@ -31,6 +31,7 @@ from new_gui.ui.widgets.notifications import NotificationManager
 from new_gui.ui.widgets.status_bar import StatusBar
 from new_gui.ui.widgets.tree_view import ColorTreeView, TreeViewEventFilter
 from new_gui.ui.widgets.bottom_output_panel import BottomOutputPanel
+from new_gui.ui.widgets.workspace_sidebar import WorkspaceSidebar
 from new_gui.ui.widgets.delegates import BorderItemDelegate, TuneComboBoxDelegate
 from new_gui.ui.widgets.filter_header import FilterHeaderView
 from new_gui.ui.widgets.labels import ClickableLabel
@@ -172,7 +173,21 @@ def init_top_panel(window) -> None:
     window._session_log_widget.close_requested.connect(window.hide_bottom_output_panel)
     window._content_splitter.addWidget(window._bottom_output_panel)
 
-    window._main_layout.addWidget(window._content_splitter)
+    window.left_sidebar = WorkspaceSidebar(window)
+    window._left_sidebar_default_width = 208
+    window.left_sidebar.setFixedWidth(window._left_sidebar_default_width)
+    window._left_sidebar_visible = True
+    window.left_sidebar.scope_changed.connect(window.on_left_sidebar_scope_changed)
+    window.left_sidebar.category_changed.connect(window.on_left_sidebar_category_changed)
+
+    window._content_row = QWidget(window)
+    content_row_layout = QHBoxLayout(window._content_row)
+    content_row_layout.setContentsMargins(0, 0, 0, 0)
+    content_row_layout.setSpacing(0)
+    content_row_layout.addWidget(window.left_sidebar)
+    content_row_layout.addWidget(window._content_splitter, 1)
+
+    window._main_layout.addWidget(window._content_row)
     window._set_bottom_output_panel_visible(False)
 
     window.tree.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -191,3 +206,37 @@ def init_top_panel(window) -> None:
     window.on_run_changed()
     runtime_controller.init_runtime_observers(window)
     window.expand_tree_default()
+
+
+def set_left_sidebar_visible(window, visible: bool) -> None:
+    """Show or hide the codex-style left sidebar."""
+    if not hasattr(window, "left_sidebar"):
+        return
+    is_visible = bool(visible)
+    window._left_sidebar_visible = is_visible
+    window.left_sidebar.setVisible(is_visible)
+    if is_visible and hasattr(window, "_left_sidebar_default_width"):
+        window.left_sidebar.setFixedWidth(window._left_sidebar_default_width)
+    if hasattr(window, "_top_panel_left_placeholder_toggle_button"):
+        button = window._top_panel_left_placeholder_toggle_button
+        button.blockSignals(True)
+        button.setChecked(is_visible)
+        button.blockSignals(False)
+    QTimer.singleShot(0, lambda: _refresh_tree_layout_after_sidebar_toggle(window))
+
+
+def _refresh_tree_layout_after_sidebar_toggle(window) -> None:
+    """Re-fit the tree after sidebar visibility changes alter the viewport width."""
+    if not hasattr(window, "tree") or window.tree is None:
+        return
+    if hasattr(window, "_apply_adaptive_target_column_width"):
+        window._apply_adaptive_target_column_width()
+    if hasattr(window, "_fill_trailing_blank_with_last_column"):
+        window._fill_trailing_blank_with_last_column()
+
+
+def toggle_left_sidebar(window) -> bool:
+    """Toggle left sidebar visibility and return the new state."""
+    current_visible = bool(getattr(window, "_left_sidebar_visible", True))
+    set_left_sidebar_visible(window, not current_visible)
+    return bool(getattr(window, "_left_sidebar_visible", True))

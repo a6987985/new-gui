@@ -20,3 +20,5 @@
 - Use meaningful variable and function names
 - Add docstrings to public functions and classes
 - Keep functions focused and reasonably sized
+- When generating a transfer bundle for `new_gui/`, write it to `/Users/yangwen/claude_code/new-gui/new_gui/bundle.txt` unless the user explicitly requests a different path.
+- When the changed file is a repo-root file such as `AGENTS.md` or `README.md`, write that bundle to `/Users/yangwen/claude_code/new-gui/new_gui/root_bundle.txt` unless the user explicitly requests a different path.

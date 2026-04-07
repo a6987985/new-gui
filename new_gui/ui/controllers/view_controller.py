@@ -13,12 +13,33 @@ from new_gui.services import view_restore
 from new_gui.services import view_run_selection as run_selection
 from new_gui.services import view_state
 from new_gui.services import view_tabs
+from new_gui.ui.controllers import runtime_controller
 from new_gui.ui.controllers.view_window_bridge import ViewWindowBridge
 
 
 def _bridge(window) -> ViewWindowBridge:
     """Return the narrow MainWindow bridge used by view-controller flows."""
     return ViewWindowBridge(window)
+
+
+def _apply_active_category_scope(window, targets_by_level):
+    """Apply the active sidebar category filter to one level-target mapping."""
+    if not targets_by_level:
+        return {}
+
+    if not hasattr(window, "get_active_category_target_set"):
+        return dict(targets_by_level)
+
+    allowed_targets = window.get_active_category_target_set()
+    if allowed_targets is None:
+        return dict(targets_by_level)
+
+    scoped_targets = {}
+    for level, targets in tree_structure.get_level_target_groups(targets_by_level):
+        filtered = [target for target in targets if target in allowed_targets]
+        if filtered:
+            scoped_targets[level] = filtered
+    return scoped_targets
 
 
 def close_tree_view(window) -> None:
@@ -74,8 +95,9 @@ def filter_tree(window, text, search_options=None) -> None:
         ui.reset_main_tree_model()
         value_matcher = view_state.build_search_value_matcher(search_text, normalized_options)
 
+        scoped_targets_by_level = _apply_active_category_scope(window, window.cached_targets_by_level)
         matching_targets_by_level = {}
-        for level, targets in tree_structure.get_level_target_groups(window.cached_targets_by_level):
+        for level, targets in tree_structure.get_level_target_groups(scoped_targets_by_level):
             matching_targets = [target for target in targets if value_matcher(target)]
             if matching_targets:
                 matching_targets_by_level[level] = matching_targets
@@ -108,8 +130,9 @@ def filter_tree_by_status_flat(window, status):
     ui.reset_main_tree_model()
 
     current_run = ui.current_run_name()
+    scoped_targets_by_level = _apply_active_category_scope(window, window.cached_targets_by_level)
     matched_groups = tree_structure.filter_level_groups_by_status(
-        window.cached_targets_by_level,
+        scoped_targets_by_level,
         lambda target_name: ui.get_target_status(current_run, target_name),
         status_key,
     )
@@ -141,8 +164,9 @@ def filter_tree_by_targets_flat(window, targets_to_show) -> int:
     try:
         ui.reset_main_tree_model()
         current_run = ui.current_run_name()
+        scoped_targets_by_level = _apply_active_category_scope(window, window.cached_targets_by_level)
         matched_groups = tree_structure.filter_level_groups_by_targets(
-            window.cached_targets_by_level,
+            scoped_targets_by_level,
             targets_to_show,
         )
         display_groups = ui.build_display_level_groups(dict(matched_groups), run_name=current_run)
@@ -320,6 +344,7 @@ def apply_tab_state(window, tab_state: dict) -> None:
     ui.set_tab_label(tab_state.get("text", ""))
     ui.set_tab_label_style(tab_state.get("style", ""))
     ui.set_tab_close_button_visible(bool(tab_state.get("show_close_button")))
+    runtime_controller.update_backup_timer_state(window)
 
 
 def set_main_run_tab_state(window) -> None:
@@ -362,6 +387,8 @@ def activate_selected_run_view(window, current_run: str, invalidate_snapshot: bo
     ui.is_all_status_view = False
     ui.combo_sel = run_state["combo_sel"]
     logger.info(f"Run changed to: {ui.combo_sel}")
+    if hasattr(window, "refresh_left_sidebar_categories"):
+        window.refresh_left_sidebar_categories(ui.combo_sel)
     ui.refresh_xmeta_background(ui.combo_sel)
 
     ui.set_main_run_tab_state()
@@ -378,6 +405,7 @@ def activate_selected_run_view(window, current_run: str, invalidate_snapshot: bo
 
     ui.update_status_bar()
     ui.update_column_visibility_control_state()
+    runtime_controller.update_backup_timer_state(window)
     if ui.is_terminal_follow_run_enabled():
         ui.sync_embedded_terminal_run_dir(ui.combo_sel)
 
@@ -432,8 +460,12 @@ def populate_data(window, force_rebuild=False) -> None:
             logger.warning(f"No targets found for {current_run}")
             return
 
+        scoped_targets_by_level = _apply_active_category_scope(window, targets_by_level)
+        if not scoped_targets_by_level:
+            return
+
         ui.append_target_groups_to_model(
-            ui.build_display_level_groups(targets_by_level, run_name=current_run),
+            ui.build_display_level_groups(scoped_targets_by_level, run_name=current_run),
             run_name=current_run,
         )
 
@@ -488,3 +520,4 @@ def change_run(window) -> None:
 
     ui.update_status_bar()
     ui.tree.viewport().update()
+    runtime_controller.update_backup_timer_state(window)

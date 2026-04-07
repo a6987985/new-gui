@@ -24,3 +24,6 @@
 ### Response Requirements
 - At the end of every assistant response, add a final item showing the current total Python code size for this project.
 - Measure code size as total `.py` lines under `new_gui/`, excluding caches such as `__pycache__/`.
+- After every response that changes project files, generate and report a patch bundle for the files changed in that response.
+- When generating a transfer bundle for `new_gui/`, write it to `/Users/yangwen/claude_code/new-gui/new_gui/bundle.txt` unless the user explicitly requests a different path.
+- When the changed file is a repo-root file such as `AGENTS.md` or `README.md`, generate the patch bundle for that file at `/Users/yangwen/claude_code/new-gui/new_gui/root_bundle.txt` unless the user explicitly requests a different path.

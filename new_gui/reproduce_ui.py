@@ -21,6 +21,7 @@ from new_gui.services import file_actions
 from new_gui.services import run_repository
 from new_gui.services import search_flow
 from new_gui.services import status_summary
+from new_gui.services import target_categories
 from new_gui.services import tree_rows
 from new_gui.services import view_tabs
 from new_gui.services import view_state
@@ -30,13 +31,14 @@ from new_gui.ui.controllers import (
     action_controller,
     context_menu_controller,
     output_controller,
+    runtime_controller,
     search_ui_controller,
     theme_controller,
     tree_display_controller,
     visibility_controller,
     view_controller,
 )
-from PyQt5.QtCore import QTimer, Qt
+from PyQt5.QtCore import QEvent, QTimer, Qt
 from PyQt5.QtWidgets import QApplication, QHeaderView, QMainWindow, QMenu
 
 
@@ -104,6 +106,11 @@ class MainWindow(QMainWindow):
         self._runtime_resume_refresh_scheduled = False
         self._runtime_backup_timer_was_active = False
         self._search_filter_request_id = 0
+        self._category_scope = "stage"
+        self._stage_categories = []
+        self._type_categories = []
+        self._selected_stage_category_id = ""
+        self._selected_type_category_id = ""
 
     def _init_ui_log_dispatcher(self) -> None:
         """Create the thread-safe log bridge used by the GUI session log."""
@@ -244,6 +251,16 @@ class MainWindow(QMainWindow):
     def showEvent(self, event):
         super().showEvent(event)
         QTimer.singleShot(0, self._apply_adaptive_target_column_width)
+        QTimer.singleShot(0, self._update_backup_timer_state)
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self._update_backup_timer_state()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.WindowStateChange:
+            QTimer.singleShot(0, self._update_backup_timer_state)
 
     def closeEvent(self, event):
         """Release background resources when the window closes."""
@@ -269,6 +286,64 @@ class MainWindow(QMainWindow):
     def _init_top_panel(self):
         """Initialize the top control panel."""
         top_panel_builder.init_top_panel(self)
+
+    def set_left_sidebar_visible(self, visible: bool) -> None:
+        """Show or hide the codex-style workspace sidebar."""
+        top_panel_builder.set_left_sidebar_visible(self, visible)
+
+    def toggle_left_sidebar(self) -> bool:
+        """Toggle workspace sidebar visibility from top-left icon button."""
+        return top_panel_builder.toggle_left_sidebar(self)
+
+    def refresh_left_sidebar_categories(self, run_dir: str = None) -> None:
+        """Reload stage/type category rows from bb.tcl under the active run directory."""
+        if not hasattr(self, "left_sidebar"):
+            return
+        categories, file_path = target_categories.load_bb_tcl_categories(run_dir or "")
+        self._stage_categories = list(categories or [])
+        self._type_categories = []
+        self.left_sidebar.set_stage_categories(self._stage_categories)
+        self.left_sidebar.set_type_categories(self._type_categories)
+        self._category_scope = self.left_sidebar.active_scope()
+        self._selected_stage_category_id = self.left_sidebar.selected_category_id("stage")
+        self._selected_type_category_id = self.left_sidebar.selected_category_id("type")
+        if categories:
+            logger.info(f"Loaded {len(categories)} sidebar categories from {file_path}")
+        else:
+            logger.info(f"No sidebar category data loaded from {file_path}")
+
+    def on_left_sidebar_scope_changed(self, scope: str) -> None:
+        """Handle STAGE/TYPE tab switch and refresh visible tree rows."""
+        self._category_scope = (scope or "stage").strip().lower()
+        if not self.combo_sel or self.is_all_status_view:
+            return
+        self.populate_data(force_rebuild=True)
+
+    def on_left_sidebar_category_changed(self, scope: str, category_id: str) -> None:
+        """Handle single-select category changes from the left sidebar."""
+        normalized_scope = (scope or "stage").strip().lower()
+        normalized_id = (category_id or "").strip()
+        if normalized_scope == "type":
+            self._selected_type_category_id = normalized_id
+        else:
+            self._selected_stage_category_id = normalized_id
+
+        if not self.combo_sel or self.is_all_status_view:
+            return
+        self.populate_data(force_rebuild=True)
+
+    def get_active_category_target_set(self):
+        """Return selected category targets for current scope, or None when unscoped."""
+        if not hasattr(self, "left_sidebar"):
+            return None
+        scope = self.left_sidebar.active_scope()
+        if scope == "type":
+            return None
+        selected_category_id = self.left_sidebar.selected_category_id("stage")
+        if not selected_category_id:
+            return None
+        targets = self.left_sidebar.selected_category_targets("stage")
+        return set(str(target).strip() for target in targets if str(target).strip())
 
     def _set_bottom_output_panel_visible(self, visible: bool) -> None:
         """Show or collapse the bottom output panel inside the content splitter."""
@@ -445,6 +520,15 @@ class MainWindow(QMainWindow):
         self._invalidate_search_view_snapshot()
         self.model.clear()
         self.populate_data()
+
+    def _refresh_tree_rows_stable(self) -> bool:
+        """Refresh row status/tune cells in place without rebuilding tree structure."""
+        if self.is_all_status_view or not self.combo_sel:
+            return False
+        if self.model is None or self.model.rowCount() <= 0:
+            return False
+        self.populate_data(force_rebuild=False)
+        return True
 
     def _clear_search_ui_state(self) -> None:
         """Clear the visible and embedded search UI state without rebuilding."""
@@ -1083,6 +1167,10 @@ class MainWindow(QMainWindow):
     def change_run(self):
         """Refresh status timer callback - updates status/time for all visible targets"""
         view_controller.change_run(self)
+
+    def _update_backup_timer_state(self):
+        """Sync backup polling state with the current window/view/run conditions."""
+        runtime_controller.update_backup_timer_state(self)
 
     def get_start_end_time(self, tgt_track_file: str) -> tuple:
         """Get start and end time from target tracker file.

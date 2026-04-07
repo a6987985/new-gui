@@ -473,29 +473,30 @@ Use this workflow when you need to move `new_gui/` directory updates into an iso
 First export will automatically generate a full bundle and initialize the local baseline snapshot:
 
 ```bash
-python tools/export_patch_bundle.py --output /tmp/new-gui-bundle.txt
+python tools/export_patch_bundle.py --target new_gui --output new_gui/bundle.txt
 ```
 
 Later exports will generate patch bundles against the last exported baseline by default:
 
 ```bash
-python tools/export_patch_bundle.py --output /tmp/new-gui-bundle.txt
+python tools/export_patch_bundle.py --target new_gui --output new_gui/bundle.txt
 ```
 
 If the intranet copy drifted or you want to reset the baseline, force a full bundle:
 
 ```bash
-python tools/export_patch_bundle.py --full --output /tmp/new-gui-bundle.txt
+python tools/export_patch_bundle.py --target new_gui --full --output new_gui/bundle.txt
 ```
 
 Notes:
 - Bundle transfer state is stored locally under `tools/.patch_bundle_state/`
 - Chunk size defaults to 4000 characters and can be overridden with `--chunk-size`
 - Export output is plain text, suitable for manual copy/paste between isolated networks
+- Keep the exported bundle file at `new_gui/bundle.txt`
 
 #### 2. Transfer the generated text chunks
 
-Copy the contents of `/tmp/new-gui-bundle.txt` through your approved text channel and paste them into a temporary file on the intranet machine, for example `/tmp/new-gui-bundle.txt`.
+Copy the contents of `new_gui/bundle.txt` through your approved text channel and paste them into a temporary file on the intranet machine, for example `/tmp/new-gui-bundle.txt`.
 
 #### 3. Import the bundle on the intranet machine
 

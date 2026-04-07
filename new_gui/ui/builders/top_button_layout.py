@@ -217,16 +217,17 @@ def _build_visual_experiment_button(window) -> QPushButton:
 
 
 def _build_left_sidebar_placeholder_button(window) -> QPushButton:
-    """Return a left-side icon toggle button reserved for future side panel."""
+    """Return a left-side icon toggle button for the workspace sidebar."""
     button = QPushButton("")
     button.setCheckable(True)
-    button.setChecked(False)
+    button.setChecked(bool(getattr(window, "_left_sidebar_visible", True)))
     button.setCursor(Qt.PointingHandCursor)
     button.setFixedSize(TOP_LEFT_TOGGLE_BUTTON_SIZE, TOP_LEFT_TOGGLE_BUTTON_SIZE)
     button.setIcon(build_side_panel_icon(size=20))
     button.setIconSize(QSize(20, 20))
     button.setStyleSheet(_build_top_icon_toggle_style())
-    button.setToolTip("Toggle left panel (placeholder)")
+    button.setToolTip("Toggle left sidebar")
+    button.toggled.connect(lambda checked: window.set_left_sidebar_visible(checked))
     window._top_panel_left_placeholder_toggle_button = button
     return button
 

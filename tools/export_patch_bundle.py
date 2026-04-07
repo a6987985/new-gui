@@ -85,14 +85,21 @@ def should_include_file(path: Path) -> bool:
     return True
 
 
-def collect_scope_texts(scope_path: Path, repo_root: Path) -> TextMap:
+def collect_scope_texts(
+    scope_path: Path,
+    repo_root: Path,
+    excluded_relpaths: set[str] | None = None,
+) -> TextMap:
     """Collect all text files under a target file or directory."""
     if not scope_path.exists():
         raise SystemExit(f"Target path not found: {scope_path}")
 
+    excluded_relpaths = excluded_relpaths or set()
     collected: TextMap = {}
     if scope_path.is_file():
         relpath = scope_path.relative_to(repo_root).as_posix()
+        if relpath in excluded_relpaths:
+            raise SystemExit(f"Target path is excluded from export scope: {scope_path}")
         collected[relpath] = read_text_file(scope_path)
         return collected
 
@@ -100,6 +107,8 @@ def collect_scope_texts(scope_path: Path, repo_root: Path) -> TextMap:
         if not path.is_file() or not should_include_file(path):
             continue
         relpath = path.relative_to(repo_root).as_posix()
+        if relpath in excluded_relpaths:
+            continue
         collected[relpath] = read_text_file(path)
 
     if not collected:
@@ -119,6 +128,13 @@ def load_snapshot_texts(snapshot_root: Path) -> TextMap:
         relpath = path.relative_to(snapshot_root).as_posix()
         collected[relpath] = read_text_file(path)
     return collected
+
+
+def exclude_relpaths(texts: TextMap, excluded_relpaths: set[str] | None) -> TextMap:
+    """Return a copy of the text map without excluded relative paths."""
+    if not excluded_relpaths:
+        return dict(texts)
+    return {path: text for path, text in texts.items() if path not in excluded_relpaths}
 
 
 def reset_snapshot(snapshot_root: Path, texts: TextMap) -> None:
@@ -294,8 +310,18 @@ def main() -> int:
     snapshot_root = state_dir / SNAPSHOT_ROOT_NAME / target_slug(target_relpath)
 
     state = load_state(state_file)
-    target_texts = collect_scope_texts(target_path, repo_root)
-    baseline_texts = load_snapshot_texts(snapshot_root)
+    excluded_relpaths: set[str] = set()
+    if args.output:
+        output_path = Path(args.output).expanduser()
+        if not output_path.is_absolute():
+            output_path = (Path.cwd() / output_path).resolve()
+        try:
+            excluded_relpaths.add(output_path.relative_to(repo_root).as_posix())
+        except ValueError:
+            pass
+
+    target_texts = collect_scope_texts(target_path, repo_root, excluded_relpaths)
+    baseline_texts = exclude_relpaths(load_snapshot_texts(snapshot_root), excluded_relpaths)
 
     bundle = build_bundle(target_relpath, target_texts, baseline_texts, args.full)
     encoded = encode_bundle(bundle)

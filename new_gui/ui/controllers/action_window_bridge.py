@@ -73,6 +73,12 @@ class ActionWindowBridge:
         """Restore the current tree scroll position."""
         self._window.tree.verticalScrollBar().setValue(value)
 
+    def refresh_tree_rows_stable(self) -> bool:
+        """Refresh visible tree rows without rebuilding the whole model."""
+        if hasattr(self._window, "_refresh_tree_rows_stable"):
+            return bool(self._window._refresh_tree_rows_stable())
+        return False
+
     def submit_background(self, func, *args) -> None:
         """Submit one background task to the shared executor."""
         self._window._executor.submit(func, *args)
