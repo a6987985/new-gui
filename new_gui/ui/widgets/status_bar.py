@@ -5,7 +5,6 @@ from new_gui.config.settings import STATUS_CONFIG, THEMES
 from new_gui.ui.status_bar_styles import (
     build_status_badge_style,
     build_status_bar_style,
-    build_status_connection_label_style,
     build_status_run_label_style,
     build_status_separator_style,
     build_status_stats_label_style,
@@ -56,11 +55,6 @@ class StatusBar(QFrame):
 
         layout.addStretch()
 
-        # Right side - Connection status
-        self._connection_label = QLabel("● Connected")
-        self._connection_label.setStyleSheet(build_status_connection_label_style("#4caf50"))
-        layout.addWidget(self._connection_label)
-
         # Theme indicator
         self._theme_label = QLabel("☀ Light")
         self._theme_label.setStyleSheet(build_status_theme_label_style())
@@ -105,15 +99,6 @@ class StatusBar(QFrame):
             badge.setStyleSheet(build_status_badge_style(bg_color, text_color))
             badge.statusDoubleClicked.connect(self.status_filter_requested.emit)
             self._status_breakdown_layout.addWidget(badge)
-
-    def update_connection(self, connected):
-        """Update connection status"""
-        if connected:
-            self._connection_label.setText("● Connected")
-            self._connection_label.setStyleSheet(build_status_connection_label_style("#28a745", emphasized=False))
-        else:
-            self._connection_label.setText("○ Disconnected")
-            self._connection_label.setStyleSheet(build_status_connection_label_style("#ef5350", emphasized=False))
 
     def update_theme(self, theme_name):
         """Update theme indicator"""

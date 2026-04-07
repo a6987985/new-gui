@@ -88,6 +88,14 @@ class NotificationWidget(QFrame):
         shadow.setColor(QColor(0, 0, 0, 60))
         self.setGraphicsEffect(shadow)
 
+    def resize_to_content(self) -> None:
+        """Resize the floating card to fit its text content at the fixed width."""
+        layout = self.layout()
+        if layout is not None:
+            layout.activate()
+        target_height = max(self.minimumSizeHint().height(), self.sizeHint().height())
+        self.resize(self.width(), target_height)
+
     def _start_animation(self):
         """Start the entrance animation."""
         self.setWindowOpacity(0.0)
@@ -153,6 +161,7 @@ class NotificationManager(QObject):
 
         notification = NotificationWidget(title, message, notification_type, self._parent)
         notification.dismiss_requested.connect(lambda: self._dismiss_notification(notification))
+        notification.resize_to_content()
 
         self._position_notification(notification)
         self._notifications.append(notification)

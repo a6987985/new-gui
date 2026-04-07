@@ -475,6 +475,26 @@ def clear_trace_filter(tree, model) -> None:
     tree.setUpdatesEnabled(True)
 
 
+def expand_all_rows(tree) -> None:
+    """Expand every currently visible row, including synthetic group nodes."""
+    if tree is None:
+        return
+
+    tree.setUpdatesEnabled(False)
+    tree.expandAll()
+    tree.setUpdatesEnabled(True)
+
+
+def collapse_all_rows(tree) -> None:
+    """Collapse every currently visible row."""
+    if tree is None:
+        return
+
+    tree.setUpdatesEnabled(False)
+    tree.collapseAll()
+    tree.setUpdatesEnabled(True)
+
+
 def expand_all_except_groups(tree, model) -> None:
     """Expand the visible tree while keeping synthetic group rows collapsed."""
     if tree is None or model is None:

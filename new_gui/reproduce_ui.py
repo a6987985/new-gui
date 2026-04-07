@@ -464,9 +464,6 @@ class MainWindow(QMainWindow):
 
         self._status_bar.update_stats(stats)
 
-        # Update connection status (always connected for file system)
-        self._status_bar.update_connection(True)
-
     def _compute_full_run_stats(self, run_name):
         """Compute status statistics from the complete target set of a run."""
         if not run_name or run_name == "No runs found":
@@ -548,16 +545,26 @@ class MainWindow(QMainWindow):
         view_controller.filter_tree(self, text, search_options=search_options)
 
     def toggle_tree_expansion(self):
-        """Toggle between Expand All and Collapse All"""
+        """Toggle between full Expand All and Collapse All."""
         if self.is_tree_expanded:
-            self.tree.collapseAll()
+            self.collapse_tree_all()
         else:
-            self.expand_tree_default()
-        self.is_tree_expanded = not self.is_tree_expanded
+            self.expand_tree_all()
+
+    def expand_tree_all(self):
+        """Expand the entire tree, including synthetic generic target groups."""
+        view_state.expand_all_rows(self.tree)
+        self.is_tree_expanded = True
+
+    def collapse_tree_all(self):
+        """Collapse the entire tree."""
+        view_state.collapse_all_rows(self.tree)
+        self.is_tree_expanded = False
 
     def expand_tree_default(self):
         """Expand the tree while keeping synthetic generic groups collapsed."""
         view_state.expand_all_except_groups(self.tree, self.model)
+        self.is_tree_expanded = True
 
     def _filter_tree_by_status_flat(self, status):
         """Show status-filtered targets using main-view tree hierarchy."""

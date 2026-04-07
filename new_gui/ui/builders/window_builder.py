@@ -5,6 +5,7 @@ from PyQt5.QtWidgets import QVBoxLayout, QWidget
 
 from new_gui.config.settings import FADE_IN_DURATION_MS, WINDOW_HEIGHT, WINDOW_WIDTH
 from new_gui.ui.builders import top_panel_builder
+from new_gui.ui.controllers import theme_controller
 
 
 def init_window(window) -> None:
@@ -29,6 +30,7 @@ def init_window(window) -> None:
             }}
         """
     )
+    theme_controller.apply_tooltip_theme(window.theme_manager.get_theme())
 
 
 def init_central_widget(window) -> None:

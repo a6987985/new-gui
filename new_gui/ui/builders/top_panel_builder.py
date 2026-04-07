@@ -105,7 +105,7 @@ def init_top_panel(window) -> None:
 
     window.tab_label = ClickableLabel("")
     window.tab_label.doubleClicked.connect(window.toggle_tree_expansion)
-    window.tab_label.setToolTip("Double-click to Expand/Collapse All")
+    window.tab_label.set_custom_tooltip("Double-click to Expand/Collapse All")
     window.tab_label.setStyleSheet(view_tabs.MAIN_RUN_TAB_STYLE)
 
     window.tab_close_btn = QPushButton("×")

@@ -1,6 +1,21 @@
 """Shared stylesheet builders for reusable widget styling."""
 
 
+def build_tooltip_style(background: str, text_color: str, border_color: str, accent_color: str) -> str:
+    """Return a tooltip stylesheet aligned with the active theme palette."""
+    return f"""
+        QToolTip {{
+            background-color: {background};
+            color: {text_color};
+            border: 1px solid {border_color};
+            border-left: 3px solid {accent_color};
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 12px;
+        }}
+    """
+
+
 def build_default_top_panel_style(background: str) -> str:
     """Return the default top-panel stylesheet."""
     return f"""

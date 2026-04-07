@@ -2,12 +2,41 @@
 
 import os
 
-from PyQt5.QtGui import QColor
+from PyQt5.QtGui import QColor, QPalette
+from PyQt5.QtWidgets import QApplication, QToolTip
 
 from new_gui.config.settings import THEMES, logger
 from new_gui.services import flow_background
 from new_gui.ui import style_sheets
 from new_gui.ui.dialogs.xmeta_background_dialog import XMetaBackgroundDialog
+
+
+def apply_tooltip_theme(theme: dict) -> None:
+    """Apply a consistent tooltip palette and stylesheet for the active theme."""
+    app = QApplication.instance()
+    if app is None:
+        return
+
+    app.setStyleSheet(
+        style_sheets.build_tooltip_style(
+            theme["menu_bg"],
+            theme["text_color"],
+            theme["border_color"],
+            theme["accent_color"],
+        )
+    )
+
+    tooltip_bg = QColor(theme["menu_bg"])
+    tooltip_text = QColor(theme["text_color"])
+    tooltip_palette = QPalette(QToolTip.palette())
+    for color_group in (QPalette.Active, QPalette.Inactive, QPalette.Disabled):
+        tooltip_palette.setColor(color_group, QPalette.ToolTipBase, tooltip_bg)
+        tooltip_palette.setColor(color_group, QPalette.ToolTipText, tooltip_text)
+        tooltip_palette.setColor(color_group, QPalette.Base, tooltip_bg)
+        tooltip_palette.setColor(color_group, QPalette.Text, tooltip_text)
+        tooltip_palette.setColor(color_group, QPalette.Window, tooltip_bg)
+        tooltip_palette.setColor(color_group, QPalette.WindowText, tooltip_text)
+    QToolTip.setPalette(tooltip_palette)
 
 
 def get_xmeta_background_color(window):
@@ -39,6 +68,7 @@ def apply_theme(window, theme_name, announce: bool = True) -> None:
     bg_color = window._get_xmeta_background_color()
     window_bg = bg_color or theme["window_bg"]
     window.window_bg = window_bg
+    apply_tooltip_theme(theme)
 
     if theme_name == "dark":
         scrollbar_bg = "#2d2d2d"

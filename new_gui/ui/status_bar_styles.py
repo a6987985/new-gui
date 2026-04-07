@@ -25,12 +25,6 @@ def build_status_stats_label_style() -> str:
     return "color: #314154; font-weight: 500;"
 
 
-def build_status_connection_label_style(color: str, emphasized: bool = True) -> str:
-    """Return the connection label style."""
-    weight = "500" if emphasized else "400"
-    return f"color: {color}; font-weight: {weight};"
-
-
 def build_status_theme_label_style() -> str:
     """Return the theme label style."""
     return "color: #666666;"

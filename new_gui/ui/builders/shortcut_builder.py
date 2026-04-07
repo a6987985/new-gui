@@ -22,12 +22,12 @@ def setup_keyboard_shortcuts(window) -> None:
     shortcuts.append(shortcut_refresh)
 
     shortcut_expand = QShortcut(QKeySequence(SHORTCUTS["expand_all"]["key"]), window)
-    shortcut_expand.activated.connect(window.expand_tree_default)
+    shortcut_expand.activated.connect(window.expand_tree_all)
     shortcut_expand.setContext(Qt.ApplicationShortcut)
     shortcuts.append(shortcut_expand)
 
     shortcut_collapse = QShortcut(QKeySequence(SHORTCUTS["collapse_all"]["key"]), window)
-    shortcut_collapse.activated.connect(window.tree.collapseAll)
+    shortcut_collapse.activated.connect(window.collapse_tree_all)
     shortcut_collapse.setContext(Qt.ApplicationShortcut)
     shortcuts.append(shortcut_collapse)
 

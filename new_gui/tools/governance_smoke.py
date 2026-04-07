@@ -356,6 +356,79 @@ def smoke_search_parent_projection(window: MainWindow, app: QApplication) -> Non
     )
 
 
+def smoke_tree_expansion_modes(window: MainWindow, app: QApplication) -> None:
+    """Verify default expand keeps Generic groups collapsed while full expand opens them."""
+    window.model.removeRows(0, window.model.rowCount())
+
+    level_row = tree_rows.build_container_row_items(
+        "1",
+        "Level 1",
+        tree_rows.ROW_KIND_LEVEL,
+        descendant_targets=["generic_member_a", "generic_member_b"],
+        status_colors=window.colors,
+    )
+    generic_group_row = tree_rows.build_container_row_items(
+        "",
+        "Generic Alpha",
+        tree_rows.ROW_KIND_GROUP,
+        descendant_targets=["generic_member_a", "generic_member_b"],
+        status_colors=window.colors,
+    )
+    generic_group_row[0].appendRow(
+        tree_rows.build_target_row_items(
+            "",
+            "generic_member_a",
+            "finish",
+            [],
+            "",
+            "",
+            "pd_sim",
+            "4",
+            "30000",
+            window.colors,
+        )
+    )
+    generic_group_row[0].appendRow(
+        tree_rows.build_target_row_items(
+            "",
+            "generic_member_b",
+            "finish",
+            [],
+            "",
+            "",
+            "pd_sim",
+            "4",
+            "30000",
+            window.colors,
+        )
+    )
+    level_row[0].appendRow(generic_group_row)
+    window.model.appendRow(level_row)
+
+    _process_events(app)
+    window.expand_tree_default()
+    _process_events(app)
+
+    level_index = window.model.index(0, 0)
+    generic_index = window.model.index(0, 0, level_index)
+    _require(window.tree.isExpanded(level_index), "Default tree expand did not open the level container.")
+    _require(
+        not window.tree.isExpanded(generic_index),
+        "Default tree expand should keep Generic groups collapsed.",
+    )
+
+    window.expand_tree_all()
+    _process_events(app)
+    _require(
+        window.tree.isExpanded(generic_index),
+        "Full tree expand did not open the Generic target group.",
+    )
+
+    window.collapse_tree_all()
+    _process_events(app)
+    _require(not window.tree.isExpanded(level_index), "Collapse all did not collapse the level container.")
+
+
 def smoke_main_window(app: QApplication) -> None:
     """Verify the main window still supports the key governance seams."""
     window = MainWindow()
@@ -401,6 +474,7 @@ def smoke_main_window(app: QApplication) -> None:
     smoke_search_stability(window, app)
     smoke_search_options(window, app)
     smoke_search_parent_projection(window, app)
+    smoke_tree_expansion_modes(window, app)
     window._clear_search_ui_state()
     _process_events(app)
 
@@ -480,6 +554,11 @@ def smoke_main_window(app: QApplication) -> None:
     initial_entries = window._session_log_widget.entry_count()
     window.show_notification("Smoke", "Notification mirroring check", "warning")
     _process_events(app)
+    notification = window._notification_manager._notifications[-1]
+    _require(
+        notification.height() >= notification.sizeHint().height(),
+        "Notification card height did not expand to fit its text content.",
+    )
     _require(
         window._session_log_widget.entry_count() == initial_entries + 1,
         "Notification mirroring did not append to the GUI session log.",
