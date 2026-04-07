@@ -241,11 +241,13 @@ def apply_adaptive_target_column_width(window, column: int = 1) -> None:
     """Stretch only the target column when the tree viewport width changes."""
     ui = _bridge(window)
     header_min_widths = get_header_min_widths(window)
+    target_viewport_width = getattr(window, "_layout_target_viewport_width", None)
     view_layout.apply_adaptive_column_width(
         ui.tree,
         ui.model,
         header_min_widths,
         column=column,
+        viewport_width=target_viewport_width,
     )
 
 
@@ -253,7 +255,13 @@ def fill_trailing_blank_with_last_column(window) -> None:
     """Expand the last visible column to remove right-side blank space."""
     ui = _bridge(window)
     header_min_widths = get_header_min_widths(window)
-    view_layout.fill_trailing_blank_with_last_column(ui.tree, ui.model, header_min_widths)
+    target_viewport_width = getattr(window, "_layout_target_viewport_width", None)
+    view_layout.fill_trailing_blank_with_last_column(
+        ui.tree,
+        ui.model,
+        header_min_widths,
+        viewport_width=target_viewport_width,
+    )
 
 
 def apply_initial_window_width(window) -> None:

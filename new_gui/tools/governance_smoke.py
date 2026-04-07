@@ -16,7 +16,7 @@ PACKAGE_ROOT = REPO_ROOT / "new_gui"
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QPoint, Qt
 from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication, QPushButton
 
@@ -103,6 +103,45 @@ def _collect_model_target_names(window: MainWindow) -> list[str]:
 
     walk()
     return collected
+
+
+def _collect_visible_target_names(window: MainWindow) -> list[str]:
+    """Return target names for rows currently visible in the tree view."""
+    model = window.model
+    tree = window.tree
+    collected = []
+
+    def walk(parent_item=None, parent_index=None) -> None:
+        row_count = parent_item.rowCount() if parent_item is not None else model.rowCount()
+        for row in range(row_count):
+            check_parent = parent_index if parent_index is not None else tree.rootIndex()
+            if tree.isRowHidden(row, check_parent):
+                continue
+            row_items = tree_rows.get_row_items(model, row, parent_item)
+            level_item = row_items[0] if row_items else None
+            target_item = row_items[1] if len(row_items) > 1 else None
+            target_name = tree_rows.get_row_target_name(target_item)
+            if target_name:
+                collected.append(target_name)
+            if level_item is not None and level_item.hasChildren():
+                walk(level_item, level_item.index())
+
+    walk()
+    return collected
+
+
+def _visible_tree_width(window: MainWindow) -> int:
+    """Return the combined width of all visible tree columns."""
+    return sum(
+        window.tree.columnWidth(column)
+        for column in range(window.model.columnCount())
+        if not window.tree.isColumnHidden(column)
+    )
+
+
+def _widget_x_in_window(widget, window: MainWindow) -> int:
+    """Return one widget x-position relative to the main window."""
+    return widget.mapTo(window, QPoint(0, 0)).x()
 
 
 def _collect_model_group_labels(window: MainWindow) -> list[str]:
@@ -252,6 +291,7 @@ def smoke_search_options(window: MainWindow, app: QApplication) -> None:
     current_run = window.combo.currentText()
     window.combo_sel = "/tmp"
     window.cached_targets_by_level = {1: ["AlphaCase", "alphacase"]}
+    window._cached_targets_run = current_run
     window.cached_collapsible_target_groups = {}
     window._cached_collapsible_target_groups_run = current_run
     window.is_search_mode = False
@@ -325,6 +365,7 @@ def smoke_search_parent_projection(window: MainWindow, app: QApplication) -> Non
             "FmEqvPwrAllUpfSuppliesOnFloorplanVsBase",
         ]
     }
+    window._cached_targets_run = current_run
     window.cached_collapsible_target_groups = {
         "GenericFmEqvFloorplan": [
             "FmEqvFloorplanVsBase",
@@ -429,11 +470,148 @@ def smoke_tree_expansion_modes(window: MainWindow, app: QApplication) -> None:
     _require(not window.tree.isExpanded(level_index), "Collapse all did not collapse the level container.")
 
 
+def smoke_left_sidebar_hide_restores_full_targets(window: MainWindow, app: QApplication) -> None:
+    """Verify hiding the sidebar clears category scope and restores the full Main View."""
+    current_run = window.combo.currentText()
+    original_parse_dependency_file = window.parse_dependency_file
+    original_parse_collapsible_target_groups = window.parse_collapsible_target_groups
+    original_refresh_left_sidebar_categories = window.refresh_left_sidebar_categories
+    original_combo_entries = [window.combo.itemText(index) for index in range(window.combo.count())]
+    original_current_run = current_run
+
+    deterministic_targets = {
+        1: ["alpha_target", "beta_target", "gamma_target"],
+    }
+
+    try:
+        if not current_run or current_run == "No runs found":
+            window.combo.blockSignals(True)
+            window.combo.clear()
+            window.combo.addItem("smoke_run")
+            window.combo.setCurrentIndex(0)
+            window.combo.blockSignals(False)
+            current_run = "smoke_run"
+
+        refresh_sidebar_calls = {"count": 0}
+
+        def count_sidebar_refresh(run_dir=None):
+            refresh_sidebar_calls["count"] += 1
+
+        window.parse_dependency_file = lambda run_name: dict(deterministic_targets)
+        window.parse_collapsible_target_groups = lambda run_name: {}
+        window.refresh_left_sidebar_categories = count_sidebar_refresh
+        window._clear_search_ui_state()
+        window.clear_left_sidebar_selection()
+        window.left_sidebar.set_stage_categories([])
+
+        window.show_full_target_view()
+        _process_events(app)
+        _require(
+            set(_collect_model_target_names(window)) == {"alpha_target", "beta_target", "gamma_target"},
+            "Full Main View did not show the complete target set before sidebar filtering.",
+        )
+        _require(
+            refresh_sidebar_calls["count"] == 0,
+            "Lightweight full-target restore unexpectedly refreshed sidebar categories.",
+        )
+
+        window.left_sidebar.set_stage_categories(
+            [
+                {
+                    "id": "focus_alpha",
+                    "label": "Alpha Focus",
+                    "targets": ["alpha_target"],
+                }
+            ]
+        )
+
+        focus_button = next(
+            (
+                button
+                for button in window.left_sidebar._category_buttons
+                if str(button.property("category_id") or "") == "focus_alpha"
+            ),
+            None,
+        )
+        _require(focus_button is not None, "Sidebar category button was not created for the smoke test.")
+        QTest.mouseClick(focus_button, Qt.LeftButton)
+        _process_events(app)
+        _require(
+            _collect_visible_target_names(window) == ["alpha_target"],
+            "Sidebar category filter did not narrow the visible target set.",
+        )
+
+        window.header.show_filter()
+        _process_events(app)
+        _replace_line_edit_with_keys(window.header.filter_edit, "alpha")
+        _process_events(app)
+        _require(window.header.get_filter_text() == "alpha", "Sidebar smoke did not enter search mode as expected.")
+        window.tree.setColumnWidth(2, 177)
+        external_scrollbar_x_before = _widget_x_in_window(window._tree_external_v_scrollbar, window)
+
+        window.set_left_sidebar_visible(False)
+        _process_events(app)
+
+        _require(
+            bool(getattr(window, "_left_sidebar_visible", True)) is False and window.left_sidebar.width() == 0,
+            "Left sidebar did not collapse during the smoke test.",
+        )
+        _require(
+            getattr(window, "_content_row_transition_overlay", None) is None,
+            "Sidebar transition overlay did not clear after the layout transaction finished.",
+        )
+        _require(
+            window.left_sidebar.selected_category_id("stage") == "",
+            "Hiding the sidebar did not clear the active stage category.",
+        )
+        _require(window.header.get_filter_text() == "", "Hiding the sidebar did not clear the search filter.")
+        _require(
+            set(_collect_visible_target_names(window)) == {"alpha_target", "beta_target", "gamma_target"},
+            "Hiding the sidebar did not restore the full Main View target set.",
+        )
+        _require(
+            _visible_tree_width(window) >= window.tree.viewport().width(),
+            "Hiding the sidebar left trailing blank space to the right of the final visible column.",
+        )
+        _require(
+            _widget_x_in_window(window._tree_external_v_scrollbar, window) == external_scrollbar_x_before,
+            "The fixed outer scrollbar shifted horizontally when the sidebar collapsed.",
+        )
+        _require(
+            window.tree.columnWidth(2) == 177,
+            "Hiding the sidebar unexpectedly reset a fixed non-adaptive column width.",
+        )
+    finally:
+        window.parse_dependency_file = original_parse_dependency_file
+        window.parse_collapsible_target_groups = original_parse_collapsible_target_groups
+        window.refresh_left_sidebar_categories = original_refresh_left_sidebar_categories
+        window.combo.blockSignals(True)
+        window.combo.clear()
+        if original_combo_entries:
+            window.combo.addItems(original_combo_entries)
+            restore_index = max(0, window.combo.findText(original_current_run))
+            window.combo.setCurrentIndex(restore_index)
+        window.combo.blockSignals(False)
+        window.set_left_sidebar_visible(True)
+        window._clear_search_ui_state()
+        _process_events(app)
+
+
 def smoke_main_window(app: QApplication) -> None:
     """Verify the main window still supports the key governance seams."""
     window = MainWindow()
     window.show()
     _process_events(app)
+    _require(
+        getattr(window, "_top_panel_left_placeholder_toggle_button", None) is not None
+        and window._top_panel_left_placeholder_toggle_button.toolTip() == "",
+        "Left sidebar toggle button unexpectedly still exposes a tooltip.",
+    )
+    _require(
+        getattr(window, "_top_panel_terminal_toggle_button", None) is not None
+        and window._top_panel_terminal_toggle_button.toolTip() == "",
+        "Terminal toggle button unexpectedly still exposes a tooltip.",
+    )
 
     window.header.show_filter()
     _process_events(app)
@@ -475,6 +653,7 @@ def smoke_main_window(app: QApplication) -> None:
     smoke_search_options(window, app)
     smoke_search_parent_projection(window, app)
     smoke_tree_expansion_modes(window, app)
+    smoke_left_sidebar_hide_restores_full_targets(window, app)
     window._clear_search_ui_state()
     _process_events(app)
 

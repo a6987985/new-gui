@@ -1,10 +1,13 @@
 """Top-panel and tree-area builder helpers for MainWindow."""
 
+from typing import Optional
+
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QColor, QStandardItemModel
 from PyQt5.QtWidgets import (
     QGraphicsDropShadowEffect,
     QHBoxLayout,
+    QLabel,
     QPushButton,
     QSplitter,
     QSizePolicy,
@@ -28,6 +31,7 @@ from new_gui.ui.builders.top_button_specs import (
 )
 from new_gui.ui.widgets.bounded_combo import BoundedComboBox
 from new_gui.ui.widgets.notifications import NotificationManager
+from new_gui.ui.widgets.scrollbars import RoundedScrollBar
 from new_gui.ui.widgets.status_bar import StatusBar
 from new_gui.ui.widgets.tree_view import ColorTreeView, TreeViewEventFilter
 from new_gui.ui.widgets.bottom_output_panel import BottomOutputPanel
@@ -143,6 +147,7 @@ def init_top_panel(window) -> None:
     window.tree.setVerticalScrollMode(QTreeView.ScrollPerItem)
     window.tree.setSelectionMode(QTreeView.ExtendedSelection)
     window.tree.setSelectionBehavior(QTreeView.SelectRows)
+    window.tree.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
     window._default_tree_style = style_sheets.build_default_tree_style()
     window.tree.setStyleSheet(window._default_tree_style)
 
@@ -160,7 +165,20 @@ def init_top_panel(window) -> None:
     window._content_splitter = QSplitter(Qt.Vertical)
     window._content_splitter.setChildrenCollapsible(False)
     window._content_splitter.setHandleWidth(6)
-    window._content_splitter.addWidget(window.tree)
+    window._tree_view_container = QWidget(window)
+    tree_view_layout = QHBoxLayout(window._tree_view_container)
+    tree_view_layout.setContentsMargins(0, 0, 0, 0)
+    tree_view_layout.setSpacing(0)
+    tree_view_layout.addWidget(window.tree, 1)
+
+    window._tree_external_v_scrollbar = RoundedScrollBar(Qt.Vertical, window._tree_view_container, show_step_buttons=True)
+    window._tree_external_v_scrollbar.setFixedWidth(16)
+    window._tree_external_v_scrollbar.setFocusPolicy(Qt.NoFocus)
+    tree_view_layout.addWidget(window._tree_external_v_scrollbar)
+    _connect_external_tree_scrollbar(window)
+    _sync_external_tree_scrollbar(window)
+
+    window._content_splitter.addWidget(window._tree_view_container)
 
     window._bottom_output_panel = BottomOutputPanel(window)
     window._embedded_terminal = window._bottom_output_panel.terminal_widget
@@ -213,26 +231,270 @@ def set_left_sidebar_visible(window, visible: bool) -> None:
     if not hasattr(window, "left_sidebar"):
         return
     is_visible = bool(visible)
-    window._left_sidebar_visible = is_visible
-    window.left_sidebar.setVisible(is_visible)
-    if is_visible and hasattr(window, "_left_sidebar_default_width"):
-        window.left_sidebar.setFixedWidth(window._left_sidebar_default_width)
-    if hasattr(window, "_top_panel_left_placeholder_toggle_button"):
-        button = window._top_panel_left_placeholder_toggle_button
-        button.blockSignals(True)
-        button.setChecked(is_visible)
-        button.blockSignals(False)
-    QTimer.singleShot(0, lambda: _refresh_tree_layout_after_sidebar_toggle(window))
+    if is_visible == bool(getattr(window, "_left_sidebar_visible", True)):
+        return
+
+    target_sidebar_width = window._left_sidebar_default_width if is_visible else 0
+    previous_target_viewport_width = getattr(window, "_layout_target_viewport_width", None)
+    window._layout_target_viewport_width = _estimate_tree_viewport_width_after_sidebar_toggle(
+        window,
+        target_sidebar_width,
+    )
+    transition_revision = _show_content_row_transition_overlay(window)
+    _begin_tree_layout_transaction(window)
+    try:
+        window._left_sidebar_visible = is_visible
+        if not is_visible and hasattr(window, "clear_left_sidebar_selection"):
+            window.clear_left_sidebar_selection()
+
+        window.left_sidebar.setFixedWidth(target_sidebar_width)
+        window.left_sidebar.setEnabled(is_visible)
+        window.left_sidebar.show()
+        if hasattr(window, "_top_panel_left_placeholder_toggle_button"):
+            button = window._top_panel_left_placeholder_toggle_button
+            button.blockSignals(True)
+            button.setChecked(is_visible)
+            button.blockSignals(False)
+
+        _activate_layout_after_sidebar_toggle(window)
+
+        if not is_visible and hasattr(window, "show_full_target_view"):
+            window.show_full_target_view()
+
+        _refresh_tree_layout_after_sidebar_toggle(window)
+    finally:
+        _end_tree_layout_transaction(window)
+        window._layout_target_viewport_width = previous_target_viewport_width
+        _schedule_content_row_transition_overlay_clear(window, transition_revision)
+
+
+def _activate_layout_after_sidebar_toggle(window) -> None:
+    """Apply layout geometry immediately before recomputing tree widths."""
+    content_row = getattr(window, "_content_row", None)
+    if content_row is not None and content_row.layout() is not None:
+        content_row.layout().activate()
+        content_row.updateGeometry()
+    main_layout = getattr(window, "_main_layout", None)
+    if main_layout is not None:
+        main_layout.activate()
+    _sync_external_tree_scrollbar(window)
+
+
+def _show_content_row_transition_overlay(window) -> int:
+    """Freeze the visible content row while sidebar layout changes commit underneath."""
+    current_revision = int(getattr(window, "_content_row_transition_revision", 0)) + 1
+    window._content_row_transition_revision = current_revision
+    content_row = getattr(window, "_content_row", None)
+    if content_row is None or not content_row.isVisible():
+        return current_revision
+
+    width = content_row.width()
+    height = content_row.height()
+    if width <= 0 or height <= 0:
+        return current_revision
+
+    existing_overlay = getattr(window, "_content_row_transition_overlay", None)
+    if existing_overlay is not None:
+        existing_overlay.deleteLater()
+
+    overlay = QLabel(content_row)
+    overlay.setObjectName("contentRowTransitionOverlay")
+    overlay.setGeometry(content_row.rect())
+    overlay.setPixmap(content_row.grab())
+    overlay.setScaledContents(False)
+    overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+    overlay.show()
+    overlay.raise_()
+    window._content_row_transition_overlay = overlay
+    return current_revision
+
+
+def _schedule_content_row_transition_overlay_clear(window, revision: int) -> None:
+    """Clear one frozen content overlay after the final layout settles."""
+    QTimer.singleShot(0, lambda: _clear_content_row_transition_overlay(window, revision))
+
+
+def _clear_content_row_transition_overlay(window, revision: int) -> None:
+    """Drop one frozen content overlay when it still belongs to the latest transition."""
+    if revision != int(getattr(window, "_content_row_transition_revision", 0)):
+        return
+
+    overlay = getattr(window, "_content_row_transition_overlay", None)
+    if overlay is None:
+        return
+    window._content_row_transition_overlay = None
+    overlay.deleteLater()
+
+
+def _connect_external_tree_scrollbar(window) -> None:
+    """Mirror the hidden internal tree scrollbar onto the fixed outer gutter."""
+    if not hasattr(window, "tree") or not hasattr(window, "_tree_external_v_scrollbar"):
+        return
+
+    internal_scrollbar = window.tree.verticalScrollBar()
+    external_scrollbar = window._tree_external_v_scrollbar
+
+    internal_scrollbar.rangeChanged.connect(lambda *_: _sync_external_tree_scrollbar(window))
+    internal_scrollbar.valueChanged.connect(lambda *_: _sync_external_tree_scrollbar(window))
+    external_scrollbar.valueChanged.connect(lambda value: internal_scrollbar.setValue(value))
+
+
+def _sync_external_tree_scrollbar(window) -> None:
+    """Keep the fixed outer scrollbar in sync with the hidden tree scrollbar."""
+    if not hasattr(window, "tree") or not hasattr(window, "_tree_external_v_scrollbar"):
+        return
+
+    internal_scrollbar = window.tree.verticalScrollBar()
+    external_scrollbar = window._tree_external_v_scrollbar
+    previous_blocked = external_scrollbar.signalsBlocked()
+    external_scrollbar.blockSignals(True)
+    try:
+        external_scrollbar.setRange(internal_scrollbar.minimum(), internal_scrollbar.maximum())
+        external_scrollbar.setPageStep(internal_scrollbar.pageStep())
+        external_scrollbar.setSingleStep(internal_scrollbar.singleStep())
+        external_scrollbar.setValue(internal_scrollbar.value())
+        external_scrollbar.setEnabled(internal_scrollbar.maximum() > internal_scrollbar.minimum())
+    finally:
+        external_scrollbar.blockSignals(previous_blocked)
+    external_scrollbar.update()
+
+
+def _estimate_tree_viewport_width_after_sidebar_toggle(window, target_sidebar_width: int) -> Optional[int]:
+    """Predict the tree viewport width after one sidebar width change."""
+    if not hasattr(window, "tree") or window.tree is None:
+        return None
+    current_viewport_width = window.tree.viewport().width()
+    if current_viewport_width <= 0:
+        return None
+    current_sidebar_width = window.left_sidebar.width() if hasattr(window, "left_sidebar") else 0
+    viewport_delta = int(current_sidebar_width) - int(target_sidebar_width)
+    target_viewport_width = current_viewport_width + viewport_delta
+    if target_viewport_width <= 0:
+        return None
+    return target_viewport_width
+
+
+def _begin_tree_layout_transaction(window) -> None:
+    """Freeze tree/header painting so sidebar toggles commit as one visual update."""
+    depth = int(getattr(window, "_tree_layout_transaction_depth", 0))
+    window._tree_layout_transaction_depth = depth + 1
+    if depth > 0 or not hasattr(window, "tree") or window.tree is None:
+        return
+
+    tree = window.tree
+    header = tree.header()
+    vertical_scrollbar = tree.verticalScrollBar()
+    horizontal_scrollbar = tree.horizontalScrollBar()
+    external_vertical_scrollbar = getattr(window, "_tree_external_v_scrollbar", None)
+    window._tree_layout_transaction_state = {
+        "previous_suspend": bool(getattr(window, "_suspend_header_layout_updates", False)),
+        "previous_tree_updates": tree.updatesEnabled(),
+        "previous_header_updates": header.updatesEnabled() if header is not None else True,
+        "previous_header_blocked": header.signalsBlocked() if header is not None else False,
+        "previous_v_scroll_updates": vertical_scrollbar.updatesEnabled() if vertical_scrollbar is not None else True,
+        "previous_h_scroll_updates": horizontal_scrollbar.updatesEnabled() if horizontal_scrollbar is not None else True,
+        "previous_v_scroll_blocked": vertical_scrollbar.signalsBlocked() if vertical_scrollbar is not None else False,
+        "previous_h_scroll_blocked": horizontal_scrollbar.signalsBlocked() if horizontal_scrollbar is not None else False,
+        "previous_external_v_scroll_updates": (
+            external_vertical_scrollbar.updatesEnabled() if external_vertical_scrollbar is not None else True
+        ),
+        "previous_external_v_scroll_blocked": (
+            external_vertical_scrollbar.signalsBlocked() if external_vertical_scrollbar is not None else False
+        ),
+    }
+    window._suspend_header_layout_updates = True
+    tree.setUpdatesEnabled(False)
+    if header is not None:
+        header.setUpdatesEnabled(False)
+        header.blockSignals(True)
+    if vertical_scrollbar is not None:
+        vertical_scrollbar.setUpdatesEnabled(False)
+        vertical_scrollbar.blockSignals(True)
+    if horizontal_scrollbar is not None:
+        horizontal_scrollbar.setUpdatesEnabled(False)
+        horizontal_scrollbar.blockSignals(True)
+    if external_vertical_scrollbar is not None:
+        external_vertical_scrollbar.setUpdatesEnabled(False)
+        external_vertical_scrollbar.blockSignals(True)
+
+
+def _end_tree_layout_transaction(window) -> None:
+    """Restore tree/header painting after one batched sidebar toggle."""
+    depth = int(getattr(window, "_tree_layout_transaction_depth", 0))
+    if depth <= 0:
+        return
+    depth -= 1
+    window._tree_layout_transaction_depth = depth
+    if depth > 0 or not hasattr(window, "tree") or window.tree is None:
+        return
+
+    tree = window.tree
+    header = tree.header()
+    vertical_scrollbar = tree.verticalScrollBar()
+    horizontal_scrollbar = tree.horizontalScrollBar()
+    external_vertical_scrollbar = getattr(window, "_tree_external_v_scrollbar", None)
+    state = getattr(window, "_tree_layout_transaction_state", {}) or {}
+    window._suspend_header_layout_updates = bool(state.get("previous_suspend", False))
+    if header is not None:
+        header.blockSignals(bool(state.get("previous_header_blocked", False)))
+        header.setUpdatesEnabled(bool(state.get("previous_header_updates", True)))
+    if vertical_scrollbar is not None:
+        vertical_scrollbar.blockSignals(bool(state.get("previous_v_scroll_blocked", False)))
+        vertical_scrollbar.setUpdatesEnabled(bool(state.get("previous_v_scroll_updates", True)))
+    if horizontal_scrollbar is not None:
+        horizontal_scrollbar.blockSignals(bool(state.get("previous_h_scroll_blocked", False)))
+        horizontal_scrollbar.setUpdatesEnabled(bool(state.get("previous_h_scroll_updates", True)))
+    if external_vertical_scrollbar is not None:
+        external_vertical_scrollbar.blockSignals(bool(state.get("previous_external_v_scroll_blocked", False)))
+        external_vertical_scrollbar.setUpdatesEnabled(bool(state.get("previous_external_v_scroll_updates", True)))
+    tree.setUpdatesEnabled(bool(state.get("previous_tree_updates", True)))
+    tree.viewport().update()
+    if header is not None:
+        header.viewport().update()
+    if vertical_scrollbar is not None:
+        vertical_scrollbar.update()
+    if horizontal_scrollbar is not None:
+        horizontal_scrollbar.update()
+    _sync_external_tree_scrollbar(window)
 
 
 def _refresh_tree_layout_after_sidebar_toggle(window) -> None:
     """Re-fit the tree after sidebar visibility changes alter the viewport width."""
     if not hasattr(window, "tree") or window.tree is None:
         return
-    if hasattr(window, "_apply_adaptive_target_column_width"):
-        window._apply_adaptive_target_column_width()
-    if hasattr(window, "_fill_trailing_blank_with_last_column"):
-        window._fill_trailing_blank_with_last_column()
+    if int(getattr(window, "_tree_layout_transaction_depth", 0)) > 0:
+        if hasattr(window, "_apply_adaptive_target_column_width"):
+            window._apply_adaptive_target_column_width()
+        if hasattr(window, "_fill_trailing_blank_with_last_column"):
+            window._fill_trailing_blank_with_last_column()
+        return
+    tree = window.tree
+    header = tree.header()
+    previous_suspend = bool(getattr(window, "_suspend_header_layout_updates", False))
+    previous_tree_updates = tree.updatesEnabled()
+    previous_header_updates = header.updatesEnabled() if header is not None else True
+    previous_header_blocked = header.signalsBlocked() if header is not None else False
+
+    window._suspend_header_layout_updates = True
+    tree.setUpdatesEnabled(False)
+    if header is not None:
+        header.setUpdatesEnabled(False)
+        header.blockSignals(True)
+
+    try:
+        if hasattr(window, "_apply_adaptive_target_column_width"):
+            window._apply_adaptive_target_column_width()
+        if hasattr(window, "_fill_trailing_blank_with_last_column"):
+            window._fill_trailing_blank_with_last_column()
+    finally:
+        window._suspend_header_layout_updates = previous_suspend
+        if header is not None:
+            header.blockSignals(previous_header_blocked)
+            header.setUpdatesEnabled(previous_header_updates)
+        tree.setUpdatesEnabled(previous_tree_updates)
+        tree.viewport().update()
+        if header is not None:
+            header.viewport().update()
 
 
 def toggle_left_sidebar(window) -> bool:

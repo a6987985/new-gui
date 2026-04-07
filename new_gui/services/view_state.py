@@ -139,6 +139,7 @@ def restore_tree_presentation_snapshot(
     hidden_paths = {tuple(path) for path in snapshot.get("hidden_paths", [])}
     expanded_paths = {tuple(path) for path in snapshot.get("expanded_paths", [])}
 
+    previous_updates_enabled = tree.updatesEnabled()
     tree.setUpdatesEnabled(False)
     try:
         def walk_rows(parent_item=None, parent_index=QModelIndex(), parent_path: RowPath = ()) -> None:
@@ -153,7 +154,7 @@ def restore_tree_presentation_snapshot(
                     tree.setExpanded(level_index, path in expanded_paths)
                     walk_rows(level_item, level_index, path)
     finally:
-        tree.setUpdatesEnabled(True)
+        tree.setUpdatesEnabled(previous_updates_enabled)
 
     tree.verticalScrollBar().setValue(snapshot.get("scroll", 0))
     return True
@@ -224,6 +225,7 @@ def filter_tree_by_text(
     }
     matched_rows = 0
 
+    previous_updates_enabled = tree.updatesEnabled()
     tree.setUpdatesEnabled(False)
     try:
         def check_visibility(
@@ -262,7 +264,7 @@ def filter_tree_by_text(
         for row in range(model.rowCount()):
             check_visibility(row)
     finally:
-        tree.setUpdatesEnabled(True)
+        tree.setUpdatesEnabled(previous_updates_enabled)
 
     return matched_rows
 
@@ -458,21 +460,27 @@ def filter_tree_by_targets(tree, model, targets_to_show: Set[str]) -> None:
 
         return should_show
 
+    previous_updates_enabled = tree.updatesEnabled()
     tree.setUpdatesEnabled(False)
-    for row in range(model.rowCount()):
-        check_visibility(row)
-    tree.setUpdatesEnabled(True)
+    try:
+        for row in range(model.rowCount()):
+            check_visibility(row)
+    finally:
+        tree.setUpdatesEnabled(previous_updates_enabled)
 
 
 def clear_trace_filter(tree, model) -> None:
     """Restore visibility for all rows after an in-place trace filter."""
+    previous_updates_enabled = tree.updatesEnabled()
     tree.setUpdatesEnabled(False)
-    for row in range(model.rowCount()):
-        tree.setRowHidden(row, QModelIndex(), False)
-        item = model.item(row)
-        if item:
-            show_all_children(tree, item)
-    tree.setUpdatesEnabled(True)
+    try:
+        for row in range(model.rowCount()):
+            tree.setRowHidden(row, QModelIndex(), False)
+            item = model.item(row)
+            if item:
+                show_all_children(tree, item)
+    finally:
+        tree.setUpdatesEnabled(previous_updates_enabled)
 
 
 def expand_all_rows(tree) -> None:
@@ -480,9 +488,12 @@ def expand_all_rows(tree) -> None:
     if tree is None:
         return
 
+    previous_updates_enabled = tree.updatesEnabled()
     tree.setUpdatesEnabled(False)
-    tree.expandAll()
-    tree.setUpdatesEnabled(True)
+    try:
+        tree.expandAll()
+    finally:
+        tree.setUpdatesEnabled(previous_updates_enabled)
 
 
 def collapse_all_rows(tree) -> None:
@@ -490,9 +501,12 @@ def collapse_all_rows(tree) -> None:
     if tree is None:
         return
 
+    previous_updates_enabled = tree.updatesEnabled()
     tree.setUpdatesEnabled(False)
-    tree.collapseAll()
-    tree.setUpdatesEnabled(True)
+    try:
+        tree.collapseAll()
+    finally:
+        tree.setUpdatesEnabled(previous_updates_enabled)
 
 
 def expand_all_except_groups(tree, model) -> None:
@@ -500,23 +514,26 @@ def expand_all_except_groups(tree, model) -> None:
     if tree is None or model is None:
         return
 
+    previous_updates_enabled = tree.updatesEnabled()
     tree.setUpdatesEnabled(False)
-    tree.expandAll()
+    try:
+        tree.expandAll()
 
-    def collapse_group_rows(parent_item=None) -> None:
-        row_count = parent_item.rowCount() if parent_item is not None else model.rowCount()
-        for row in range(row_count):
-            row_items = tree_rows.get_row_items(model, row, parent_item)
-            level_item = row_items[0] if row_items else None
-            target_item = row_items[1] if len(row_items) > 1 else None
-            if level_item is None:
-                continue
+        def collapse_group_rows(parent_item=None) -> None:
+            row_count = parent_item.rowCount() if parent_item is not None else model.rowCount()
+            for row in range(row_count):
+                row_items = tree_rows.get_row_items(model, row, parent_item)
+                level_item = row_items[0] if row_items else None
+                target_item = row_items[1] if len(row_items) > 1 else None
+                if level_item is None:
+                    continue
 
-            if tree_rows.get_row_kind(target_item) == tree_rows.ROW_KIND_GROUP:
-                tree.collapse(level_item.index())
+                if tree_rows.get_row_kind(target_item) == tree_rows.ROW_KIND_GROUP:
+                    tree.collapse(level_item.index())
 
-            if level_item.hasChildren():
-                collapse_group_rows(level_item)
+                if level_item.hasChildren():
+                    collapse_group_rows(level_item)
 
-    collapse_group_rows()
-    tree.setUpdatesEnabled(True)
+        collapse_group_rows()
+    finally:
+        tree.setUpdatesEnabled(previous_updates_enabled)

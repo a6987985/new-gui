@@ -75,6 +75,7 @@ class MainWindow(QMainWindow):
         self.level_expanded = {}
         self.combo_sel = None
         self.cached_targets_by_level = {}
+        self._cached_targets_run = ""
         self.cached_collapsible_target_groups = {}
         self._cached_collapsible_target_groups_run = ""
         self.is_tree_expanded = True
@@ -111,6 +112,11 @@ class MainWindow(QMainWindow):
         self._type_categories = []
         self._selected_stage_category_id = ""
         self._selected_type_category_id = ""
+        self._sidebar_filter_snapshot = None
+        self._tree_layout_transaction_depth = 0
+        self._layout_target_viewport_width = None
+        self._content_row_transition_overlay = None
+        self._content_row_transition_revision = 0
 
     def _init_ui_log_dispatcher(self) -> None:
         """Create the thread-safe log bridge used by the GUI session log."""
@@ -247,10 +253,12 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         self._position_top_action_buttons()
         self._apply_adaptive_target_column_width()
+        top_panel_builder._sync_external_tree_scrollbar(self)
 
     def showEvent(self, event):
         super().showEvent(event)
         QTimer.singleShot(0, self._apply_adaptive_target_column_width)
+        QTimer.singleShot(0, lambda: top_panel_builder._sync_external_tree_scrollbar(self))
         QTimer.singleShot(0, self._update_backup_timer_state)
 
     def hideEvent(self, event):
@@ -295,10 +303,134 @@ class MainWindow(QMainWindow):
         """Toggle workspace sidebar visibility from top-left icon button."""
         return top_panel_builder.toggle_left_sidebar(self)
 
+    def clear_left_sidebar_selection(self) -> None:
+        """Clear the active left-sidebar category selection state."""
+        self._selected_stage_category_id = ""
+        self._selected_type_category_id = ""
+        if hasattr(self, "left_sidebar"):
+            self.left_sidebar.clear_category_selection()
+
+    def show_full_target_view(self) -> bool:
+        """Restore the unfiltered Main View target tree for the active run."""
+        current_run = self.combo.currentText() if hasattr(self, "combo") else ""
+        if not current_run or current_run == "No runs found":
+            return False
+        if self.is_all_status_view:
+            self._activate_selected_run_view(current_run, invalidate_snapshot=True)
+            return True
+        self._clear_search_ui_state()
+        self._invalidate_main_view_snapshot()
+        self._set_main_run_tab_state()
+        if self._restore_sidebar_filter_snapshot(current_run):
+            self._update_column_visibility_control_state()
+            return True
+        cached_targets_by_level = dict(getattr(self, "cached_targets_by_level", {}) or {})
+        if (
+            getattr(self, "_cached_targets_run", "") != current_run
+            or not cached_targets_by_level
+            or not self._is_main_tree_schema_active()
+        ):
+            self.populate_data(force_rebuild=True)
+            self._apply_main_tree_column_visibility(self._main_tree_visible_columns, save_state=False)
+            self._update_column_visibility_control_state()
+            return True
+
+        header = self.tree.header() if hasattr(self, "tree") else None
+        self._suspend_header_layout_updates = True
+        previous_tree_updates = self.tree.updatesEnabled()
+        self.tree.setUpdatesEnabled(False)
+        previous_header_updates = header.updatesEnabled() if header is not None else True
+        if header is not None:
+            header.setUpdatesEnabled(False)
+        try:
+            self.model.removeRows(0, self.model.rowCount())
+            display_groups = self._build_display_level_groups(cached_targets_by_level, run_name=current_run)
+            self._append_target_groups_to_model(display_groups, run_name=current_run)
+            self.expand_tree_default()
+            self._update_column_visibility_control_state()
+        finally:
+            if header is not None:
+                header.setUpdatesEnabled(previous_header_updates)
+            self.tree.setUpdatesEnabled(previous_tree_updates)
+            self._suspend_header_layout_updates = False
+            if int(getattr(self, "_tree_layout_transaction_depth", 0)) <= 0:
+                self.tree.viewport().update()
+                if header is not None:
+                    header.viewport().update()
+        return True
+
+    def _can_apply_sidebar_filter_in_place(self) -> bool:
+        """Return whether sidebar category filtering can run without rebuilding the model."""
+        if not self.combo_sel or self.is_all_status_view or self.is_search_mode:
+            return False
+        if not self._is_main_tree_schema_active():
+            return False
+        tab_text = self.tab_label.text() if hasattr(self, "tab_label") else ""
+        return not tab_text.startswith("Status:") and not tab_text.startswith("Trace")
+
+    def _restore_sidebar_filter_snapshot(self, current_run: str = None, clear_snapshot: bool = True) -> bool:
+        """Restore the pre-sidebar-filter tree presentation snapshot if available."""
+        run_name = current_run or (self.combo.currentText() if hasattr(self, "combo") else "")
+        if not run_name or run_name == "No runs found":
+            return False
+        restored = view_state.restore_tree_presentation_snapshot(
+            self.model,
+            self.tree,
+            self._sidebar_filter_snapshot,
+            run_name,
+        )
+        if restored:
+            if clear_snapshot:
+                self._sidebar_filter_snapshot = None
+            if int(getattr(self, "_tree_layout_transaction_depth", 0)) <= 0:
+                self.tree.viewport().update()
+                header = self.tree.header() if hasattr(self, "tree") else None
+                if header is not None:
+                    header.viewport().update()
+        return restored
+
+    def _apply_sidebar_category_filter_in_place(self) -> bool:
+        """Apply the active sidebar category filter by hiding or restoring existing rows."""
+        if not self._can_apply_sidebar_filter_in_place():
+            return False
+
+        current_run = self.combo.currentText() if hasattr(self, "combo") else ""
+        if not current_run or current_run == "No runs found":
+            return False
+
+        active_targets = self.get_active_category_target_set()
+        if self._sidebar_filter_snapshot is None:
+            self._sidebar_filter_snapshot = view_state.capture_tree_presentation_snapshot(
+                self.model,
+                self.tree,
+                current_run,
+            )
+
+        if not self._restore_sidebar_filter_snapshot(current_run, clear_snapshot=False):
+            self._sidebar_filter_snapshot = view_state.capture_tree_presentation_snapshot(
+                self.model,
+                self.tree,
+                current_run,
+            )
+            if not self._restore_sidebar_filter_snapshot(current_run, clear_snapshot=False):
+                return False
+
+        if active_targets is None:
+            return self._restore_sidebar_filter_snapshot(current_run)
+
+        view_state.filter_tree_by_targets(self.tree, self.model, set(active_targets))
+        if int(getattr(self, "_tree_layout_transaction_depth", 0)) <= 0:
+            self.tree.viewport().update()
+            header = self.tree.header() if hasattr(self, "tree") else None
+            if header is not None:
+                header.viewport().update()
+        return True
+
     def refresh_left_sidebar_categories(self, run_dir: str = None) -> None:
         """Reload stage/type category rows from bb.tcl under the active run directory."""
         if not hasattr(self, "left_sidebar"):
             return
+        self._sidebar_filter_snapshot = None
         categories, file_path = target_categories.load_bb_tcl_categories(run_dir or "")
         self._stage_categories = list(categories or [])
         self._type_categories = []
@@ -317,6 +449,8 @@ class MainWindow(QMainWindow):
         self._category_scope = (scope or "stage").strip().lower()
         if not self.combo_sel or self.is_all_status_view:
             return
+        if self._apply_sidebar_category_filter_in_place():
+            return
         self.populate_data(force_rebuild=True)
 
     def on_left_sidebar_category_changed(self, scope: str, category_id: str) -> None:
@@ -329,6 +463,8 @@ class MainWindow(QMainWindow):
             self._selected_stage_category_id = normalized_id
 
         if not self.combo_sel or self.is_all_status_view:
+            return
+        if self._apply_sidebar_category_filter_in_place():
             return
         self.populate_data(force_rebuild=True)
 

@@ -129,6 +129,7 @@ class ViewWindowBridge:
 
     def set_cached_target_data(self, run_name, targets_by_level, collapsible_groups):
         self._window.cached_targets_by_level = targets_by_level
+        self._window._cached_targets_run = run_name
         self._window.cached_collapsible_target_groups = collapsible_groups
         self._window._cached_collapsible_target_groups_run = run_name
 

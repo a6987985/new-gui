@@ -89,6 +89,10 @@ def apply_theme(window, theme_name, announce: bool = True) -> None:
         window.tree._h_scrollbar.setColors(
             scrollbar_handle, scrollbar_handle_hover, scrollbar_handle_pressed, scrollbar_bg
         )
+    if hasattr(window, "_tree_external_v_scrollbar"):
+        window._tree_external_v_scrollbar.setColors(
+            scrollbar_handle, scrollbar_handle_hover, scrollbar_handle_pressed, scrollbar_bg
+        )
 
     window.setStyleSheet(
         f"""

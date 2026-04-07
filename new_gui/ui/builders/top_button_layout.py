@@ -210,7 +210,6 @@ def _build_visual_experiment_button(window) -> QPushButton:
     button.setIcon(build_panel_stack_icon(size=20))
     button.setIconSize(QSize(20, 20))
     button.setStyleSheet(_build_top_icon_toggle_style())
-    button.setToolTip("Toggle terminal panel")
     button.toggled.connect(lambda checked: window.toggle_terminal_output_panel())
     window._top_panel_terminal_toggle_button = button
     return button
@@ -226,7 +225,6 @@ def _build_left_sidebar_placeholder_button(window) -> QPushButton:
     button.setIcon(build_side_panel_icon(size=20))
     button.setIconSize(QSize(20, 20))
     button.setStyleSheet(_build_top_icon_toggle_style())
-    button.setToolTip("Toggle left sidebar")
     button.toggled.connect(lambda checked: window.set_left_sidebar_visible(checked))
     window._top_panel_left_placeholder_toggle_button = button
     return button

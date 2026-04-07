@@ -154,6 +154,20 @@ class WorkspaceSidebar(QWidget):
                 return list(targets) if isinstance(targets, (list, tuple, set)) else []
         return []
 
+    def clear_category_selection(self) -> None:
+        """Clear persisted category selection for both scopes."""
+        self._selected_stage_category_id = ""
+        self._selected_type_category_id = ""
+        for button in self._category_buttons:
+            button.blockSignals(True)
+            button.setChecked(False)
+            button.blockSignals(False)
+        if self._button_group is not None:
+            self._button_group.setExclusive(False)
+            for button in self._button_group.buttons():
+                button.setChecked(False)
+            self._button_group.setExclusive(True)
+
     def _current_categories(self):
         if self._active_scope == "type":
             return self._type_categories

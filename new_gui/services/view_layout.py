@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Optional
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QFontMetrics
@@ -67,6 +67,13 @@ def get_visible_columns(tree, model) -> List[int]:
     return [column for column in range(model.columnCount()) if not tree.isColumnHidden(column)]
 
 
+def resolve_viewport_width(tree, viewport_width: Optional[int] = None) -> int:
+    """Return one effective viewport width, honoring any precomputed override."""
+    if viewport_width is not None:
+        return max(0, int(viewport_width))
+    return max(0, tree.viewport().width())
+
+
 def apply_all_status_column_widths(tree, model, header_min_widths: Dict[int, int]) -> None:
     """Apply adaptive widths for the four-column all-status table schema."""
     if model.columnCount() < 4:
@@ -89,12 +96,18 @@ def apply_all_status_column_widths(tree, model, header_min_widths: Dict[int, int
             tree.setColumnWidth(column, max(tree.columnWidth(column), min_width))
 
 
-def apply_adaptive_column_width(tree, model, header_min_widths: Dict[int, int], column: int = 1) -> None:
+def apply_adaptive_column_width(
+    tree,
+    model,
+    header_min_widths: Dict[int, int],
+    column: int = 1,
+    viewport_width: Optional[int] = None,
+) -> None:
     """Stretch one target column to absorb viewport width changes."""
     if model.columnCount() <= column or tree.isColumnHidden(column):
         return
 
-    viewport_width = tree.viewport().width()
+    viewport_width = resolve_viewport_width(tree, viewport_width)
     if viewport_width <= 0:
         return
 
@@ -111,13 +124,18 @@ def apply_adaptive_column_width(tree, model, header_min_widths: Dict[int, int], 
         tree.setColumnWidth(column, new_target_width)
 
 
-def fill_trailing_blank_with_last_column(tree, model, header_min_widths: Dict[int, int]) -> None:
+def fill_trailing_blank_with_last_column(
+    tree,
+    model,
+    header_min_widths: Dict[int, int],
+    viewport_width: Optional[int] = None,
+) -> None:
     """Expand the right-most visible column to remove trailing blank space."""
     visible_columns = get_visible_columns(tree, model)
     if not visible_columns:
         return
 
-    viewport_width = tree.viewport().width()
+    viewport_width = resolve_viewport_width(tree, viewport_width)
     if viewport_width <= 0:
         return
 

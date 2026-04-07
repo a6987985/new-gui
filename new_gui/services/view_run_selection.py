@@ -37,11 +37,15 @@ def current_working_run_name() -> str:
 
 def ensure_cached_targets(window, run_name: str) -> None:
     """Populate cached target metadata for one run if absent."""
-    if getattr(window, "cached_targets_by_level", None):
+    if (
+        getattr(window, "cached_targets_by_level", None)
+        and getattr(window, "_cached_targets_run", "") == run_name
+    ):
         return
     if not run_name or run_name == "No runs found":
         return
     window.cached_targets_by_level = window.parse_dependency_file(run_name)
+    window._cached_targets_run = run_name
     window.cached_collapsible_target_groups = window.parse_collapsible_target_groups(run_name)
     window._cached_collapsible_target_groups_run = run_name
 
