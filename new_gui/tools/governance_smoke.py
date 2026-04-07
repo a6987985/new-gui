@@ -567,6 +567,14 @@ def smoke_main_window(app: QApplication) -> None:
         window._bottom_output_panel.current_tab_name() == "Log",
         "Warning notification did not bring the Log tab to the front.",
     )
+    window.update_status_bar()
+    _process_events(app)
+    first_badge = window._status_bar._status_breakdown_layout.itemAt(0).widget()
+    _require(first_badge is not None, "Status bar did not render any runtime status badges.")
+    _require(
+        getattr(first_badge, "_icon_label", None) is not None and first_badge._icon_label.pixmap() is not None,
+        "Status bar badge did not render the mapped status icon.",
+    )
 
     action_controller.log_action_result(
         window,
@@ -660,6 +668,10 @@ def smoke_dependency_graph_dialog(app: QApplication) -> None:
     _process_events(app)
 
     _require(bool(dialog.scene.items()), "Dependency graph dialog did not render any scene items.")
+    _require(
+        {"root_target", "mid_target", "leaf_target"} <= set(dialog.node_icons.keys()),
+        "Dependency graph nodes did not render the mapped status icons.",
+    )
 
     dialog.select_node("mid_target")
     dialog.highlight_downstream()

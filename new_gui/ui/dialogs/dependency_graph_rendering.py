@@ -8,12 +8,14 @@ from PyQt5.QtCore import QPointF, Qt, QTimer
 from PyQt5.QtGui import QBrush, QColor, QFont, QFontMetrics, QPen, QPolygonF
 from PyQt5.QtWidgets import (
     QGraphicsLineItem,
+    QGraphicsPixmapItem,
     QGraphicsPolygonItem,
     QGraphicsRectItem,
     QGraphicsTextItem,
 )
 
 from new_gui.config.settings import STATUS_CONFIG
+from new_gui.ui import icon_factory
 
 
 class DependencyGraphRenderingMixin:
@@ -290,17 +292,21 @@ class DependencyGraphRenderingMixin:
         self.node_rects[name] = rect_item
 
         config = STATUS_CONFIG.get(status_key, {})
-        icon = config.get("icon", "")
+        icon_name = config.get("icon_name", "")
         icon_reserved_width = 0
-        if icon:
-            icon_item = QGraphicsTextItem(icon)
-            icon_item.setFont(QFont("Arial", 10, QFont.Bold))
-            icon_item.setDefaultTextColor(QColor(config.get("text_color", "#333333")))
-            icon_item.setPos(x_pos - width / 2 + 5, y_pos - icon_item.boundingRect().height() / 2)
-            icon_item.setTransformOriginPoint(icon_item.boundingRect().center())
-            self.scene.addItem(icon_item)
-            icon_reserved_width = 18
-            self.node_icons[name] = icon_item
+        if icon_name:
+            icon_pixmap = icon_factory.build_status_icon_pixmap(
+                icon_name,
+                config.get("text_color", "#333333"),
+                size=13,
+            )
+            if not icon_pixmap.isNull():
+                icon_item = QGraphicsPixmapItem(icon_pixmap)
+                icon_item.setPos(x_pos - width / 2 + 5, y_pos - icon_pixmap.height() / 2)
+                icon_item.setTransformOriginPoint(icon_item.boundingRect().center())
+                self.scene.addItem(icon_item)
+                icon_reserved_width = icon_pixmap.width() + 5
+                self.node_icons[name] = icon_item
 
         available_text_width = max(40, width - 16 - icon_reserved_width)
         display_text = QFontMetrics(self._node_font).elidedText(

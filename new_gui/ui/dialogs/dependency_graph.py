@@ -3,6 +3,7 @@ from PyQt5.QtGui import QFont, QKeySequence, QPainter
 from PyQt5.QtWidgets import (
     QComboBox,
     QDialog,
+    QFrame,
     QGraphicsScene,
     QGraphicsView,
     QHBoxLayout,
@@ -15,6 +16,7 @@ from PyQt5.QtWidgets import (
 )
 
 from new_gui.config.settings import STATUS_CONFIG
+from new_gui.ui import icon_factory
 from new_gui.ui.dialogs.dependency_graph_export import DependencyGraphExportMixin
 from new_gui.ui.dialogs.dependency_graph_rendering import DependencyGraphRenderingMixin
 from new_gui.ui.dialogs.dependency_graph_state import DependencyGraphStateMixin
@@ -260,14 +262,24 @@ class DependencyGraphDialog(
 
         for status_key in self._iter_legend_status_keys():
             config = STATUS_CONFIG.get(status_key, {})
-            icon = config.get("icon", "")
+            icon_name = config.get("icon_name", "")
             text_color = config.get("text_color", "#333333")
             label_text = self._status_label(status_key)
-            icon_prefix = f"{icon} " if icon else ""
-            legend_item = QLabel(f" {icon_prefix}{label_text} ")
+            legend_item = QFrame()
             legend_item.setStyleSheet(
                 build_dependency_graph_legend_item_style(self._status_color(status_key), text_color)
             )
+            legend_item_layout = QHBoxLayout(legend_item)
+            legend_item_layout.setContentsMargins(6, 2, 6, 2)
+            legend_item_layout.setSpacing(4)
+
+            if icon_name:
+                icon_label = QLabel()
+                icon_label.setPixmap(icon_factory.build_status_icon_pixmap(icon_name, text_color, size=12))
+                legend_item_layout.addWidget(icon_label)
+
+            text_label = QLabel(label_text)
+            legend_item_layout.addWidget(text_label)
             legend_layout.addWidget(legend_item)
 
         legend_layout.addStretch()

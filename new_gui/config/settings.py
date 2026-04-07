@@ -21,13 +21,13 @@ RE_PARAM_LINE = re.compile(r'^\s*(\w+)\s*=\s*(.+?)\s*$')
 
 # ========== Status Configuration Constant ==========
 STATUS_CONFIG = {
-    "finish": {"color": "#98FB98", "icon": "✓", "animation": None, "text_color": "#1a5f1a"},
-    "skip": {"color": "#FFDAB9", "icon": "○", "animation": None, "text_color": "#8b6914"},
-    "running": {"color": "#FFFF00", "icon": "▶", "animation": "pulse", "text_color": "#333333"},
-    "failed": {"color": "#FF9999", "icon": "✗", "animation": "shake", "text_color": "#8b0000"},
-    "scheduled": {"color": "#4A90D9", "icon": "◷", "animation": None, "text_color": "#ffffff"},
-    "pending": {"color": "#FFA500", "icon": "◇", "animation": None, "text_color": "#333333"},
-    "": {"color": "#88D0EC", "icon": "", "animation": None, "text_color": "#1a4f6f"}
+    "finish": {"color": "#98FB98", "icon_name": "circle-check", "animation": None, "text_color": "#1a5f1a"},
+    "skip": {"color": "#FFDAB9", "icon_name": "circle-minus", "animation": None, "text_color": "#8b6914"},
+    "running": {"color": "#FFFF00", "icon_name": "circle-play", "animation": "pulse", "text_color": "#333333"},
+    "failed": {"color": "#FF9999", "icon_name": "circle-x", "animation": "shake", "text_color": "#8b0000"},
+    "scheduled": {"color": "#4A90D9", "icon_name": "clock-3", "animation": None, "text_color": "#ffffff"},
+    "pending": {"color": "#FFA500", "icon_name": "circle-dashed", "animation": None, "text_color": "#333333"},
+    "": {"color": "#88D0EC", "icon_name": "", "animation": None, "text_color": "#1a4f6f"}
 }
 
 STATUS_COLORS = {k: v["color"] for k, v in STATUS_CONFIG.items()}

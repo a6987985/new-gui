@@ -1,5 +1,7 @@
 from PyQt5.QtCore import QPoint, Qt, pyqtSignal
-from PyQt5.QtWidgets import QApplication, QLabel
+from PyQt5.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel
+
+from new_gui.ui import icon_factory
 
 
 class _HoverTooltipPopup(QLabel):
@@ -122,16 +124,44 @@ class ClickableLabel(QLabel):
         super().mouseDoubleClickEvent(event)
 
 
-class StatusBadgeLabel(QLabel):
-    """Small status badge that emits the status key on double click."""
+class StatusBadgeLabel(QFrame):
+    """Small status badge with icon and count that emits the status key on double click."""
 
     statusDoubleClicked = pyqtSignal(str)
 
-    def __init__(self, status_key, text, parent=None):
-        super().__init__(text, parent)
+    def __init__(self, status_key, text, icon_name: str = "", icon_color: str = "#223041", parent=None):
+        super().__init__(parent)
         self._status_key = status_key
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip("Double-click to filter targets by this status")
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(6, 0, 6, 0)
+        layout.setSpacing(4)
+
+        self._icon_label = QLabel(self)
+        self._icon_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self._icon_label, 0, Qt.AlignCenter)
+
+        self._text_label = QLabel(str(text), self)
+        self._text_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self._text_label, 0, Qt.AlignCenter)
+
+        self.set_icon(icon_name, icon_color)
+
+    def set_icon(self, icon_name: str, icon_color: str = "#223041") -> None:
+        """Set or clear the badge icon using one rendered SVG pixmap."""
+        pixmap = icon_factory.build_status_icon_pixmap(icon_name, icon_color, size=12)
+        if pixmap.isNull():
+            self._icon_label.clear()
+            self._icon_label.hide()
+            return
+        self._icon_label.setPixmap(pixmap)
+        self._icon_label.show()
+
+    def setText(self, text: str) -> None:
+        """Update the text payload while preserving the icon layout."""
+        self._text_label.setText(str(text))
 
     def mouseDoubleClickEvent(self, event):
         self.statusDoubleClicked.emit(self._status_key)

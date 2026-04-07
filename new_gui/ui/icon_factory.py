@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QByteArray, Qt
-from PyQt5.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+from PyQt5.QtCore import QByteArray, QPointF, Qt
+from PyQt5.QtGui import QColor, QIcon, QPainter, QPen, QPixmap, QPolygonF
 
 try:
     from PyQt5.QtSvg import QSvgRenderer
@@ -42,6 +42,44 @@ _SEARCH_SVG_TEMPLATE = """
   <path d="M14.2 14.2L18.6 18.6" stroke="{color}" stroke-width="1.8" stroke-linecap="round"/>
 </svg>
 """
+
+_STATUS_ICON_SVG_TEMPLATES = {
+    "circle-check": """
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="12" cy="12" r="8.5" stroke="{color}" stroke-width="1.8"/>
+  <path d="M8.9 12.1L11.2 14.4L15.5 10.1" stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
+""",
+    "circle-play": """
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="12" cy="12" r="8.5" stroke="{color}" stroke-width="1.8"/>
+  <path d="M10.1 9.4L14.6 12L10.1 14.6V9.4Z" stroke="{color}" stroke-width="1.8" stroke-linejoin="round"/>
+</svg>
+""",
+    "circle-x": """
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="12" cy="12" r="8.5" stroke="{color}" stroke-width="1.8"/>
+  <path d="M9.4 9.4L14.6 14.6M14.6 9.4L9.4 14.6" stroke="{color}" stroke-width="1.8" stroke-linecap="round"/>
+</svg>
+""",
+    "circle-minus": """
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="12" cy="12" r="8.5" stroke="{color}" stroke-width="1.8"/>
+  <path d="M8.7 12H15.3" stroke="{color}" stroke-width="1.8" stroke-linecap="round"/>
+</svg>
+""",
+    "clock-3": """
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="12" cy="12" r="8.5" stroke="{color}" stroke-width="1.8"/>
+  <path d="M12 8.2V12H15.4" stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
+""",
+    "circle-dashed": """
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="12" cy="12" r="8.5" stroke="{color}" stroke-width="1.8" stroke-dasharray="2.2 3"/>
+</svg>
+""",
+}
 
 
 def build_terminal_follow_run_icon(size: int = 16) -> QIcon:
@@ -89,6 +127,25 @@ def build_search_icon(size: int = 14) -> QIcon:
     icon.addPixmap(_render_search_icon_pixmap("#374151", size), QIcon.Active, QIcon.Off)
     icon.addPixmap(_render_search_icon_pixmap("#1F2937", size), QIcon.Selected, QIcon.Off)
     return icon
+
+
+def build_status_icon_pixmap(icon_name: str, color: str, size: int = 14) -> QPixmap:
+    """Return one Lucide-style status icon pixmap for badges and graph views."""
+    normalized_icon_name = (icon_name or "").strip().lower()
+    if not normalized_icon_name:
+        return QPixmap()
+
+    if QSvgRenderer is not None and normalized_icon_name in _STATUS_ICON_SVG_TEMPLATES:
+        svg = _STATUS_ICON_SVG_TEMPLATES[normalized_icon_name].format(color=color).encode("utf-8")
+        renderer = QSvgRenderer(QByteArray(svg))
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        renderer.render(painter)
+        painter.end()
+        return pixmap
+
+    return _render_status_icon_pixmap_fallback(normalized_icon_name, color, size)
 
 
 def _render_link_icon_pixmap(color: str, size: int) -> QPixmap:
@@ -223,5 +280,50 @@ def _render_search_icon_pixmap(color: str, size: int) -> QPixmap:
         int(size * 0.85),
         int(size * 0.85),
     )
+    painter.end()
+    return pixmap
+
+
+def _render_status_icon_pixmap_fallback(icon_name: str, color: str, size: int) -> QPixmap:
+    """Draw one lightweight fallback when QtSvg is unavailable."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(QColor(color), 1.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(Qt.NoBrush)
+
+    margin = max(1, int(size * 0.14))
+    diameter = max(1, size - margin * 2)
+    if icon_name != "clock-3":
+        if icon_name == "circle-dashed":
+            pen.setStyle(Qt.DashLine)
+            painter.setPen(pen)
+        painter.drawEllipse(margin, margin, diameter, diameter)
+        pen.setStyle(Qt.SolidLine)
+        painter.setPen(pen)
+    else:
+        painter.drawEllipse(margin, margin, diameter, diameter)
+
+    if icon_name == "circle-check":
+        painter.drawLine(int(size * 0.36), int(size * 0.53), int(size * 0.48), int(size * 0.66))
+        painter.drawLine(int(size * 0.48), int(size * 0.66), int(size * 0.7), int(size * 0.42))
+    elif icon_name == "circle-play":
+        points = [
+            (int(size * 0.43), int(size * 0.36)),
+            (int(size * 0.68), int(size * 0.5)),
+            (int(size * 0.43), int(size * 0.64)),
+        ]
+        painter.drawPolygon(QPolygonF([QPointF(x_pos, y_pos) for x_pos, y_pos in points]))
+    elif icon_name == "circle-x":
+        painter.drawLine(int(size * 0.39), int(size * 0.39), int(size * 0.61), int(size * 0.61))
+        painter.drawLine(int(size * 0.61), int(size * 0.39), int(size * 0.39), int(size * 0.61))
+    elif icon_name == "circle-minus":
+        painter.drawLine(int(size * 0.34), int(size * 0.5), int(size * 0.66), int(size * 0.5))
+    elif icon_name == "clock-3":
+        painter.drawLine(int(size * 0.5), int(size * 0.5), int(size * 0.5), int(size * 0.32))
+        painter.drawLine(int(size * 0.5), int(size * 0.5), int(size * 0.66), int(size * 0.5))
+
     painter.end()
     return pixmap

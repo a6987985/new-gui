@@ -37,7 +37,13 @@ def build_status_separator_style() -> str:
 
 def build_status_badge_style(background_color: str, text_color: str) -> str:
     """Return the badge style for one status count pill."""
-    return (
-        f"QLabel {{ background-color: {background_color}; color: {text_color}; "
-        "border-radius: 4px; padding: 0px 6px; }"
-    )
+    return f"""
+        QFrame {{
+            background-color: {background_color};
+            border-radius: 4px;
+        }}
+        QLabel {{
+            background: transparent;
+            color: {text_color};
+        }}
+    """

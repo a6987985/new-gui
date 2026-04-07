@@ -89,7 +89,14 @@ def build_dependency_graph_meta_label_style() -> str:
 
 def build_dependency_graph_legend_item_style(background_color: str, text_color: str) -> str:
     """Return the legend badge style for one dependency graph status entry."""
-    return (
-        f"background-color: {background_color}; "
-        f"color: {text_color}; border: 1px solid #999; border-radius: 3px; padding: 2px 6px;"
-    )
+    return f"""
+        QFrame {{
+            background-color: {background_color};
+            border: 1px solid #999;
+            border-radius: 3px;
+        }}
+        QLabel {{
+            background: transparent;
+            color: {text_color};
+        }}
+    """

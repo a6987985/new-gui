@@ -204,7 +204,6 @@ class WorkspaceSidebar(QWidget):
             button.setChecked(category_id == selected_id)
             button.setCursor(Qt.PointingHandCursor)
             button.setFixedHeight(28)
-            button.setToolTip(label)
             button.setProperty("category_id", category_id)
             self._category_container_layout.addWidget(button)
             self._category_buttons.append(button)
