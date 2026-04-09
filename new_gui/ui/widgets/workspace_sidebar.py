@@ -83,7 +83,7 @@ class WorkspaceSidebar(QWidget):
         layout.setSpacing(6)
         self._category_container_layout = layout
 
-        self._empty_label = QLabel("No category data found in bb.tcl", content)
+        self._empty_label = QLabel("No category data found in target_stage.list", content)
         self._empty_label.setObjectName("sidebarEmptyLabel")
         self._empty_label.setWordWrap(True)
         self._empty_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -114,7 +114,7 @@ class WorkspaceSidebar(QWidget):
         self.scope_changed.emit(self._active_scope)
 
     def set_stage_categories(self, categories) -> None:
-        """Replace STAGE rows with category labels loaded from bb.tcl."""
+        """Replace STAGE rows with category labels loaded from target_stage.list."""
         self._stage_categories = list(categories or [])
         stage_ids = {str(category.get("id") or "") for category in self._stage_categories}
         if self._selected_stage_category_id not in stage_ids:
@@ -194,7 +194,11 @@ class WorkspaceSidebar(QWidget):
                 widget.deleteLater()
 
         if not categories:
-            empty_text = "No TYPE categories yet" if self._active_scope == "type" else "No STAGE data found in bb.tcl"
+            empty_text = (
+                "No TYPE categories yet"
+                if self._active_scope == "type"
+                else "No STAGE data found in target_stage.list"
+            )
             self._empty_label = QLabel(empty_text, self)
             self._empty_label.setObjectName("sidebarEmptyLabel")
             self._empty_label.setWordWrap(True)

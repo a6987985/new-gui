@@ -261,7 +261,7 @@ def set_left_sidebar_visible(window, visible: bool) -> None:
         _activate_layout_after_sidebar_toggle(window)
 
         if not is_visible and hasattr(window, "show_full_target_view"):
-            window.show_full_target_view()
+            window.show_full_target_view(force_rebuild=True)
 
         _refresh_tree_layout_after_sidebar_toggle(window)
     finally:

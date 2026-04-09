@@ -20,7 +20,7 @@ from PyQt5.QtCore import QPoint, Qt
 from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication, QPushButton
 
-from new_gui.reproduce_ui import MainWindow
+from new_gui.main import MainWindow
 from new_gui.services import action_flow
 from new_gui.services import tree_rows
 from new_gui.ui.controllers import action_controller
@@ -563,6 +563,10 @@ def smoke_left_sidebar_hide_restores_full_targets(window: MainWindow, app: QAppl
         _require(
             window.left_sidebar.selected_category_id("stage") == "",
             "Hiding the sidebar did not clear the active stage category.",
+        )
+        _require(
+            getattr(window, "_sidebar_filter_snapshot", None) is None,
+            "Hiding the sidebar did not discard the stale sidebar snapshot.",
         )
         _require(window.header.get_filter_text() == "", "Hiding the sidebar did not clear the search filter.")
         _require(

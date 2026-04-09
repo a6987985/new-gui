@@ -53,6 +53,7 @@ class MainWindow(QMainWindow):
 
         # Detect run base directory
         self._detect_run_base_dir()
+        self._ensure_shared_target_stage_file()
 
         # Call parent constructor
         super().__init__()
@@ -243,6 +244,23 @@ class MainWindow(QMainWindow):
         else:
             self.run_base_dir = "."
 
+    def _ensure_shared_target_stage_file(self) -> None:
+        """Prepare the shared target-stage file under ../../XMeta/util/GUI."""
+        target_file, created_gui_dir, copied_target_file, error_message = (
+            target_categories.ensure_shared_target_stage_file()
+        )
+        if error_message:
+            logger.warning(f"Failed to prepare shared target-stage file: {error_message} ({target_file})")
+            return
+        if created_gui_dir:
+            logger.info(f"Created shared GUI directory for target stages: {os.path.dirname(target_file)}")
+        if copied_target_file:
+            logger.info(f"Copied shared target-stage file to: {target_file}")
+        elif os.path.isfile(target_file):
+            logger.info(f"Using shared target-stage file: {target_file}")
+        else:
+            logger.warning(f"Shared target-stage file not found: {target_file}")
+
     def _init_window(self):
         """Initialize window properties and animation."""
         window_builder.init_window(self)
@@ -308,7 +326,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "left_sidebar"):
             self.left_sidebar.clear_category_selection()
 
-    def show_full_target_view(self) -> bool:
+    def show_full_target_view(self, force_rebuild: bool = False) -> bool:
         """Restore the unfiltered Main View target tree for the active run."""
         current_run = self.combo.currentText() if hasattr(self, "combo") else ""
         if not current_run or current_run == "No runs found":
@@ -319,7 +337,9 @@ class MainWindow(QMainWindow):
         self._clear_search_ui_state()
         self._invalidate_main_view_snapshot()
         self._set_main_run_tab_state()
-        if self._restore_sidebar_filter_snapshot(current_run):
+        if force_rebuild:
+            self._sidebar_filter_snapshot = None
+        elif self._restore_sidebar_filter_snapshot(current_run):
             self._update_column_visibility_control_state()
             return True
         cached_targets_by_level = dict(getattr(self, "cached_targets_by_level", {}) or {})
@@ -425,11 +445,12 @@ class MainWindow(QMainWindow):
         return True
 
     def refresh_left_sidebar_categories(self, run_dir: str = None) -> None:
-        """Reload stage/type category rows from bb.tcl under the active run directory."""
+        """Reload stage/type category rows from the shared target-stage file."""
         if not hasattr(self, "left_sidebar"):
             return
         self._sidebar_filter_snapshot = None
-        categories, file_path = target_categories.load_bb_tcl_categories(run_dir or "")
+        del run_dir
+        categories, file_path = target_categories.load_target_stage_categories()
         self._stage_categories = list(categories or [])
         self._type_categories = []
         self.left_sidebar.set_stage_categories(self._stage_categories)
