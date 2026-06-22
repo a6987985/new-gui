@@ -37,8 +37,14 @@ IGNORED_DIR_NAMES = {
     ".claude",
     ".codex",
     ".superpowers",
+    "bundle_parts",
 }
-IGNORED_FILE_NAMES = {".DS_Store"}
+IGNORED_FILE_NAMES = {
+    ".DS_Store",
+    "bundle.txt",
+    "bundle_test.txt",
+    "root_bundle.txt",
+}
 IGNORED_SUFFIXES = {
     ".pyc",
     ".pyo",
@@ -138,11 +144,14 @@ def collect_scope_texts(
         collected[relpath] = read_text_file(scope_path)
         return collected
 
+    excluded_prefixes = tuple(f"{p}/" for p in excluded_relpaths if p)
     for path in sorted(scope_path.rglob("*")):
         if not path.is_file() or not should_include_file(path):
             continue
         relpath = path.relative_to(repo_root).as_posix()
         if relpath in excluded_relpaths:
+            continue
+        if any(relpath.startswith(prefix) for prefix in excluded_prefixes):
             continue
         collected[relpath] = read_text_file(path)
 
@@ -166,10 +175,16 @@ def load_snapshot_texts(snapshot_root: Path) -> TextMap:
 
 
 def exclude_relpaths(texts: TextMap, excluded_relpaths: set[str] | None) -> TextMap:
-    """Return a copy of the text map without excluded relative paths."""
+    """Return a copy without excluded relative paths or directory prefixes."""
     if not excluded_relpaths:
         return dict(texts)
-    return {path: text for path, text in texts.items() if path not in excluded_relpaths}
+    prefixes = tuple(f"{p}/" for p in excluded_relpaths if p)
+    return {
+        path: text
+        for path, text in texts.items()
+        if path not in excluded_relpaths
+        and not any(path.startswith(prefix) for prefix in prefixes)
+    }
 
 
 def reset_snapshot(snapshot_root: Path, texts: TextMap) -> None:
@@ -293,8 +308,13 @@ def encode_bundle(bundle: Dict[str, object]) -> Dict[str, str]:
     }
 
 
-def chunk_payload(bundle: Dict[str, object], encoded_payload: str, compressed_sha256: str, chunk_size: int) -> str:
-    """Render chunked text blocks for manual transfer."""
+def chunk_payload_parts(
+    bundle: Dict[str, object],
+    encoded_payload: str,
+    compressed_sha256: str,
+    chunk_size: int,
+) -> List[str]:
+    """Render each PART block as its own string for split-file output."""
     parts = [encoded_payload[i:i + chunk_size] for i in range(0, len(encoded_payload), chunk_size)]
     rendered_parts: List[str] = []
 
@@ -317,7 +337,97 @@ def chunk_payload(bundle: Dict[str, object], encoded_payload: str, compressed_sh
             )
         )
 
+    return rendered_parts
+
+
+def chunk_payload(bundle: Dict[str, object], encoded_payload: str, compressed_sha256: str, chunk_size: int) -> str:
+    """Render chunked text blocks for manual transfer (single-string form)."""
+    rendered_parts = chunk_payload_parts(bundle, encoded_payload, compressed_sha256, chunk_size)
     return "\n\n".join(rendered_parts) + "\n"
+
+
+def group_parts_by_size(rendered_parts: List[str], max_chars: int) -> List[List[int]]:
+    """Group sequential PART indices so each group's joined text fits max_chars.
+
+    Each group is a list of 1-based part indices. A single PART is always kept
+    intact even if it exceeds max_chars (the user can shrink --chunk-size to
+    force smaller PARTs).
+    """
+    groups: List[List[int]] = []
+    current: List[int] = []
+    current_size = 0
+    separator_size = 2  # "\n\n" between parts
+
+    for index, block in enumerate(rendered_parts, start=1):
+        block_size = len(block)
+        projected = current_size + (separator_size if current else 0) + block_size
+        if current and projected > max_chars:
+            groups.append(current)
+            current = [index]
+            current_size = block_size
+        else:
+            current.append(index)
+            current_size = projected
+    if current:
+        groups.append(current)
+    return groups
+
+
+def write_split_files(
+    output_dir: Path,
+    bundle: Dict[str, object],
+    rendered_parts: List[str],
+    max_chars: int,
+) -> Tuple[List[Path], List[List[int]]]:
+    """Write rendered PARTs into multiple files under output_dir.
+
+    Returns (file_paths, groups) where groups[i] is the list of 1-based PART
+    indices written into file_paths[i].
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    # Clear any previous .txt files in the output directory to avoid stale parts
+    for stale in sorted(output_dir.glob("*.txt")):
+        try:
+            stale.unlink()
+        except OSError:
+            pass
+
+    groups = group_parts_by_size(rendered_parts, max_chars)
+    total_files = len(groups)
+    width = max(3, len(str(total_files)))
+    bundle_short = str(bundle["bundle_id"]).split("-", 1)[0]
+    file_paths: List[Path] = []
+
+    for file_index, part_indices in enumerate(groups, start=1):
+        body = "\n\n".join(rendered_parts[i - 1] for i in part_indices) + "\n"
+        name = f"{file_index:0{width}d}_of_{total_files}_{bundle_short}.txt"
+        path = output_dir / name
+        write_text_file(path, body)
+        file_paths.append(path)
+
+    info_lines = [
+        f"bundle_id: {bundle['bundle_id']}",
+        f"mode: {bundle['mode']}",
+        f"target_path: {bundle['target_path']}",
+        f"total_parts: {len(rendered_parts)}",
+        f"total_files: {total_files}",
+        f"max_chars_per_file: {max_chars}",
+        "",
+        "Paste files in order to your network terminal, e.g.:",
+        f"  for f in {output_dir.name}/*.txt; do cat \"$f\"; done | python tools/import_patch_bundle.py",
+        "",
+        "File -> contained PART range:",
+    ]
+    for path, part_indices in zip(file_paths, groups):
+        if len(part_indices) == 1:
+            rng = f"part {part_indices[0]}"
+        else:
+            rng = f"parts {part_indices[0]}..{part_indices[-1]}"
+        info_lines.append(f"  {path.name}: {rng}")
+    info_path = output_dir / "_info.txt"
+    write_text_file(info_path, "\n".join(info_lines) + "\n")
+
+    return file_paths, groups
 
 
 def parse_args() -> argparse.Namespace:
@@ -327,6 +437,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE, help="Chunk size in characters")
     parser.add_argument("--full", action="store_true", help="Force a full bundle instead of a patch bundle")
     parser.add_argument("--output", help="Write chunked bundle text to a file instead of stdout")
+    parser.add_argument(
+        "--split-to-files",
+        action="store_true",
+        help="Write multiple .txt files into --output (treated as a directory) so each file fits a paste limit",
+    )
+    parser.add_argument(
+        "--max-chars-per-file",
+        type=int,
+        default=80000,
+        help="Max characters per output file when --split-to-files is set (default: 80000)",
+    )
     return parser.parse_args()
 
 
@@ -360,14 +481,41 @@ def main() -> int:
 
     bundle = build_bundle(target_relpath, target_texts, baseline_texts, args.full)
     encoded = encode_bundle(bundle)
-    chunk_text = chunk_payload(bundle, encoded["encoded_payload"], encoded["compressed_sha256"], args.chunk_size)
 
-    output_path = Path(args.output).resolve() if args.output else None
-    if output_path is not None:
-        write_text_file(output_path, chunk_text)
-        print(f"Wrote chunked bundle to {output_path}")
+    if args.split_to_files:
+        if not args.output:
+            raise SystemExit("--split-to-files requires --output (a directory path)")
+        if args.max_chars_per_file <= 0:
+            raise SystemExit("--max-chars-per-file must be a positive integer")
+        output_dir = Path(args.output).expanduser()
+        if not output_dir.is_absolute():
+            output_dir = (Path.cwd() / output_dir).resolve()
+        rendered_parts = chunk_payload_parts(
+            bundle,
+            encoded["encoded_payload"],
+            encoded["compressed_sha256"],
+            args.chunk_size,
+        )
+        file_paths, _groups = write_split_files(
+            output_dir, bundle, rendered_parts, args.max_chars_per_file
+        )
+        print(
+            f"Wrote {len(file_paths)} file(s) covering {len(rendered_parts)} PART(s) to {output_dir}"
+        )
+        print(f"See {output_dir / '_info.txt'} for paste order.")
     else:
-        sys.stdout.write(chunk_text)
+        chunk_text = chunk_payload(
+            bundle,
+            encoded["encoded_payload"],
+            encoded["compressed_sha256"],
+            args.chunk_size,
+        )
+        output_path = Path(args.output).resolve() if args.output else None
+        if output_path is not None:
+            write_text_file(output_path, chunk_text)
+            print(f"Wrote chunked bundle to {output_path}")
+        else:
+            sys.stdout.write(chunk_text)
 
     reset_snapshot(snapshot_root, target_texts)
     state.update(

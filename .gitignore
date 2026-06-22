@@ -54,3 +54,7 @@ new_gui/.pytest_cache/
 
 # Manual PDF tool local bundles
 new_gui/manual_pdf_tool_bundle*.txt
+
+# Split-bundle outputs and stray legacy bundles
+new_gui/bundle_parts/
+new_gui/bundle_test.txt
