@@ -426,6 +426,13 @@ class AgentPanel(QWidget):
         prompt_layout.addLayout(button_block)
 
         layout.addWidget(prompt_row)
+
+        self._prompt_hint = QLabel(
+            "Enter to send  ·  Shift+Enter newline  ·  Ctrl+↑/↓ history"
+        )
+        self._prompt_hint.setObjectName("agentPromptHint")
+        self._prompt_hint.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        layout.addWidget(self._prompt_hint)
         return container
 
     def _build_history_tab(self) -> QWidget:
@@ -443,15 +450,14 @@ class AgentPanel(QWidget):
         kpi_layout.setHorizontalSpacing(8)
         kpi_layout.setVerticalSpacing(4)
         self._kpi_cards = {}
-        for col, (key, label) in enumerate(
-            [
-                ("prompts", "Prompts"),
-                ("executed", "Executed"),
-                ("rejected", "Rejected"),
-                ("misses", "Misses"),
-            ]
-        ):
-            card, value_label = self._make_kpi_card(label)
+        kpi_specs = [
+            ("prompts", "Prompts", "neutral"),
+            ("executed", "Executed", "success"),
+            ("rejected", "Rejected", "danger"),
+            ("misses", "Misses", "muted"),
+        ]
+        for col, (key, label, kind) in enumerate(kpi_specs):
+            card, value_label = self._make_kpi_card(label, kind=kind)
             kpi_layout.addWidget(card, 0, col)
             self._kpi_cards[key] = value_label
         layout.addWidget(kpi_frame)
@@ -478,15 +484,17 @@ class AgentPanel(QWidget):
         layout.addWidget(self._history_view, 1)
         return container
 
-    def _make_kpi_card(self, label_text: str):
+    def _make_kpi_card(self, label_text: str, kind: str = "neutral"):
         card = QFrame()
         card.setObjectName("agentKpiCard")
         card.setFrameShape(QFrame.NoFrame)
+        card.setProperty("kpiKind", kind)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(2)
         value_label = QLabel("0")
         value_label.setObjectName("agentKpiValue")
+        value_label.setProperty("kpiKind", kind)
         value_label.setAlignment(Qt.AlignCenter)
         caption = QLabel(label_text)
         caption.setObjectName("agentKpiCaption")
@@ -571,11 +579,11 @@ class AgentPanel(QWidget):
     def _set_status(self, state: str, text: str) -> None:
         self._status_state = state
         label_text = {
-            self.STATUS_IDLE: "Idle",
-            self.STATUS_BUSY: "Busy",
-            self.STATUS_OK: "Ready",
-            self.STATUS_FAIL: "Alert",
-        }.get(state, "Idle")
+            self.STATUS_IDLE: "○ Idle",
+            self.STATUS_BUSY: "◔ Busy",
+            self.STATUS_OK: "● Ready",
+            self.STATUS_FAIL: "● Alert",
+        }.get(state, "○ Idle")
         self._status_badge.setText(label_text)
         self._status_badge.setProperty("agentStatus", state)
         # Re-polish to pick up the new property selector
@@ -814,6 +822,9 @@ class AgentPanel(QWidget):
             f" border-radius: 6px; }}"
             f"QLabel#agentKpiValue {{"
             f" color: {accent}; font-size: 18px; font-weight: 600; }}"
+            f"QLabel#agentKpiValue[kpiKind=\"success\"] {{ color: {success}; }}"
+            f"QLabel#agentKpiValue[kpiKind=\"danger\"] {{ color: {danger}; }}"
+            f"QLabel#agentKpiValue[kpiKind=\"muted\"] {{ color: {muted}; }}"
             f"QLabel#agentKpiCaption {{ color: {muted}; font-size: 10px; }}"
             # Prompt input (text edit)
             f"QPlainTextEdit#agentPrompt {{"
@@ -863,6 +874,9 @@ class AgentPanel(QWidget):
             f"QTabBar::tab:selected {{"
             f" color: {accent}; background: {menu_bg};"
             f" border: 1px solid {border}; border-bottom-color: {menu_bg}; }}"
+            # Prompt hint
+            f"QLabel#agentPromptHint {{ color: {muted}; font-size: 10px;"
+            f" padding: 2px 4px; }}"
             # Footer
             f"QFrame#agentFooter {{ background: transparent; }}"
             f"QLabel#agentFooterStatus {{ color: {muted}; font-size: 11px; }}"

@@ -13,10 +13,12 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from new_gui.presentation.theme.theme_runtime import ThemeManager
 from new_gui.presentation.styles.visibility_picker_styles import (
-    build_visibility_label_style,
-    build_visibility_picker_style,
-    build_visibility_row_style,
+    build_visibility_label_style_themed,
+    build_visibility_picker_style_themed,
+    build_visibility_row_style_themed,
+    _current_theme,
 )
 
 
@@ -31,7 +33,7 @@ class ColumnVisibilityRow(QFrame):
 
     def _build_ui(self) -> None:
         self.setObjectName("columnVisibilityRow")
-        self.setStyleSheet(build_visibility_row_style("columnVisibilityRow"))
+        self.setStyleSheet(build_visibility_row_style_themed("columnVisibilityRow", _current_theme()))
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -41,7 +43,7 @@ class ColumnVisibilityRow(QFrame):
         layout.addStretch()
 
         self.label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self.label.setStyleSheet(build_visibility_label_style())
+        self.label.setStyleSheet(build_visibility_label_style_themed(_current_theme()))
 
     def mousePressEvent(self, event) -> None:
         event.accept()
@@ -67,7 +69,7 @@ class ColumnVisibilityPicker(QFrame):
         self._build_ui()
 
     def _build_ui(self) -> None:
-        self.setStyleSheet(build_visibility_picker_style("columnVisibilityPicker"))
+        self.setStyleSheet(build_visibility_picker_style_themed("columnVisibilityPicker", _current_theme()))
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(10, 10, 10, 10)

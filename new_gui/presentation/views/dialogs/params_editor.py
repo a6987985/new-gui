@@ -22,10 +22,12 @@ from PyQt5.QtWidgets import (
 from new_gui.shared.config.settings import logger
 from new_gui.model.services import params_editor_service
 from new_gui.presentation.styles.menu_styles import build_popup_menu_style
+from new_gui.presentation.theme.theme_runtime import ThemeManager
 from new_gui.presentation.styles.params_editor_styles import (
-    build_params_editor_dialog_style,
-    build_params_editor_meta_label_style,
-    build_params_editor_primary_button_style,
+    build_params_editor_dialog_style_themed,
+    build_params_editor_meta_label_style_themed,
+    build_params_editor_primary_button_style_themed,
+    _current_theme,
 )
 
 
@@ -147,7 +149,7 @@ class ParamsEditorDialog(QDialog):
         # Header with file path
         header_layout = QHBoxLayout()
         file_label = QLabel(f"File: {self.params_file}")
-        file_label.setStyleSheet(build_params_editor_meta_label_style())
+        file_label.setStyleSheet(build_params_editor_meta_label_style_themed(_current_theme()))
         file_label.setWordWrap(True)
         header_layout.addWidget(file_label)
         header_layout.addStretch()
@@ -224,7 +226,7 @@ class ParamsEditorDialog(QDialog):
 
         # Status bar
         self.status_label = QLabel("Ready")
-        self.status_label.setStyleSheet(build_params_editor_meta_label_style())
+        self.status_label.setStyleSheet(build_params_editor_meta_label_style_themed(_current_theme()))
         layout.addWidget(self.status_label)
 
         # Buttons
@@ -238,7 +240,7 @@ class ParamsEditorDialog(QDialog):
 
             gen_btn = QPushButton("Gen Params")
             gen_btn.setToolTip("Generate params to flow (XMeta_gen_params)")
-            gen_btn.setStyleSheet(build_params_editor_primary_button_style())
+            gen_btn.setStyleSheet(build_params_editor_primary_button_style_themed(_current_theme()))
             gen_btn.clicked.connect(self._gen_params)
             button_layout.addWidget(gen_btn)
 
@@ -249,7 +251,7 @@ class ParamsEditorDialog(QDialog):
         layout.addLayout(button_layout)
 
         # Apply styling
-        self.setStyleSheet(build_params_editor_dialog_style())
+        self.setStyleSheet(build_params_editor_dialog_style_themed(_current_theme()))
 
     def _debounced_filter(self, text):
         """Debounce search to avoid lag while typing"""

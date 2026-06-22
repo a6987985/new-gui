@@ -4,7 +4,10 @@ from PyQt5.QtWidgets import QComboBox, QStyle, QStyleOptionViewItem, QStyledItem
 
 from new_gui.infrastructure.repositories import file_actions
 from new_gui.model.services import tree_rows
-from new_gui.presentation.styles.delegate_styles import build_tune_combo_editor_style
+from new_gui.presentation.styles.delegate_styles import (
+    build_tune_combo_editor_style_themed,
+    _current_theme,
+)
 from new_gui.presentation.styles.menu_styles import build_popup_menu_style
 
 
@@ -111,7 +114,7 @@ class TuneComboBoxDelegate(QStyledItemDelegate):
     def createEditor(self, parent, option, index):
         """Create ComboBox editor"""
         combo = QComboBox(parent)
-        combo.setStyleSheet(build_tune_combo_editor_style())
+        combo.setStyleSheet(build_tune_combo_editor_style_themed(_current_theme()))
         combo.setAutoFillBackground(True)
         return combo
 

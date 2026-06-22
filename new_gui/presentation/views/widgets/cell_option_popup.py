@@ -13,7 +13,10 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
 )
 
-from new_gui.presentation.styles.cell_option_popup_styles import build_cell_option_popup_style
+from new_gui.presentation.styles.cell_option_popup_styles import (
+    build_cell_option_popup_style_themed,
+    _current_theme,
+)
 
 
 _TONE_COLORS = {
@@ -48,7 +51,7 @@ class CellOptionPopup(QDialog):
 
     def _setup_ui(self) -> None:
         """Build the popup table."""
-        self.setStyleSheet(build_cell_option_popup_style())
+        self.setStyleSheet(build_cell_option_popup_style_themed(_current_theme()))
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(0)
