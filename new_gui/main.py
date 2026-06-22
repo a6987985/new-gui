@@ -1,7 +1,6 @@
 import os
 import sys
 import warnings
-from concurrent.futures import ThreadPoolExecutor
 
 # Last Updated: 2026-03-05 19:00
 warnings.filterwarnings("ignore", category=DeprecationWarning) # Suppress sipPyTypeDict warning
@@ -9,25 +8,27 @@ warnings.filterwarnings("ignore", category=DeprecationWarning) # Suppress sipPyT
 # Add parent directory to path to import modules from there
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from new_gui.config.settings import (
-    DEBOUNCE_DELAY_MS,
+from new_gui.shared.config.settings import (
     STATUS_COLORS,
     STATUS_CONFIG,
     logger,
 )
-from new_gui.ui.dialogs.dependency_graph import DependencyGraphDialog
-from new_gui.ui.dialogs.params_editor import ParamsEditorDialog
-from new_gui.services import file_actions
-from new_gui.services import run_repository
-from new_gui.services import search_flow
-from new_gui.services import status_summary
-from new_gui.services import target_categories
-from new_gui.services import tree_rows
-from new_gui.services import view_tabs
-from new_gui.services import view_state
-from new_gui.ui.theme_runtime import ThemeManager
-from new_gui.ui.builders import menu_builder, shortcut_builder, top_panel_builder, window_builder
-from new_gui.ui.controllers import (
+from new_gui.presentation.views.dialogs.params_editor import ParamsEditorDialog
+from new_gui.infrastructure.repositories import file_actions
+from new_gui.infrastructure.repositories import run_repository
+from new_gui.model.services import search_flow
+from new_gui.model.services import status_summary
+from new_gui.infrastructure.repositories import target_categories
+from new_gui.model.services import tree_rows
+from new_gui.model.services import view_mode_state
+from new_gui.model.services import view_state
+from new_gui.model.services import dependency_graph_navigation
+from new_gui.model.services import runtime_watchers
+from new_gui.model.services import sidebar_view
+from new_gui.model.services import tune_runtime
+from new_gui.presentation.theme.theme_runtime import ThemeManager
+from new_gui.presentation.views.builders import menu_builder, shortcut_builder, top_panel_builder, window_builder
+from new_gui.presentation.presenters import (
     action_controller,
     context_menu_controller,
     output_controller,
@@ -35,11 +36,25 @@ from new_gui.ui.controllers import (
     search_ui_controller,
     theme_controller,
     tree_display_controller,
+    content_tab_controller,
     visibility_controller,
     view_controller,
 )
-from PyQt5.QtCore import QEvent, QTimer, Qt
-from PyQt5.QtWidgets import QApplication, QHeaderView, QMainWindow, QMenu
+from new_gui.presentation.presenters import external_scrollbar_controller
+from new_gui.presentation.state.window_state import WindowStateStore
+from new_gui.infrastructure.repositories.run_cache_manager import RunCacheManager
+from PyQt5.QtCore import QCoreApplication, QEvent, QTimer, Qt
+from PyQt5.QtWidgets import QApplication, QDockWidget, QHeaderView, QMainWindow, QMenu
+
+from new_gui.application.agent import (
+    AgentAuditLog,
+    LLMPlanner,
+    LLMPlannerSettings,
+    RulePlanner,
+    default_audit_log_path,
+)
+from new_gui.presentation.presenters.agent_controller import AgentController
+from new_gui.presentation.views.widgets.agent_panel import AgentPanel
 
 
 # ========== Status Bar ==========
@@ -58,6 +73,7 @@ class MainWindow(QMainWindow):
         # Call parent constructor
         super().__init__()
         self._init_ui_log_dispatcher()
+        self._init_action_refresh_dispatcher()
 
         # Initialize window
         self._init_window()
@@ -67,59 +83,176 @@ class MainWindow(QMainWindow):
         self._init_central_widget()
         self._init_top_panel()
         self._install_gui_log_handler()
+        self._install_agent_dock()
 
         # Expand tree initially
         self.expand_tree_default()
 
+    def _install_agent_dock(self):
+        """Mount the Executable Agent panel in a right-side dock."""
+        settings = LLMPlannerSettings.from_env()
+        rule_planner = RulePlanner()
+        planner = (
+            LLMPlanner(settings=settings, fallback=rule_planner)
+            if settings.is_enabled
+            else rule_planner
+        )
+        audit_path = default_audit_log_path()
+        try:
+            audit_log = AgentAuditLog(path=audit_path)
+        except Exception:
+            audit_log = None
+            audit_path = None
+        self.agent_controller = AgentController(
+            self,
+            planner=planner,
+            audit_log=audit_log,
+        )
+        self._agent_panel = AgentPanel(
+            self.agent_controller,
+            parent=self,
+            audit_path=audit_path,
+        )
+        self._agent_dock = QDockWidget("✨  Agent", self)
+        self._agent_dock.setObjectName("agent_dock")
+        self._agent_dock.setWidget(self._agent_panel)
+        self._agent_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self._agent_dock.setFeatures(
+            QDockWidget.DockWidgetClosable
+            | QDockWidget.DockWidgetMovable
+            | QDockWidget.DockWidgetFloatable
+        )
+        self._agent_dock.setMinimumWidth(360)
+        self.addDockWidget(Qt.RightDockWidgetArea, self._agent_dock)
+        self._agent_dock.hide()
+        self._agent_dock.visibilityChanged.connect(self._on_agent_dock_visibility_changed)
+        try:
+            self._agent_panel.apply_theme(self.theme_manager.get_theme())
+        except Exception:
+            pass
+
+    def _on_agent_dock_visibility_changed(self, visible):
+        """Mirror the dock visibility on the menu toggle when present."""
+        action = getattr(self, "toggle_agent_action", None)
+        if action is not None and action.isChecked() != bool(visible):
+            action.blockSignals(True)
+            action.setChecked(bool(visible))
+            action.blockSignals(False)
+        if visible and hasattr(self, "_agent_panel"):
+            try:
+                self._agent_panel.on_dock_shown()
+            except Exception:
+                pass
+
+    def toggle_agent_dock(self):
+        """Show or hide the Executable Agent dock."""
+        if not hasattr(self, "_agent_dock"):
+            return
+        if self._agent_dock.isVisible():
+            self._agent_dock.hide()
+        else:
+            self._agent_dock.show()
+            self._agent_dock.raise_()
+            if hasattr(self, "_agent_panel"):
+                self._agent_panel.on_dock_shown()
+                self._agent_panel.focus_prompt()
+
+    def focus_agent_prompt(self):
+        """Reveal the Agent dock if hidden and focus the prompt input."""
+        if not hasattr(self, "_agent_dock"):
+            return
+        if not self._agent_dock.isVisible():
+            self._agent_dock.show()
+            self._agent_dock.raise_()
+        if hasattr(self, "_agent_panel"):
+            try:
+                self._agent_panel.on_dock_shown()
+                self._agent_panel.focus_prompt()
+            except Exception:
+                pass
+
+    def clear_agent_transcript(self):
+        """Clear the Agent transcript pane from a menu action."""
+        panel = getattr(self, "_agent_panel", None)
+        if panel is not None and hasattr(panel, "clear_transcript"):
+            try:
+                panel.clear_transcript()
+            except Exception:
+                pass
+
     def _init_core_variables(self):
         """Initialize core instance variables."""
-        self.level_expanded = {}
-        self.combo_sel = None
-        self.cached_targets_by_level = {}
-        self._cached_targets_run = ""
-        self.cached_collapsible_target_groups = {}
-        self._cached_collapsible_target_groups_run = ""
-        self.is_tree_expanded = True
-        self.is_search_mode = False
-        self._executor = ThreadPoolExecutor(max_workers=4)
-        self.colors = {k: v["color"] for k, v in STATUS_CONFIG.items()}
-        self._tune_files_cache = {}
-        self._bsub_params_cache = {}
-        self._main_view_snapshot = None
-        self._search_view_snapshot = None
-        self._column_resize_guard = False
-        self._suspend_header_layout_updates = False
-        self._locked_main_tree_columns = {0, 1}
-        self._main_tree_visible_columns = set(range(len(tree_rows.MAIN_TREE_HEADERS)))
-        self._column_visibility_picker = None
-        self._visible_top_buttons = set(top_panel_builder.DEFAULT_TOP_BUTTON_IDS)
-        self._button_visibility_picker = None
-        self._bottom_output_last_height = 260
-        self._pending_tune_refresh = False
-        self._terminal_follow_run = False
-        self._launch_xmeta_background = os.environ.get("XMETA_BACKGROUND", "").strip() or None
-        self._xmeta_background_color = self._launch_xmeta_background
-        self._ui_log_dispatcher = None
-        self._gui_log_handler = None
-        self._gui_log_previous_logger_level = None
-        self._gui_log_root_handler_levels = {}
-        self._runtime_observer_pause_depth = 0
-        self._runtime_refresh_pending = False
-        self._runtime_resume_refresh_scheduled = False
-        self._runtime_backup_timer_was_active = False
-        self._search_filter_request_id = 0
-        self._category_scope = "stage"
-        self._stage_categories = []
-        self._type_categories = []
-        self._selected_stage_category_id = ""
-        self._selected_type_category_id = ""
-        self._sidebar_filter_snapshot = None
-        self._tree_layout_transaction_depth = 0
-        self._layout_target_viewport_width = None
+        self._state = WindowStateStore()
+        self._cache_manager = RunCacheManager(self._state.run_cache)
+        self.level_expanded = self._state.view.level_expanded
+        self.combo_sel = self._state.view.combo_sel
+        self.cached_targets_by_level = self._state.run_cache.targets_by_level
+        self._cached_targets_run = self._state.run_cache.cached_targets_run
+        self.cached_collapsible_target_groups = self._state.run_cache.collapsible_target_groups
+        self._cached_collapsible_target_groups_run = self._state.run_cache.cached_collapsible_groups_run
+        self.is_tree_expanded = self._state.view.is_tree_expanded
+        self.is_search_mode = self._state.view.is_search_mode
+        self._executor = self._state.runtime.executor
+        self.colors = self._state.colors
+        self._tune_files_cache = self._state.run_cache.tune_files_cache
+        self._bsub_params_cache = self._state.run_cache.bsub_params_cache
+        self._status_cache = self._state.run_cache.status_cache
+        self._main_view_snapshot = self._state.view.main_view_snapshot
+        self._search_view_snapshot = self._state.view.search_view_snapshot
+        self._column_resize_guard = self._state.view.column_resize_guard
+        self._suspend_header_layout_updates = self._state.view.suspend_header_layout_updates
+        self._locked_main_tree_columns = self._state.view.locked_main_tree_columns
+        self._main_tree_visible_columns = self._state.view.main_tree_visible_columns
+        self._column_visibility_picker = self._state.view.column_visibility_picker
+        self._visible_top_buttons = self._state.view.visible_top_buttons
+        self._button_visibility_picker = self._state.view.button_visibility_picker
+        self._bottom_output_last_height = self._state.view.bottom_output_last_height
+        self._terminal_output_content_filled = False
+        self._terminal_output_restore_height = self._bottom_output_last_height
+        self._pending_tune_refresh = self._state.runtime.pending_tune_refresh
+        self._pending_dependency_refresh = self._state.runtime.pending_dependency_refresh
+        self._missing_selected_run_name = self._state.runtime.missing_selected_run_name
+        self._terminal_follow_run = self._state.runtime.terminal_follow_run
+        self._launch_xmeta_background = self._state.runtime.launch_xmeta_background
+        self._xmeta_background_color = self._state.runtime.launch_xmeta_background
+        self._ui_log_dispatcher = self._state.runtime.ui_log_dispatcher
+        self._action_refresh_dispatcher = self._state.runtime.action_refresh_dispatcher
+        self._gui_log_handler = self._state.runtime.gui_log_handler
+        self._gui_log_previous_logger_level = self._state.runtime.gui_log_previous_logger_level
+        self._gui_log_root_handler_levels = self._state.runtime.gui_log_root_handler_levels
+        self._runtime_observer_pause_depth = self._state.runtime.runtime_observer_pause_depth
+        self._runtime_refresh_pending = self._state.runtime.runtime_refresh_pending
+        self._runtime_resume_refresh_scheduled = self._state.runtime.runtime_resume_refresh_scheduled
+        self._runtime_backup_timer_was_active = self._state.runtime.runtime_backup_timer_was_active
+        self._runtime_status_snapshot_timer_was_active = (
+            self._state.runtime.runtime_status_snapshot_timer_was_active
+        )
+        self._search_filter_request_id = self._state.view.search_filter_request_id
+        self._category_scope = self._state.sidebar.category_scope
+        self._stage_categories = self._state.sidebar.stage_categories
+        self._type_categories = self._state.sidebar.type_categories
+        self._selected_stage_category_id = self._state.sidebar.selected_stage_category_id
+        self._selected_type_category_id = self._state.sidebar.selected_type_category_id
+        self._sidebar_filter_snapshot = self._state.sidebar.sidebar_filter_snapshot
+        self._active_content_mode = self._state.view.active_content_mode
+        self._dependency_graph_panel = self._state.view.dependency_graph_panel
+        self._dependency_graph_dirty = self._state.view.dependency_graph_dirty
+        self._dependency_graph_initialized = False
+        self._dependency_graph_return_context = {}
+        self._main_view_tab_state = None
+        self._sidebar_category_tab_active = False
+        self._sidebar_category_return_state = None
+        self._trace_return_scroll_value = None
+        self._selection_sync_in_progress = self._state.selection_sync_in_progress
+        view_mode_state.ensure_window_view_state(self)
 
     def _init_ui_log_dispatcher(self) -> None:
         """Create the thread-safe log bridge used by the GUI session log."""
         output_controller.init_ui_log_dispatcher(self)
+
+    def _init_action_refresh_dispatcher(self) -> None:
+        """Create the thread-safe bridge used by async action refresh callbacks."""
+        output_controller.init_action_refresh_dispatcher(self)
 
     def _install_gui_log_handler(self) -> None:
         """Attach a GUI-only log handler while keeping console logging unchanged."""
@@ -160,21 +293,32 @@ class MainWindow(QMainWindow):
         """Render one queued log entry and apply panel attention rules."""
         output_controller.append_ui_log_entry(self, entry)
 
+    def request_action_refresh(self, search_context: dict, command: str = "") -> None:
+        """Queue one async action-complete refresh request onto the GUI thread."""
+        payload = {
+            "search_context": dict(search_context or {}),
+            "command": str(command or ""),
+        }
+        output_controller.queue_action_refresh_request(self, payload)
+
+    def _handle_action_refresh_request(self, payload) -> None:
+        """Handle one action-complete refresh request on the GUI thread."""
+        payload_dict = dict(payload or {})
+        search_context = dict(payload_dict.get("search_context") or {})
+        command = str(payload_dict.get("command") or "")
+        logger.info(
+            f"Action refresh requested from async command: {command or 'unknown'}",
+            extra={"ui_source": "runtime"},
+        )
+        action_controller.refresh_after_action(self, search_context)
+
     def _invalidate_tune_cache(self, run_dir: str = None, target_name: str = None) -> None:
         """Invalidate tune-file cache entries."""
-        run_repository.invalidate_run_target_cache(
-            self._tune_files_cache,
-            run_dir,
-            target_name,
-        )
+        self._cache_manager.invalidate_tune_cache(run_dir, target_name)
 
     def _invalidate_bsub_cache(self, run_dir: str = None, target_name: str = None) -> None:
         """Invalidate bsub-parameter cache entries."""
-        run_repository.invalidate_run_target_cache(
-            self._bsub_params_cache,
-            run_dir,
-            target_name,
-        )
+        self._cache_manager.invalidate_bsub_cache(run_dir, target_name)
 
     def _invalidate_main_view_snapshot(self) -> None:
         """Drop the in-memory main-view snapshot."""
@@ -247,7 +391,10 @@ class MainWindow(QMainWindow):
     def _ensure_shared_target_stage_file(self) -> None:
         """Prepare the shared target-stage file under ../../XMeta/util/GUI."""
         target_file, created_gui_dir, copied_target_file, error_message = (
-            target_categories.ensure_shared_target_stage_file()
+            target_categories.ensure_shared_target_stage_file(
+                create_gui_dir=True,
+                copy_target_file=True,
+            )
         )
         if error_message:
             logger.warning(f"Failed to prepare shared target-stage file: {error_message} ({target_file})")
@@ -259,7 +406,7 @@ class MainWindow(QMainWindow):
         elif os.path.isfile(target_file):
             logger.info(f"Using shared target-stage file: {target_file}")
         else:
-            logger.warning(f"Shared target-stage file not found: {target_file}")
+            logger.debug(f"Shared target-stage file not found: {target_file}")
 
     def _init_window(self):
         """Initialize window properties and animation."""
@@ -269,12 +416,12 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         self._position_top_action_buttons()
         self._apply_adaptive_target_column_width()
-        top_panel_builder._sync_external_tree_scrollbar(self)
+        external_scrollbar_controller.sync_external_scrollbar(self)
 
     def showEvent(self, event):
         super().showEvent(event)
         QTimer.singleShot(0, self._apply_adaptive_target_column_width)
-        QTimer.singleShot(0, lambda: top_panel_builder._sync_external_tree_scrollbar(self))
+        QTimer.singleShot(0, lambda: external_scrollbar_controller.sync_external_scrollbar(self))
         QTimer.singleShot(0, self._update_backup_timer_state)
 
     def hideEvent(self, event):
@@ -291,9 +438,9 @@ class MainWindow(QMainWindow):
         self._remove_gui_log_handler()
         if hasattr(self, "_embedded_terminal"):
             self._embedded_terminal.shutdown()
-        if hasattr(self, "_executor"):
-            self._executor.shutdown(wait=False)
+        runtime_controller.shutdown_runtime_observers(self)
         super().closeEvent(event)
+        QCoreApplication.quit()
 
     def _position_top_action_buttons(self):
         """Float the top action buttons independently from the main row layout."""
@@ -315,190 +462,53 @@ class MainWindow(QMainWindow):
         """Show or hide the codex-style workspace sidebar."""
         top_panel_builder.set_left_sidebar_visible(self, visible)
 
+    def set_left_sidebar_content_mode_visible(self, visible: bool) -> None:
+        """Show or hide the sidebar for content-page switches."""
+        top_panel_builder.set_left_sidebar_content_mode_visible(self, visible)
+
     def toggle_left_sidebar(self) -> bool:
         """Toggle workspace sidebar visibility from top-left icon button."""
         return top_panel_builder.toggle_left_sidebar(self)
 
     def clear_left_sidebar_selection(self) -> None:
         """Clear the active left-sidebar category selection state."""
-        self._selected_stage_category_id = ""
-        self._selected_type_category_id = ""
-        if hasattr(self, "left_sidebar"):
-            self.left_sidebar.clear_category_selection()
+        sidebar_view.clear_left_sidebar_selection(self)
 
     def show_full_target_view(self, force_rebuild: bool = False) -> bool:
         """Restore the unfiltered Main View target tree for the active run."""
-        current_run = self.combo.currentText() if hasattr(self, "combo") else ""
-        if not current_run or current_run == "No runs found":
-            return False
-        if self.is_all_status_view:
-            self._activate_selected_run_view(current_run, invalidate_snapshot=True)
-            return True
-        self._clear_search_ui_state()
-        self._invalidate_main_view_snapshot()
-        self._set_main_run_tab_state()
-        if force_rebuild:
-            self._sidebar_filter_snapshot = None
-        elif self._restore_sidebar_filter_snapshot(current_run):
-            self._update_column_visibility_control_state()
-            return True
-        cached_targets_by_level = dict(getattr(self, "cached_targets_by_level", {}) or {})
-        if (
-            getattr(self, "_cached_targets_run", "") != current_run
-            or not cached_targets_by_level
-            or not self._is_main_tree_schema_active()
-        ):
-            self.populate_data(force_rebuild=True)
-            self._apply_main_tree_column_visibility(self._main_tree_visible_columns, save_state=False)
-            self._update_column_visibility_control_state()
-            return True
-
-        header = self.tree.header() if hasattr(self, "tree") else None
-        self._suspend_header_layout_updates = True
-        previous_tree_updates = self.tree.updatesEnabled()
-        self.tree.setUpdatesEnabled(False)
-        previous_header_updates = header.updatesEnabled() if header is not None else True
-        if header is not None:
-            header.setUpdatesEnabled(False)
-        try:
-            self.model.removeRows(0, self.model.rowCount())
-            display_groups = self._build_display_level_groups(cached_targets_by_level, run_name=current_run)
-            self._append_target_groups_to_model(display_groups, run_name=current_run)
-            self.expand_tree_default()
-            self._update_column_visibility_control_state()
-        finally:
-            if header is not None:
-                header.setUpdatesEnabled(previous_header_updates)
-            self.tree.setUpdatesEnabled(previous_tree_updates)
-            self._suspend_header_layout_updates = False
-            if int(getattr(self, "_tree_layout_transaction_depth", 0)) <= 0:
-                self.tree.viewport().update()
-                if header is not None:
-                    header.viewport().update()
-        return True
+        return sidebar_view.show_full_target_view(self, force_rebuild=force_rebuild)
 
     def _can_apply_sidebar_filter_in_place(self) -> bool:
         """Return whether sidebar category filtering can run without rebuilding the model."""
-        if not self.combo_sel or self.is_all_status_view or self.is_search_mode:
-            return False
-        if not self._is_main_tree_schema_active():
-            return False
-        tab_text = self.tab_label.text() if hasattr(self, "tab_label") else ""
-        return not tab_text.startswith("Status:") and not tab_text.startswith("Trace")
+        return sidebar_view.can_apply_sidebar_filter_in_place(self)
 
     def _restore_sidebar_filter_snapshot(self, current_run: str = None, clear_snapshot: bool = True) -> bool:
         """Restore the pre-sidebar-filter tree presentation snapshot if available."""
-        run_name = current_run or (self.combo.currentText() if hasattr(self, "combo") else "")
-        if not run_name or run_name == "No runs found":
-            return False
-        restored = view_state.restore_tree_presentation_snapshot(
-            self.model,
-            self.tree,
-            self._sidebar_filter_snapshot,
-            run_name,
+        return sidebar_view.restore_sidebar_filter_snapshot(
+            self,
+            current_run=current_run,
+            clear_snapshot=clear_snapshot,
         )
-        if restored:
-            if clear_snapshot:
-                self._sidebar_filter_snapshot = None
-            if int(getattr(self, "_tree_layout_transaction_depth", 0)) <= 0:
-                self.tree.viewport().update()
-                header = self.tree.header() if hasattr(self, "tree") else None
-                if header is not None:
-                    header.viewport().update()
-        return restored
 
     def _apply_sidebar_category_filter_in_place(self) -> bool:
         """Apply the active sidebar category filter by hiding or restoring existing rows."""
-        if not self._can_apply_sidebar_filter_in_place():
-            return False
-
-        current_run = self.combo.currentText() if hasattr(self, "combo") else ""
-        if not current_run or current_run == "No runs found":
-            return False
-
-        active_targets = self.get_active_category_target_set()
-        if self._sidebar_filter_snapshot is None:
-            self._sidebar_filter_snapshot = view_state.capture_tree_presentation_snapshot(
-                self.model,
-                self.tree,
-                current_run,
-            )
-
-        if not self._restore_sidebar_filter_snapshot(current_run, clear_snapshot=False):
-            self._sidebar_filter_snapshot = view_state.capture_tree_presentation_snapshot(
-                self.model,
-                self.tree,
-                current_run,
-            )
-            if not self._restore_sidebar_filter_snapshot(current_run, clear_snapshot=False):
-                return False
-
-        if active_targets is None:
-            return self._restore_sidebar_filter_snapshot(current_run)
-
-        view_state.filter_tree_by_targets(self.tree, self.model, set(active_targets))
-        if int(getattr(self, "_tree_layout_transaction_depth", 0)) <= 0:
-            self.tree.viewport().update()
-            header = self.tree.header() if hasattr(self, "tree") else None
-            if header is not None:
-                header.viewport().update()
-        return True
+        return sidebar_view.apply_sidebar_category_filter_in_place(self)
 
     def refresh_left_sidebar_categories(self, run_dir: str = None) -> None:
         """Reload stage/type category rows from the shared target-stage file."""
-        if not hasattr(self, "left_sidebar"):
-            return
-        self._sidebar_filter_snapshot = None
-        del run_dir
-        categories, file_path = target_categories.load_target_stage_categories()
-        self._stage_categories = list(categories or [])
-        self._type_categories = []
-        self.left_sidebar.set_stage_categories(self._stage_categories)
-        self.left_sidebar.set_type_categories(self._type_categories)
-        self._category_scope = self.left_sidebar.active_scope()
-        self._selected_stage_category_id = self.left_sidebar.selected_category_id("stage")
-        self._selected_type_category_id = self.left_sidebar.selected_category_id("type")
-        if categories:
-            logger.info(f"Loaded {len(categories)} sidebar categories from {file_path}")
-        else:
-            logger.info(f"No sidebar category data loaded from {file_path}")
+        sidebar_view.refresh_left_sidebar_categories(self, run_dir=run_dir)
 
     def on_left_sidebar_scope_changed(self, scope: str) -> None:
         """Handle STAGE/TYPE tab switch and refresh visible tree rows."""
-        self._category_scope = (scope or "stage").strip().lower()
-        if not self.combo_sel or self.is_all_status_view:
-            return
-        if self._apply_sidebar_category_filter_in_place():
-            return
-        self.populate_data(force_rebuild=True)
+        sidebar_view.on_left_sidebar_scope_changed(self, scope)
 
     def on_left_sidebar_category_changed(self, scope: str, category_id: str) -> None:
         """Handle single-select category changes from the left sidebar."""
-        normalized_scope = (scope or "stage").strip().lower()
-        normalized_id = (category_id or "").strip()
-        if normalized_scope == "type":
-            self._selected_type_category_id = normalized_id
-        else:
-            self._selected_stage_category_id = normalized_id
-
-        if not self.combo_sel or self.is_all_status_view:
-            return
-        if self._apply_sidebar_category_filter_in_place():
-            return
-        self.populate_data(force_rebuild=True)
+        sidebar_view.on_left_sidebar_category_changed(self, scope, category_id)
 
     def get_active_category_target_set(self):
         """Return selected category targets for current scope, or None when unscoped."""
-        if not hasattr(self, "left_sidebar"):
-            return None
-        scope = self.left_sidebar.active_scope()
-        if scope == "type":
-            return None
-        selected_category_id = self.left_sidebar.selected_category_id("stage")
-        if not selected_category_id:
-            return None
-        targets = self.left_sidebar.selected_category_targets("stage")
-        return set(str(target).strip() for target in targets if str(target).strip())
+        return sidebar_view.get_active_category_target_set(self)
 
     def _set_bottom_output_panel_visible(self, visible: bool) -> None:
         """Show or collapse the bottom output panel inside the content splitter."""
@@ -527,6 +537,10 @@ class MainWindow(QMainWindow):
     def show_log_output_panel(self) -> None:
         """Open the bottom output area and switch to the session log tab."""
         output_controller.show_log_output_panel(self)
+
+    def set_terminal_output_content_filled(self, filled: bool) -> None:
+        """Expand or restore the embedded terminal inside the content area."""
+        output_controller.set_terminal_output_content_filled(self, filled)
 
     def get_embedded_terminal_status_message(self) -> str:
         """Return the current embedded-terminal status text, if any."""
@@ -574,6 +588,9 @@ class MainWindow(QMainWindow):
         if current_run and current_run != "No runs found":
             self._build_status_cache(current_run)
             self.populate_data()
+            if getattr(self, "_active_content_mode", "main") == "graph":
+                self._mark_dependency_graph_dirty()
+                self.show_dependency_graph(preserve_viewport=True)
             self.show_notification("Refresh", f"Refreshed view for {current_run}", "info")
 
     def _toggle_theme(self):
@@ -636,10 +653,21 @@ class MainWindow(QMainWindow):
 
     def get_selected_targets(self):
         """Get currently selected targets from tree view."""
+        if getattr(self, "_active_content_mode", "main") == "graph":
+            panel = getattr(self, "_dependency_graph_panel", None)
+            if panel is not None and getattr(panel, "selected_node", None):
+                if hasattr(panel, "selected_display_target"):
+                    selected_target = str(panel.selected_display_target() or "").strip()
+                    return [selected_target] if selected_target else []
         return view_state.get_selected_targets(self.tree, self.model)
 
     def get_selected_action_targets(self):
         """Get actionable targets from tree selection for batch execute actions."""
+        if getattr(self, "_active_content_mode", "main") == "graph":
+            panel = getattr(self, "_dependency_graph_panel", None)
+            if panel is not None and getattr(panel, "selected_node", None):
+                if hasattr(panel, "selected_action_targets"):
+                    return list(panel.selected_action_targets() or [])
         return view_state.get_selected_action_targets(self.tree, self.model)
 
     def _get_current_search_text(self) -> str:
@@ -680,6 +708,9 @@ class MainWindow(QMainWindow):
         if self.model is None or self.model.rowCount() <= 0:
             return False
         self.populate_data(force_rebuild=False)
+        if getattr(self, "_active_content_mode", "main") == "graph":
+            self._mark_dependency_graph_dirty()
+            self.show_dependency_graph(preserve_viewport=True)
         return True
 
     def _clear_search_ui_state(self) -> None:
@@ -688,7 +719,7 @@ class MainWindow(QMainWindow):
             self._set_header_filter_text_silent("")
             self.header.hide_filter()
         self._set_quick_search_text("")
-        self.is_search_mode = False
+        view_mode_state.clear_search_state(self)
         self._invalidate_search_view_snapshot()
 
     def start(self, action):
@@ -734,6 +765,8 @@ class MainWindow(QMainWindow):
         if self.is_all_status_view:
             self.show_notification("Status Filter", "Status badge filter is available in main target view only", "info")
             return
+        if getattr(self, "_active_content_mode", "main") == "graph":
+            self.show_main_view_tab()
         self._apply_status_filter(status, update_tab=True)
 
     def scan_runs(self):
@@ -879,150 +912,62 @@ class MainWindow(QMainWindow):
         )
         return graph_data
 
-    def show_dependency_graph(self):
-        """Show the dependency graph dialog for the current run."""
-        current_run = self.combo.currentText()
-        if not current_run or current_run == "No runs found":
-            logger.warning("No run selected")
-            return
-
-        # Build graph data
-        graph_data = self.build_dependency_graph(current_run)
-        selected_targets = [] if getattr(self, "is_all_status_view", False) else self.get_selected_targets()
-        initial_target = selected_targets[0] if selected_targets else None
-        return_context = self._build_dependency_graph_return_context(current_run)
-
-        # Show dialog
-        dialog = DependencyGraphDialog(
-            graph_data,
-            self.colors,
-            initial_target=initial_target,
-            locate_target_callback=lambda target_name, context=return_context: self.locate_target_in_tree(
-                target_name,
-                context,
-            ),
-            parent=self,
+    def show_dependency_graph(self, preserve_viewport: bool = False):
+        """Open the dependency graph as the persistent content tab."""
+        content_tab_controller.activate_dependency_graph_tab(
+            self,
+            preserve_viewport=preserve_viewport,
         )
-        dialog.exec_()
+
+    def show_main_view_tab(self):
+        """Switch back to the main target-tree content tab."""
+        content_tab_controller.activate_main_view_tab(self)
+
+    def _on_content_mode_tab_changed(self, index: int) -> None:
+        """Handle content tab switches between main view and dependency graph."""
+        content_tab_controller.on_content_tab_changed(self, index)
+
+    def _on_top_tab_label_clicked(self) -> None:
+        """Route top-tab click behavior to the currently active content mode."""
+        content_tab_controller.on_top_tab_label_clicked(self)
+
+    def _on_top_tab_label_double_clicked(self) -> None:
+        """Route top-tab double-click behavior to the currently active content mode."""
+        content_tab_controller.on_top_tab_label_double_clicked(self)
+
+    def _resolve_dependency_graph_initial_target(self):
+        """Return the selected target used for initial graph focus when available."""
+        selected_targets = [] if getattr(self, "is_all_status_view", False) else self.get_selected_targets()
+        return selected_targets[0] if selected_targets else None
+
+    def _mark_dependency_graph_dirty(self) -> None:
+        """Mark the embedded dependency graph as stale until next graph-tab activation."""
+        self._dependency_graph_dirty = True
 
     def _build_dependency_graph_return_context(self, run_name: str) -> dict:
         """Capture the current tree context so graph navigation can return cleanly."""
-        if not run_name or run_name == "No runs found":
-            return {}
-
-        scroll_value = self.tree.verticalScrollBar().value() if hasattr(self, "tree") else 0
-        return {
-            "run_name": run_name,
-            "is_all_status_view": bool(getattr(self, "is_all_status_view", False)),
-            "restore_plan": None if getattr(self, "is_all_status_view", False) else self._build_current_view_restore_plan(scroll_value),
-        }
+        return dependency_graph_navigation.build_dependency_graph_return_context(self, run_name)
 
     def _target_matches_graph_return_context(self, target_name: str, run_name: str, return_context: dict) -> bool:
         """Return whether the target belongs to the captured tree context."""
-        if not target_name or not run_name or not return_context or return_context.get("is_all_status_view"):
-            return False
-
-        restore_plan = return_context.get("restore_plan") or {"mode": "main"}
-        mode = restore_plan.get("mode", "main")
-
-        if mode == "main":
-            return True
-        if mode == "search":
-            search_text = (restore_plan.get("search_text") or "").lower()
-            return bool(search_text) and search_text in target_name.lower()
-        if mode == "status":
-            target_status = (self.get_target_status(run_name, target_name) or "").lower()
-            return target_status == (restore_plan.get("status") or "").lower()
-        if mode == "trace":
-            trace_target = restore_plan.get("target_name", "")
-            inout = restore_plan.get("inout")
-            if not trace_target or not inout:
-                return False
-            run_dir = os.path.join(self.run_base_dir, run_name)
-            related_targets = list(run_repository.get_retrace_targets(run_dir, trace_target, inout) or [])
-            if trace_target not in related_targets:
-                if inout == "in":
-                    related_targets.append(trace_target)
-                else:
-                    related_targets.insert(0, trace_target)
-            return target_name in set(related_targets)
-        return False
+        return dependency_graph_navigation.target_matches_graph_return_context(
+            self,
+            target_name,
+            run_name,
+            return_context,
+        )
 
     def _apply_dependency_graph_return_context(self, return_context: dict) -> None:
         """Restore the captured tree presentation before selecting a graph target."""
-        restore_plan = (return_context or {}).get("restore_plan") or {"mode": "main"}
-        mode = restore_plan.get("mode", "main")
-
-        if mode == "trace":
-            trace_target = restore_plan.get("target_name", "")
-            direction = "Up" if restore_plan.get("inout") == "in" else "Down"
-            self._apply_tab_state(view_tabs.get_trace_tab_state(f"Trace {direction}: {trace_target}"))
-        elif mode == "status":
-            status = restore_plan.get("status", "")
-            self._apply_tab_state(view_tabs.get_status_tab_state(status))
-        else:
-            self._set_main_run_tab_state()
-
-        if mode == "search":
-            search_text = restore_plan.get("search_text", "")
-            self._set_quick_search_text(search_text)
-            self._set_header_filter_text_silent(search_text)
-            self.is_search_mode = bool(search_text)
-            if hasattr(self, "header"):
-                self.header.show_filter()
-        else:
-            self._clear_search_ui_state()
-
-        if mode != "main":
-            self._restore_view_from_plan(restore_plan)
+        dependency_graph_navigation.apply_dependency_graph_return_context(self, return_context)
 
     def locate_target_in_tree(self, target_name: str, return_context: dict = None) -> None:
         """Restore the tree view and select the requested target from the graph."""
-        current_run = (return_context or {}).get("run_name") or self.combo.currentText()
-        if not current_run or current_run == "No runs found" or not target_name:
-            return
-
-        combo_index = self.combo.findText(current_run)
-        run_changed = combo_index >= 0 and self.combo.currentIndex() != combo_index
-        if run_changed:
-            was_blocked = self.combo.blockSignals(True)
-            self.combo.setCurrentIndex(combo_index)
-            self.combo.blockSignals(was_blocked)
-
-        preserve_context = self._target_matches_graph_return_context(target_name, current_run, return_context or {})
-        used_main_view_fallback = False
-
-        if run_changed or self.is_all_status_view:
-            self._activate_selected_run_view(current_run, invalidate_snapshot=True)
-            if preserve_context:
-                self._apply_dependency_graph_return_context(return_context or {})
-            else:
-                used_main_view_fallback = not (return_context or {}).get("is_all_status_view", False)
-        elif preserve_context:
-            self._apply_dependency_graph_return_context(return_context or {})
-        else:
-            self._activate_selected_run_view(current_run, invalidate_snapshot=True)
-            current_mode = ((return_context or {}).get("restore_plan") or {}).get("mode", "main")
-            used_main_view_fallback = current_mode != "main"
-
-        if used_main_view_fallback:
-            self._clear_search_ui_state()
-            self._set_main_run_tab_state()
-
-        self._select_targets_in_tree([target_name])
-        self.tree.setFocus()
-        self.raise_()
-        self.activateWindow()
-
-        selected_targets = self.get_selected_targets()
-        if target_name not in selected_targets:
-            self.show_notification("Not Found", f"Target '{target_name}' was not found in the current tree", "warning")
-        elif used_main_view_fallback:
-            self.show_notification(
-                "Locate In Tree",
-                "Restored the main view because the selected target is outside the original graph-open filter.",
-                "info",
-            )
+        dependency_graph_navigation.locate_target_in_tree(
+            self,
+            target_name,
+            return_context=return_context,
+        )
 
     def open_user_params(self):
         """Open user.params file for editing."""
@@ -1117,6 +1062,7 @@ class MainWindow(QMainWindow):
     def _build_status_cache(self, run_name):
         """Build a cache of all target statuses for a run (batch I/O optimization)"""
         self._status_cache = run_repository.build_status_cache(self.run_base_dir, run_name)
+        self._cache_manager.status_cache = self._status_cache
 
     def get_target_times(self, run_name: str, target_name: str) -> tuple:
         """Get start and end time from cache.
@@ -1231,12 +1177,18 @@ class MainWindow(QMainWindow):
         """Populate the tree model with the four-column all-status overview."""
         view_controller.populate_all_status_overview(self, overview_rows)
 
-    def _activate_selected_run_view(self, current_run: str, invalidate_snapshot: bool = True) -> None:
+    def _activate_selected_run_view(
+        self,
+        current_run: str,
+        invalidate_snapshot: bool = True,
+        presentation_snapshot: dict = None,
+    ) -> None:
         """Switch from overview/other run states back to the selected single-run view."""
         view_controller.activate_selected_run_view(
             self,
             current_run,
             invalidate_snapshot=invalidate_snapshot,
+            presentation_snapshot=presentation_snapshot,
         )
 
     def populate_data(self, force_rebuild=False):
@@ -1245,86 +1197,43 @@ class MainWindow(QMainWindow):
 
     def setup_status_watcher(self):
         """Setup file system watcher for the current run's status directory."""
-        if not self.combo_sel:
-            return
-        
-        status_dir = os.path.join(self.combo_sel, "status")
-        
-        # Remove old watched directories
-        if self.watched_status_dirs:
-            old_dirs = list(self.watched_status_dirs)
-            self.status_watcher.removePaths(old_dirs)
-            self.watched_status_dirs.clear()
-        
-        # Add new status directory if it exists
-        if os.path.exists(status_dir):
-            self.status_watcher.addPath(status_dir)
-            self.watched_status_dirs.add(status_dir)
-            logger.debug(f"Now watching status directory: {status_dir}")
+        runtime_watchers.setup_status_watcher(self)
 
     def setup_tune_watcher(self):
         """Setup file system watcher for the current run's tune directories."""
-        if not self.combo_sel:
-            return
+        runtime_watchers.setup_tune_watcher(self)
 
-        run_dir = self.combo_sel
-        tune_root = os.path.join(run_dir, "tune")
-
-        if self.watched_tune_dirs:
-            old_dirs = list(self.watched_tune_dirs)
-            self.tune_watcher.removePaths(old_dirs)
-            self.watched_tune_dirs.clear()
-
-        watched_dirs = [run_dir]
-        if os.path.isdir(tune_root):
-            watched_dirs.append(tune_root)
-            try:
-                for entry in os.listdir(tune_root):
-                    target_dir = os.path.join(tune_root, entry)
-                    if os.path.isdir(target_dir):
-                        watched_dirs.append(target_dir)
-            except OSError as exc:
-                logger.error(f"Failed to enumerate tune directory {tune_root}: {exc}")
-
-        existing_dirs = [path for path in watched_dirs if os.path.isdir(path)]
-        if existing_dirs:
-            self.tune_watcher.addPaths(existing_dirs)
-            self.watched_tune_dirs.update(existing_dirs)
-            logger.debug(f"Now watching tune directories: {existing_dirs}")
+    def setup_dependency_watcher(self):
+        """Setup file system watcher for the current run's dependency file."""
+        runtime_watchers.setup_dependency_watcher(self)
     
     def on_status_directory_changed(self, path):
         """Called when the status directory contents change (file added/removed)."""
-        logger.debug(f"Status directory changed: {path}")
-
-        # Use debounce timer to batch rapid changes
-        if not self.debounce_timer.isActive():
-            self.debounce_timer.start(DEBOUNCE_DELAY_MS)
+        runtime_watchers.on_status_directory_changed(self, path)
 
     def on_status_file_changed(self, path):
         """Called when a watched file is modified."""
-        logger.debug(f"Status file changed: {path}")
+        runtime_watchers.on_status_file_changed(self, path)
 
-        # Use debounce timer to batch rapid changes
-        if not self.debounce_timer.isActive():
-            self.debounce_timer.start(DEBOUNCE_DELAY_MS)
+    def poll_status_directory_snapshot(self):
+        """Detect status file changes missed by the platform watcher."""
+        runtime_watchers.poll_status_directory_snapshot(self)
 
     def on_tune_directory_changed(self, path):
         """Called when the tune directory tree changes for the current run."""
-        logger.debug(f"Tune directory changed: {path}")
+        runtime_watchers.on_tune_directory_changed(self, path)
 
-        if not self.combo_sel:
-            return
+    def on_tune_file_changed(self, path):
+        """Called when a watched tune file is modified."""
+        runtime_watchers.on_tune_file_changed(self, path)
 
-        run_dir = os.path.normpath(self.combo_sel)
-        tune_root = os.path.normpath(os.path.join(self.combo_sel, "tune"))
-        changed_path = os.path.normpath(path)
+    def on_dependency_file_changed(self, path):
+        """Called when the watched target dependency file is modified."""
+        runtime_watchers.on_dependency_file_changed(self, path)
 
-        if changed_path in {run_dir, tune_root}:
-            self.setup_tune_watcher()
-
-        self._pending_tune_refresh = True
-        if not self.debounce_timer.isActive():
-            self.debounce_timer.start(DEBOUNCE_DELAY_MS)
+    def on_dependency_directory_changed(self, path):
+        """Called when the selected run directory may contain dependency changes."""
+        runtime_watchers.on_dependency_directory_changed(self, path)
 
     def change_run(self):
         """Refresh status timer callback - updates status/time for all visible targets"""
@@ -1333,6 +1242,10 @@ class MainWindow(QMainWindow):
     def _update_backup_timer_state(self):
         """Sync backup polling state with the current window/view/run conditions."""
         runtime_controller.update_backup_timer_state(self)
+
+    def _update_status_snapshot_timer_state(self):
+        """Sync missed-status-event polling with the current run."""
+        runtime_controller.update_status_snapshot_timer_state(self)
 
     def get_start_end_time(self, tgt_track_file: str) -> tuple:
         """Get start and end time from target tracker file.
@@ -1383,20 +1296,13 @@ class MainWindow(QMainWindow):
         Returns:
             List of (suffix, full_path) tuples, sorted by suffix.
         """
-        return run_repository.get_tune_files(
-            run_dir,
-            target_name,
-            self._tune_files_cache,
-        )
+        return tune_runtime.get_tune_files(self, run_dir, target_name)
 
     def get_tune_display(self, run_dir, target_name):
         """Get tune display string for tree view.
         Returns comma-separated suffixes or empty string
         """
-        tune_files = self.get_tune_files(run_dir, target_name)
-        if not tune_files:
-            return ""
-        return ", ".join([suffix for suffix, _ in tune_files])
+        return tune_runtime.get_tune_display(self, run_dir, target_name)
 
     def get_tune_candidates_from_cmd(self, run_dir: str, target_name: str) -> list:
         """Parse tunesource entries from cmds/<target>.cmd.
@@ -1408,34 +1314,11 @@ class MainWindow(QMainWindow):
         Returns:
             List of (display_name, full_path) tuples for tune files that can be created.
         """
-        return run_repository.get_tune_candidates_from_cmd(run_dir, target_name)
+        return tune_runtime.get_tune_candidates_from_cmd(run_dir, target_name)
 
     def _refresh_tune_cells_for_target(self, target_name: str) -> None:
         """Refresh tune column text and UserRole data for one target in tree model."""
-        if not self.combo_sel or not hasattr(self, "model") or self.model is None:
-            return
-
-        tune_files = self.get_tune_files(self.combo_sel, target_name)
-        tune_display = ", ".join([suffix for suffix, _ in tune_files]) if tune_files else ""
-
-        def update_cells(target_item, tune_item):
-            if not target_item or not tune_item:
-                return
-            if tree_rows.get_row_target_name(target_item) != target_name:
-                return
-            tune_item.setText(tune_display)
-            tune_item.setData(tune_files, Qt.UserRole)
-
-        def walk_rows(parent_item=None):
-            row_count = parent_item.rowCount() if parent_item is not None else self.model.rowCount()
-            for row_idx in range(row_count):
-                row_items = tree_rows.get_row_items(self.model, row_idx, parent_item)
-                update_cells(row_items[1] if len(row_items) > 1 else None, row_items[3] if len(row_items) > 3 else None)
-                level_item = row_items[0] if row_items else None
-                if level_item and level_item.hasChildren():
-                    walk_rows(level_item)
-
-        walk_rows()
+        tune_runtime.refresh_tune_cells_for_target(self, target_name)
 
     def create_tune(self):
         """Create a tune file from tunesource entries in cmds/<target>.cmd and open it."""
@@ -1453,11 +1336,7 @@ class MainWindow(QMainWindow):
         Returns:
             Tuple of (queue, cores, memory), each can be 'N/A' if not found.
         """
-        return run_repository.get_bsub_params(
-            run_dir,
-            target_name,
-            self._bsub_params_cache,
-        )
+        return tune_runtime.get_bsub_params(self, run_dir, target_name)
 
     def save_bsub_param(self, run_dir, target_name, param_type, new_value):
         """Save a single bsub parameter to the csh file.
@@ -1468,11 +1347,7 @@ class MainWindow(QMainWindow):
             new_value: New value to set
         Returns: True if successful, False otherwise
         """
-        if run_repository.save_bsub_param(run_dir, target_name, param_type, new_value):
-            self._invalidate_bsub_cache(run_dir, target_name)
-            logger.info(f"Updated {param_type} to {new_value} for {target_name}")
-            return True
-        return False
+        return tune_runtime.save_bsub_param(self, run_dir, target_name, param_type, new_value)
 
     def handle_tune(self):
         """Open tune file for selected target with gvim"""
@@ -1569,6 +1444,7 @@ class MainWindow(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(True)
     app.setStyle("Fusion")
     # Load custom font (Inter) if available
     window = MainWindow()

@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local test data
+mock_runs/
+
+# Bundle tool local state
+tools/.patch_bundle_state/
+bundle.txt
+root_bundle.txt
+
+# OMX local runtime files
+.omx/
+.codex/
+
+# Superpowers local state
+.superpowers/
+# Manual PDF tool local bundles
+manual_pdf_tool_bundle*.txt

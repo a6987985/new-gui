@@ -17,6 +17,8 @@ env/
 # IDE
 .idea/
 .vscode/
+
+# Editor swap
 *.swp
 *.swo
 *~
@@ -28,8 +30,27 @@ Thumbs.db
 # Logs
 *.log
 
-# Local test data (if any)
+# Local test data
 mock_runs/
 
-# Local patch bundle export state
-tools/.patch_bundle_state/
+# Bundle tool state and outputs
+**/tools/.patch_bundle_state/
+new_gui/bundle.txt
+new_gui/root_bundle.txt
+
+# IDE / local agent runtime
+.claude/
+.codex/
+.superpowers/
+.omx/
+new_gui/.claude/
+new_gui/.codex/
+new_gui/.superpowers/
+new_gui/.omx/
+
+# Pytest cache
+.pytest_cache/
+new_gui/.pytest_cache/
+
+# Manual PDF tool local bundles
+new_gui/manual_pdf_tool_bundle*.txt

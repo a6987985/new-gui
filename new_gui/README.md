@@ -1,0 +1,804 @@
+# XMeta Console GUI
+
+> **Last Updated**: 2026-03-19
+
+A PyQt5-based GUI monitoring tool for tracking task execution status and dependencies in EDA/chip design workflows.
+
+## Project Structure
+
+```text
+<repo root>/
+├── new_gui/
+│   ├── __init__.py
+│   ├── main.py
+│   ├── application/
+│   ├── infrastructure/
+│   ├── model/
+│   ├── presentation/
+│   └── shared/
+├── docs/
+│   └── architecture_overview.md
+├── tests/
+├── tools/
+├── work_scr/
+├── README.md
+├── AGENTS.md
+├── CLAUDE.md
+└── .gitignore
+```
+
+## Architecture Snapshot
+
+The current package layout follows a layered structure:
+
+- `new_gui/main.py`: application entry and `MainWindow` integration surface
+- `new_gui/presentation/`: widgets, dialogs, builders, styles, theme, presenters
+- `new_gui/presentation/state/`: window-owned state containers and split runtime state
+- `new_gui/application/`: use-case orchestration and workflow entry points
+- `new_gui/model/services/`: view-state, tree-state, and navigation logic
+- `new_gui/infrastructure/repositories/`: file, process, dependency, and runtime repositories
+- `new_gui/shared/config/`: constants, regexes, theme settings, and logging
+
+Recent refactor highlights:
+
+- `MainWindow` state fields are consolidated via `presentation/state/window_state.py`
+- cache invalidation is centralized in `infrastructure/repositories/run_cache_manager.py`
+- large view flows were split into `view_filter_controller.py` and `view_run_controller.py`
+- dependency parsing and dependency-query logic were split into dedicated modules
+
+For a concise architecture summary, see `docs/architecture_overview.md`.
+
+## Executable Agent Dock
+
+The Console GUI ships with an Executable Agent dock (Agent menu, Ctrl+Shift+A)
+that can drive the application through Registered GUI Actions only:
+
+- Read-Only Actions (open log, trace up/down, terminal) execute immediately.
+- State-Changing Actions (run / stop / skip / unskip / invalid) require a
+  confirmation dialog before firing.
+- The dock supports a parameterized target syntax: typing
+  ``run targetA targetC`` projects those targets onto the live selection
+  before invoking the existing UI action.
+- Every interaction is appended as one JSON line to ``.agent/agent_audit.log``
+  with before/after run-state observations, and the History tab summarizes
+  the log for governance review.
+- Planning is pluggable: an offline ``RulePlanner`` is the default, and
+  setting ``NEW_GUI_AGENT_API_KEY`` (or ``OPENAI_API_KEY``) enables the
+  ``LLMPlanner`` which transparently falls back to rules on failure.
+
+See ``new_gui/CONTEXT.md`` for the full boundary specification.
+
+## Architecture And Maintenance Docs
+
+For the post-split codebase, use these documents as the primary references:
+
+- `work_scr/codebase_governance_plan.md`: active governance checklist for hotspot cleanup, debt containment, and safe next-step refactors
+- `work_scr/new_gui_maintenance_boundaries.md`: stable ownership rules and "do not split further" boundaries
+- `work_scr/reproduce_ui_execution_roadmap.md`: executed slice history and current split status
+- `work_scr/reproduce_ui_to_1000_blueprint.md`: original line-budget blueprint that drove the split
+- `work_scr/dependency_graph_evolution_roadmap.md`: dependency graph evolution plan from baseline visualization to a stable analysis aid
+- `work_scr/dependency_graph_closure_checklist.md`: dependency graph closure record and final maintenance boundary
+- `work_scr/target_category_navigation_plan.md`: design exploration for a future left-side category navigation workflow
+
+## Technology Stack
+
+- **GUI Framework**: PyQt5
+- **Python Version**: 3.10+
+- **Concurrency**: `ThreadPoolExecutor` for background tasks
+- **File Monitoring**: `QFileSystemWatcher` for real-time status updates
+
+## Features
+
+### 1. Target Status Monitoring
+
+- Parse `.target_dependency.csh` files to build target dependency trees
+- Display hierarchical view with levels, targets, status, and timestamps
+- Preserve large generic collections as `level -> generic group -> leaf target`
+- Build generic group rows from `INSTANCES_LIST_*Generic*` entries with 3 or more targets
+- Show aggregated status text and color on synthetic generic group rows
+- Allow batch execute actions directly from generic group rows
+- Real-time status updates via file system watcher (no polling)
+- Status colors with visual feedback
+
+### 2. Status Types and Visual Indicators
+
+| Status | Color | Icon | Animation | Description |
+|--------|-------|------|-----------|-------------|
+| `finish` | PaleGreen (#98FB98) | ✓ | None | Task completed successfully |
+| `running` | Yellow (#FFFF00) | ▶ | Pulse | Task currently running |
+| `failed` | Light Red (#FF9999) | ✗ | None | Task failed |
+| `skip` | PeachPuff (#FFDAB9) | ○ | None | Task skipped |
+| `scheduled` | Deep Blue (#4A90D9) | ◷ | None | Task scheduled |
+| `pending` | Orange (#FFA500) | ◇ | None | Task pending |
+| (no status) | Light Blue (#88D0EC) | | None | Status not yet determined |
+
+#### Row Visual Effects
+- **Hover**: Semi-transparent blue background (#E6F0FF) with stable text weight
+- **Selected**: Gray background (#C0C0BE) with stable selection emphasis
+- **Row Borders**: Drawn on hover/selection for visual clarity
+
+### 3. Dependency Tracing
+
+- **Trace Up**: Find all upstream dependencies (inputs)
+- **Trace Down**: Find all downstream dependencies (outputs)
+- Visual filtering to show only related targets
+- **Dependency Graph**: Interactive visualization with:
+  - Node selection and highlighting
+  - Upstream/downstream path tracing
+  - Zoom, pan, and fit-to-view controls
+  - In-graph target search
+  - Local subgraph focus with `Depth` scope control
+  - Graph-to-tree locate flow and tree-to-graph initial focus
+  - Explicit level lanes and target counts
+  - Export to PNG
+
+#### Dependency Graph Current Status
+
+The dependency graph is considered a closed, stable module for this phase.
+
+- Role: single-run, read-only, modal inspection and navigation view
+- Stable capabilities:
+  - Canonical trace semantics shared with the main tree view
+  - In-graph search and cyclic "find next" navigation
+  - Local subgraph mode with explicit `Depth` scope semantics
+  - Graph-to-tree locate flow with context-aware return behavior
+  - Level-aware rendering with visible lane guides
+- Maintenance boundary:
+  - Do not expand it into a graph editor, multi-run comparison workspace, or permanently synchronized second primary view
+  - Do not add more toolbar controls unless a real inspection workflow gap appears
+
+### 4. Search and Filter
+
+- Real-time search by target name
+- Status-based filtering
+- Dependency-based filtering
+- Status and dependency filters preserve relevant ancestors so grouped rows remain readable
+
+### 5. View Configuration
+
+Access via the `Setting` menu in the menu bar.
+
+#### `Setting -> colomn`
+
+- Control visible columns for the main target tree
+- `level` and `target` remain mandatory and cannot be disabled
+- Other columns can be shown or hidden without changing the underlying tree data
+- The picker only toggles a column when the checkbox square itself is clicked
+
+#### `Setting -> button`
+
+- Control which top action buttons are visible
+- Default state keeps execute actions only in the top area
+- Optional buttons include `Term`, `Csh`, `Log`, `Cmd`, `Trace Up`, and `Trace Down`
+- `Term` opens the embedded terminal panel on Linux/X11 when `xterm` is available, and falls back to the external terminal command otherwise
+- Enabling optional buttons switches the top action area to a `row1 + row2` layout
+- Execute buttons remain prioritized in `row1`
+- `row2` button widths stay stable even when only a subset of optional buttons is enabled
+- When `row2` is enabled, `row1` shares the menu-band height and `row2` uses the original action-button band, so the tree area is not pushed downward
+- The picker only toggles a button when the checkbox square itself is clicked
+
+### 6. Tune File Management
+
+Tune files are TCL scripts used for task configuration.
+
+#### Naming Convention
+```
+{run_dir}/tune/{target}/{target}.{suffix}.tcl
+```
+
+Example: `/path/to/run/tune/synthesis/synthesis.pre_opt.tcl`
+
+#### Operations
+- **Open Tune**: Open tune file with gvim (supports multiple tune files per target)
+  - Via context menu: Right-click → Tune → Open Tune
+  - Via double-click: Double-click on the Tune column cell to show dropdown menu
+- **Copy Tune To...**: Copy tune file to multiple runs (supports selecting multiple tune files)
+
+### 7. Context Menu Actions
+
+Right-click on a target to access organized menu:
+
+**▶ Execute**
+- Run All / Run Selected
+- Stop
+- Skip / Unskip
+- Invalid
+
+**📁 Files**
+- Terminal (prefer embedded terminal panel in current run directory, fall back externally when embedding is unavailable)
+- csh (shell script)
+- Log (log file)
+- cmd (command file)
+
+**🎵 Tune**
+- Open Tune
+- Copy Tune To...
+
+**🔗 Trace**
+- Trace Up (Ctrl+U)
+- Trace Down (Ctrl+D)
+- Dependency Graph (Ctrl+G)
+
+**📋 Copy**
+- Copy Target Name (Ctrl+C)
+- Copy Run Path (single target only)
+
+**⚙ Params**
+- User Params (Ctrl+P)
+- Tile Params (Ctrl+Shift+P)
+
+### 8. Status Overview
+
+Access via `Status → Show All Status` menu to view a summary of all run directories:
+- Displays: Run Directory, Latest Target, Status, Time Stamp
+- Double-click any row to copy the run name to clipboard
+- Provides quick overview of all runs in the base directory
+
+### 9. Embedded Search Filter
+
+Double-click on the Target column header to show an embedded search input:
+- Real-time filtering as you type
+- Press Escape or Enter to hide the filter
+- Shows flat list of matching targets
+
+### 10. BSUB Parameter Editing
+
+Double-click on Queue, Cores, or Memory columns to edit bsub parameters:
+- **Queue**: BSUB queue name (-q parameter)
+- **Cores**: Number of CPU cores (-n parameter, must be numeric)
+- **Memory**: Memory allocation in MB (rusage[mem=XXX], must be numeric)
+- Changes are saved directly to `{run_dir}/make_targets/{target}.csh`
+
+### 11. Tab Label Interaction
+
+The tab label (showing current run name) supports:
+- **Double-click**: Toggle between Expand All and Collapse All
+- Default expand behavior keeps synthetic generic group rows collapsed
+- Displays trace mode status (red text) when tracing dependencies
+
+### 12. Theme System
+
+Three themes available:
+- **Light Theme** (default): Clean, bright interface
+- **Dark Theme**: Reduced eye strain for low-light environments
+- **High Contrast**: Enhanced readability
+
+Access via `View → Theme` menu or `Ctrl+T` shortcut.
+
+### 13. Status Bar
+
+Bottom status bar displays:
+- Current run name
+- Task statistics by status (with colored icons)
+- Connection status indicator
+- Current theme indicator
+
+### 14. Notifications
+
+Toast notifications appear in bottom-right corner:
+- **Info** (blue): General information
+- **Success** (green): Successful operations
+- **Warning** (yellow): Warnings
+- **Error** (red): Errors
+
+Auto-dismiss after configurable duration, click to close.
+
+### 15. Params Editor
+
+Edit and view parameter files for each run.
+
+#### File Locations
+```
+{run_dir}/user.params   # User-modifiable parameters (editable)
+{run_dir}/tile.params   # All parameters used (read-only)
+```
+
+#### File Format
+```
+# Comment lines start with #
+VARA = 111
+VARB = "value with spaces"
+VARC = 333
+```
+
+#### User Params Features
+- **Add**: Create new parameters
+- **Edit**: Modify existing parameter values
+- **Delete**: Remove parameters
+- **Search**: Filter parameters by name (with debounce for large files)
+- **Save**: Write changes to file (auto-backup to .bak)
+- **Gen Params**: Execute `XMeta_gen_params` to generate params to flow
+
+#### Tile Params Features
+- **View**: Read-only parameter list
+- **Search**: Filter parameters by name
+- **Copy**: Double-click to copy parameter to clipboard
+
+#### Access Methods
+- **Menu**: Tools → Terminal Panel / External Terminal / User Params / Tile Params
+- **Context Menu**: Right-click → Params → User Params / Tile Params
+- **Shortcuts**: Ctrl+P / Ctrl+Shift+P
+
+### 16. Multi-Selection Support
+
+The tree view supports extended selection for batch operations:
+- **Ctrl+Click**: Add/remove individual items from selection
+- **Shift+Click**: Select range of items
+- Actions (Run, Stop, Skip, Unskip, Invalid) apply to all selected targets
+- Copy (Ctrl+C) copies all selected target names to clipboard
+
+### 17. Run Selection with Search
+
+The run dropdown (BoundedComboBox) provides:
+- **Search Mode**: Click the 🔍 button to enable text filtering
+- **Auto-complete**: Type to filter available runs
+- **Smart Positioning**: Popup stays within window bounds
+- **Current Selection First**: Selected run appears at top of list when opened
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+F` | Focus search field |
+| `Ctrl+R` | Refresh current view |
+| `Ctrl+E` | Expand all items |
+| `Ctrl+W` | Collapse all items |
+| `Ctrl+T` | Toggle theme |
+| `Ctrl+G` | Show dependency graph |
+| `Ctrl+C` | Copy selected target name |
+| `Ctrl+Enter` | Run selected targets |
+| `Ctrl+U` | Trace upstream dependencies |
+| `Ctrl+D` | Trace downstream dependencies |
+| `Ctrl+P` | Open user.params editor |
+| `Ctrl+Shift+P` | View tile.params |
+
+## Core Classes
+
+| Class | Description |
+|-------|-------------|
+| `MainWindow` | Main application window and runtime composition root (~1576 lines in `main.py`) |
+| `ThemeManager` | Singleton managing application themes |
+| `StatusAnimator` | Singleton managing status animations (pulse effect) |
+| `NotificationWidget` | Individual notification popup |
+| `NotificationManager` | Singleton managing notification stacking and display |
+| `StatusBar` | Bottom status bar with statistics |
+| `BorderItemDelegate` | Custom delegate for row borders, status colors, and stable selection emphasis |
+| `FilterHeaderView` | Custom header with embedded search input for Target column |
+| `TuneComboBoxDelegate` | ComboBox delegate for Tune column dropdown |
+| `ColumnVisibilityPicker` | Embedded settings widget for main-tree column visibility |
+| `ButtonVisibilityPicker` | Embedded settings widget for top action button visibility |
+| `TreeViewEventFilter` | Event filter for expand/collapse handling |
+| `RoundedScrollBar` | Custom scrollbar with rounded corners (cross-platform) |
+| `ColorTreeView` | Custom tree view with custom branch drawing and rounded scrollbars |
+| `BoundedComboBox` | ComboBox with search functionality and bounded popup positioning |
+| `ClickableLabel` | QLabel that emits doubleClicked signal |
+| `ParamsTableModel` | High-performance QAbstractTableModel for params data with filtering |
+| `ParamsEditorDialog` | Dialog for editing user.params and viewing tile.params |
+| `DependencyGraphDialog` | Interactive dependency graph viewer with search, local focus, tree locate, and export |
+| `InteractiveNodeItem` | Clickable/hoverable node for dependency graph |
+| `SelectTuneDialog` | Dialog for selecting a single tune file |
+| `CopyTuneSelectDialog` | Combined dialog for multi-tune selection and multi-run copy |
+
+## Data Sources
+
+### Status Files
+```
+{run_dir}/status/{target}.{status}
+```
+The latest status file (by mtime) determines the current status.
+
+### Time Tracking
+```
+{run_dir}/logs/targettracker/{target}.start
+{run_dir}/logs/targettracker/{target}.finished
+```
+File modification times are used for start/end timestamps.
+
+### Dependency Information
+```
+{run_dir}/.target_dependency.csh
+```
+Contains `ACTIVE_TARGETS`, `LEVEL_N`, `TARGET_LEVEL_*`, `DEPENDENCY_OUT_*`, and `ALL_RELATED_*` definitions.
+
+### BSUB Parameters
+```
+{run_dir}/make_targets/{target}.csh
+```
+Shell scripts containing BSUB job submission parameters:
+- `-q <queue>`: Queue name
+- `-n <cores>`: Number of CPU cores
+- `-R "rusage[mem=<MB>]"`: Memory allocation
+
+## Configuration
+
+### Status Configuration
+```python
+STATUS_CONFIG = {
+    "finish": {"color": "#98FB98", "icon": "✓", "animation": None, "text_color": "#1a5f1a"},
+    "running": {"color": "#FFFF00", "icon": "▶", "animation": "pulse", "text_color": "#333333"},
+    "failed": {"color": "#FF9999", "icon": "✗", "animation": None, "text_color": "#8b0000"},
+    "pending": {"color": "#FFA500", "icon": "◇", "animation": None, "text_color": "#333333"},
+    "": {"color": "#88D0EC", "icon": "", "animation": None, "text_color": "#1a4f6f"},
+    # ...
+}
+```
+
+### Theme Configuration
+```python
+THEMES = {
+    "light": {
+        "window_bg": "qlineargradient(...)",
+        "tree_bg": "rgba(255, 255, 255, 0.9)",
+        "text_color": "#333333",
+        "accent_color": "#4A90D9",
+        # ...
+    },
+    "dark": { ... },
+    "high_contrast": { ... }
+}
+```
+
+### Shortcut Configuration
+```python
+SHORTCUTS = {
+    "search": {"key": "Ctrl+F", "description": "Focus search field"},
+    "refresh": {"key": "Ctrl+R", "description": "Refresh current view"},
+    "expand_all": {"key": "Ctrl+E", "description": "Expand all items"},
+    # ...
+}
+```
+
+### Column Width Rules
+
+- Initial main-view width is derived from the default tree column plan
+- `target` absorbs most overall window-resize growth
+- Manual resize of one column does not silently redistribute other columns
+- The rightmost visible column expands to fill trailing blank space after manual shrinking
+- Each visible column is clamped so the header label remains fully readable
+- Hidden columns via `Setting -> colomn` are excluded from adaptive width calculations
+
+### Tree View Columns
+
+The tree view displays the following columns:
+- **Level**: Task level in the dependency hierarchy
+- **Target**: Task name
+- **Status**: Current task status (with color coding)
+- **Tune**: Available tune file suffixes (double-click to open dropdown)
+- **Start Time**: Task start timestamp
+- **End Time**: Task end timestamp
+- **Queue**: BSUB queue name (double-click to edit)
+- **Cores**: Number of CPU cores (double-click to edit)
+- **Memory**: Memory allocation in MB (double-click to edit)
+
+In the main target view:
+- `level` and `target` are always visible
+- Other columns can be toggled from `Setting -> colomn`
+
+### Pre-compiled Regex Patterns
+- `RE_LEVEL_LINE`: Parse level definitions
+- `RE_ACTIVE_TARGETS`: Parse active targets list
+- `RE_TARGET_LEVEL`: Parse target level assignments
+- `RE_DEPENDENCY_OUT`: Parse output dependencies
+- `RE_ALL_RELATED`: Parse related targets
+- `RE_PARAM_LINE`: Parse parameter file lines (VAR = value)
+
+## Performance Optimizations
+
+1. **Status Caching**: Batch status lookups with `_build_status_cache()` - reads all status files in one pass
+2. **Time Caching**: Batch timestamp lookups cached alongside status
+3. **File System Watcher**: `QFileSystemWatcher` replaces polling timer for real-time status updates
+4. **Debounce Timer**: 300ms delay to batch rapid file changes before UI refresh
+5. **Backup Timer**: 10-second fallback refresh in case file watcher misses events
+6. **In-place Updates**: Refresh status/time without rebuilding entire tree when possible
+7. **Animation Timer**: 20 FPS (50ms interval) for running status pulse animation
+8. **Delegate Drawing**: Custom `BorderItemDelegate` for efficient row rendering with visual effects
+9. **Virtualized Params Table**: `ParamsTableModel` uses `QAbstractTableModel` for large params files
+10. **Search Debounce**: 200ms debounce in params editor search to avoid lag on large files
+11. **ThreadPoolExecutor**: Background threads for file operations (gvim, terminal, commands)
+
+## Usage
+
+```bash
+python new_gui/main.py
+```
+
+### Cross-Network Patch Bundle Workflow
+
+Use this workflow when you need to move `new_gui/` directory updates into an isolated intranet environment.
+
+#### 1. Export a bundle on the internet-facing machine
+
+First export will automatically generate a full bundle and initialize the local baseline snapshot:
+
+```bash
+python tools/export_patch_bundle.py --target new_gui --output bundle.txt
+```
+
+Later exports will generate patch bundles against the last exported baseline by default:
+
+```bash
+python tools/export_patch_bundle.py --target new_gui --output bundle.txt
+```
+
+If the intranet copy drifted or you want to reset the baseline, force a full bundle:
+
+```bash
+python tools/export_patch_bundle.py --target new_gui --full --output bundle.txt
+```
+
+Notes:
+- Bundle transfer state is stored locally under `tools/.patch_bundle_state/`
+- Chunk size defaults to 4000 characters and can be overridden with `--chunk-size`
+- Export output is plain text, suitable for manual copy/paste between isolated networks
+- Keep the exported bundle file at `bundle.txt`
+
+#### 2. Transfer the generated text chunks
+
+Copy the contents of `bundle.txt` through your approved text channel and paste them into a temporary file on the intranet machine, for example `/tmp/new-gui-bundle.txt`.
+
+#### 3. Import the bundle on the intranet machine
+
+Run the importer from the project root, or point it at the root with `--root`:
+
+```bash
+python tools/import_patch_bundle.py --input /tmp/new-gui-bundle.txt --root /path/to/new-gui
+```
+
+The importer will:
+- Rebuild the bundle from text chunks
+- Verify chunk and bundle hashes
+- Refuse patch application if the current file hash does not match the expected baseline
+- Create a timestamped backup before overwriting an existing file
+- Verify the final file hash after apply
+
+You can also pipe chunk text through stdin:
+
+```bash
+cat /tmp/new-gui-bundle.txt | python tools/import_patch_bundle.py --root /path/to/new-gui
+```
+
+#### 4. Recovery path
+
+If patch mode fails with a baseline drift message, export again with `--full` and import that full bundle to re-establish the shared baseline.
+
+## Requirements
+
+- Python 3.10+
+- PyQt5
+- gvim (optional, for opening tune files)
+
+## Changelog
+
+### v3.0.0 - Main View Workflow Consolidation
+
+#### New Features
+- **Configurable top action area**: Added `Setting -> button` to control visible top buttons
+  - Default top area keeps execute actions only
+  - Optional file/trace actions can be enabled into a second row
+- **Configurable columns**: Added `Setting -> colomn` to control visible main-tree columns
+  - `level` and `target` stay locked visible
+- **Generic group rows**: Large generic target collections now collapse into synthetic group rows
+  - Derived from `INSTANCES_LIST_*Generic*` entries with 3 or more targets
+  - Group rows show aggregated status and support batch execute actions
+
+#### Improvements
+- **Top action layout refinement**: Two-row button mode now keeps the tree area height stable, moves `row1` into the menu band when `row2` is visible, and keeps `row2` button widths stable across partial-enable states
+- **Embedded terminal panel**: `Term` now prefers an in-window terminal panel on Linux/X11 with `xterm`, while keeping an external-terminal fallback for unsupported environments
+- **Tree expand behavior**: "Expand all" keeps synthetic generic groups collapsed by default for readability
+- **Header width rules**: Adaptive sizing now respects real header rendering width and hidden-column state
+
+#### Bug Fixes
+- **Visibility picker click behavior**: `Setting -> button` and `Setting -> colomn` now toggle only on checkbox clicks, so label or blank-area misclicks do not change state or close the picker unexpectedly
+
+### v2.9.0 - UI Improvements
+
+#### Bug Fixes
+- **Removed non-existent method calls**: Fixed `AttributeError` by removing calls to undefined methods (`_init_tree_view`, `_init_status_bar`, `_init_notifications`, `_init_keyboard_shortcuts`, `_init_file_watcher`) - these were already integrated into `_init_top_panel`
+
+#### Tab Bar Improvements
+- **Smart Close Button Visibility**: Tab close button now hides in normal run state, only shows in Trace mode and All Status Overview
+- **XMETA_BACKGROUND Support**: Main window containers now respect `XMETA_BACKGROUND` for consistent theming across top panel, tab bar, tab widget, and status bar
+- **White seam fix**: Removed hard-coded light borders and shadows that showed up as white separator lines in flow environments
+
+#### Menu Bar Enhancements
+- **Bold Font**: Menu bar items now use bold font weight for better visibility
+- Applied to all themes (light, dark, high contrast) and custom XMETA_BACKGROUND mode
+
+### v2.8.0 - Code Quality Improvements (P2)
+
+#### Type Annotations
+- Added type hints to public methods for better IDE support and documentation:
+  - `get_target_status(run_name: str, target_name: str) -> str`
+  - `get_target_times(run_name: str, target_name: str) -> tuple`
+  - `get_start_end_time(tgt_track_file: str) -> tuple`
+  - `_open_file_with_editor(filepath: str, editor: str, use_popen: bool) -> None`
+  - `get_tune_files(run_dir: str, target_name: str) -> list`
+  - `get_bsub_params(run_dir: str, target_name: str) -> tuple`
+
+#### Exception Handling
+- Improved error handling with specific exception types:
+  - `FileNotFoundError` for missing files
+  - `PermissionError` for access denied
+  - `UnicodeDecodeError` for encoding issues
+  - `OSError` for general I/O errors
+
+#### Code Organization
+- **`MainWindow.__init__` refactored**: Split ~500 line method into focused sub-methods:
+  - `_init_core_variables()` - Initialize instance variables
+  - `_detect_run_base_dir()` - Detect run directory
+  - `_init_window()` - Window properties and animation
+  - `_init_menu_bar()` - Menu bar setup
+  - `_init_central_widget()` - Central widget and layout
+  - `_init_top_panel()` - Top control panel
+  - `_init_tree_view()` - Tree view setup (remaining)
+  - `_init_status_bar()` - Status bar
+  - `_init_notifications()` - Notification manager
+  - `_init_keyboard_shortcuts()` - Keyboard shortcuts
+  - `_init_file_watcher()` - File system watcher
+
+- **`show_context_menu` refactored**: Extracted menu builders:
+  - `_build_execute_menu()` - Execute submenu
+  - `_build_file_menu()` - Files submenu
+  - `_build_tune_menu()` - Tune submenu
+  - `_build_params_menu()` - Params submenu
+  - `_build_trace_menu()` - Trace submenu
+  - `_build_copy_menu()` - Copy submenu
+
+#### Naming Consistency
+- Renamed `Xterm()` to `open_terminal()` to follow Python naming conventions
+- Renamed inner function `open_terminal()` to `_run_terminal()` to avoid shadowing
+
+### v2.7.0 - Code Quality Improvements (P0/P1)
+
+#### Code Refactoring
+- **Extracted File Opening Helper**: New `_open_file_with_editor()` method consolidates 4 duplicate file opening functions
+  - Unified error handling for gvim and other editors
+  - Reduced code duplication by ~56 lines
+- **Module-Level Constants**: Extracted magic numbers to named constants
+  - Timing: `DEBOUNCE_DELAY_MS`, `BACKUP_TIMER_INTERVAL_MS`, `ANIMATION_DURATION_MS`, `FADE_IN_DURATION_MS`
+  - UI Dimensions: `WINDOW_WIDTH`, `WINDOW_HEIGHT`, `MAX_NOTIFICATIONS`, `NOTIFICATION_SPACING`, etc.
+- **Style Dictionary**: Added `STYLES` dictionary for reusable button and menu styles
+  - `button_primary`, `button_default`, `button_warning`, `menu`, `button_close`
+- **Dead Code Removal**: Removed unreachable code in `TuneComboBoxDelegate.createEditor()`
+
+#### Project Guidelines
+- Added `CLAUDE.md` with project conventions:
+  - Main entry file: `new_gui/main.py`
+  - No Chinese characters in code
+  - English-only comments, docstrings, and variable names
+
+### v2.6.0 - UI Refinements
+
+#### ComboBox Improvements
+- **Dropdown Arrow**: Line width reduced from 2px to 1.5px for a cleaner look
+- **Font Size**: Increased from 13px to 14px for better readability
+- **Font Color**: Changed from gray-blue (#545F71) to pure black (#000000)
+- **Border Color**: Changed from dark gray-blue (#545F71) to light gray (#a0a0a0)
+- **Popup Positioning**: Dropdown popup now sits flush against the combobox with no gap
+- **Hidden Current Selection**: Current selected item is hidden from dropdown list
+- **Item Alignment**: Dropdown items left-padding (10px) aligned with combobox text
+- **Custom Delegate**: Implemented `HiddenRowDelegate` to properly hide current selection row
+
+#### Background Color Environment Variable
+- **XMETA_BACKGROUND**: Main window container backgrounds can be customized via `XMETA_BACKGROUND`
+- Covered areas include the main window, top panel, menu bar, tab bar, tab widget, and status bar
+- Colors are applied at GUI startup and re-applied after theme changes
+- Falls back to default gradient if environment variable is not set
+
+### v2.5.0 - Bug Fixes and UX Improvements
+
+#### Bug Fixes
+- **Skip Status Priority**: Fixed status detection when both `finish` and `skip` status files exist
+  - Skip status now takes precedence over other statuses (intentional override)
+  - Applies to both `get_target_status()` and `_build_status_cache()` methods
+
+#### UX Improvements
+- **Search Mode Persistence**: Search filter now persists after executing actions (skip, unskip, run, etc.)
+  - Previously: Executing actions in search mode would exit to full tree view
+  - Now: Search results are preserved and refreshed with updated status
+  - New methods: `_get_selected_targets_keep_search()` and `_refresh_after_action()`
+
+### v2.4.0 - Code Cleanup and Documentation
+
+#### Code Improvements
+- **Single File Architecture**: Complete application in ~5590 lines
+- **Organized Imports**: Standard library, PyQt5, and local imports properly grouped
+- **Pre-compiled Regex**: All regex patterns compiled at module level for performance
+- **Singleton Pattern**: `ThemeManager`, `StatusAnimator`, `NotificationManager` use proper singleton pattern
+
+#### Documentation Updates
+- Updated column widths to match actual code values
+- Added BSUB Parameters data source documentation
+- Added row visual effects (hover/selection) description
+- Added multi-selection support documentation
+- Added run selection with search documentation
+- Updated Core Classes table with accurate descriptions
+- Expanded Performance Optimizations section
+
+### v2.3.0 - Cross-Platform UI Fixes
+
+#### New Features
+- **Rounded Scrollbar**: Custom scrollbar with rounded corners for all platforms
+  - Works consistently across macOS and Linux (CentOS 7)
+  - Custom QPainter-based rendering bypasses platform-specific QSS limitations
+  - Supports hover and pressed color states
+  - Theme-aware color updates
+- **Custom ComboBox Dropdown Arrow**: Double-V arrow icon for dropdown indicator
+  - Custom QPainter rendering for cross-platform consistency
+  - SVG-style rounded line caps and joins
+  - Hover color feedback
+
+#### Improvements
+- Fixed scrollbar rounded corners not displaying on Linux
+- Fixed ComboBox dropdown arrow not visible on Linux
+- Platform-independent UI components using manual paint events
+- File and trace actions remain available via context menu and shortcuts by default, and later versions reintroduced them as optional top buttons through `Setting -> button`
+
+### v2.2.0 - Feature Enhancements
+
+#### New Features
+- **BSUB Parameter Columns**: Added Queue, Cores, Memory columns to tree view
+  - Double-click to edit bsub parameters in csh files
+  - Validation for numeric inputs
+- **Status Overview**: New `Status → Show All Status` menu for viewing all runs at a glance
+  - Shows run directory, latest target, status, and timestamp
+  - Double-click to copy run name
+- **Embedded Search Filter**: Double-click Target column header to show inline search
+  - Real-time filtering with flat result display
+- **Tune Column Dropdown**: Double-click Tune column to show dropdown menu
+  - Direct access to open tune files
+- **Copy Run Path**: Context menu action to copy current run path (single target)
+- **Gen Params Button**: User Params Editor now includes "Gen Params" button
+  - Executes `XMeta_gen_params` command
+  - Prompts to save if params modified
+- **Tab Label Double-Click**: Double-click tab label to toggle expand/collapse all
+- **Params Table Performance**: New `ParamsTableModel` using `QAbstractTableModel`
+  - Virtualized rendering for large params files
+  - Debounced search (200ms delay)
+
+#### Improvements
+- Tune file path corrected to `{run_dir}/tune/{target}/{target}.{suffix}.tcl`
+- Copy Tune dialog now supports selecting multiple tune files
+- Improved params editor with better context menu
+
+### v2.1.0 - Params Editor Feature
+
+#### New Features
+- **Params Editor**: Edit user.params and view tile.params
+  - Add, edit, delete parameters
+  - Search/filter functionality
+  - Auto-backup on save
+  - Read-only mode for tile.params
+- **Tools Menu**: New menu for parameter file access
+- **Context Menu**: Params submenu in right-click menu
+
+### v2.0.0 - UI Enhancement Release
+
+#### New Features
+- **Theme System**: Light, Dark, and High Contrast themes (Ctrl+T to toggle)
+- **Keyboard Shortcuts**: Full keyboard navigation support
+- **Status Bar**: Real-time task statistics at bottom of window
+- **Notification System**: Toast notifications for user feedback
+- **Enhanced Dependency Graph**: Interactive nodes, path highlighting, export to PNG
+- **Grouped Context Menu**: Organized menus with icons and shortcuts
+- **Selection and Hover Emphasis**: Improved visual feedback in tree view
+- **Dynamic Status Column Width**: Auto-calculated based on status text
+
+#### Improvements
+- Optimized tree view delegate rendering
+- Enhanced file monitoring performance
+- Improved user experience feedback
+- Better visual hierarchy and organization
+- Code optimized by removing unused components (~9% smaller)
+
+#### Internal Changes
+- Added `ThemeManager` singleton for theme management
+- Added `StatusAnimator` for animation coordination
+- Added `NotificationManager` for notification display
+- Enhanced `BorderItemDelegate` with selection emphasis and hover background treatment
+- Enhanced `DependencyGraphDialog` with interactive features
+- Removed unused `HoverInfoCard` and `AdvancedSearchPanel` classes
+
+## License
+
+Internal use only.

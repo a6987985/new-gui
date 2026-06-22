@@ -1,0 +1,53 @@
+"""Backward-compatible dependency helpers re-exported from focused modules."""
+
+from new_gui.infrastructure.repositories.run_dependency_parser import (
+    COLLAPSIBLE_GROUP_MARKER,
+    MIN_COLLAPSIBLE_GROUP_SIZE,
+    RE_INSTANCES_LIST_LINE,
+    CollapsibleTargetGroups,
+    TargetsByLevel,
+    dedupe_targets as _dedupe_targets,
+    get_active_targets,
+    list_all_targets as _list_all_targets,
+    normalize_collapsible_group_label as _normalize_collapsible_group_label,
+    parse_collapsible_target_groups,
+    parse_dependency_file,
+    read_dependency_content as _read_dependency_content,
+)
+from new_gui.infrastructure.repositories.run_dependency_query import (
+    GRAPH_GROUP_PREFIX,
+    GROUP_STATUS_PRIORITY,
+    DependencyGraph,
+    NodeMeta,
+    TraceLookup,
+    TraceTargets,
+    build_dependency_graph,
+    build_direct_downstream_map as _build_direct_downstream_map,
+    build_trace_targets_from_content as _build_trace_targets_from_content,
+    get_retrace_targets,
+)
+
+__all__ = [
+    "COLLAPSIBLE_GROUP_MARKER",
+    "MIN_COLLAPSIBLE_GROUP_SIZE",
+    "RE_INSTANCES_LIST_LINE",
+    "CollapsibleTargetGroups",
+    "TargetsByLevel",
+    "DependencyGraph",
+    "TraceLookup",
+    "TraceTargets",
+    "NodeMeta",
+    "GRAPH_GROUP_PREFIX",
+    "GROUP_STATUS_PRIORITY",
+    "parse_dependency_file",
+    "get_active_targets",
+    "parse_collapsible_target_groups",
+    "build_dependency_graph",
+    "get_retrace_targets",
+    "_read_dependency_content",
+    "_list_all_targets",
+    "_dedupe_targets",
+    "_normalize_collapsible_group_label",
+    "_build_direct_downstream_map",
+    "_build_trace_targets_from_content",
+]
