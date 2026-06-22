@@ -28,10 +28,15 @@ from new_gui.presentation.assets.icon_factory import (
 )
 from new_gui.presentation.styles.output_panel_styles import (
     build_bottom_output_corner_style,
+    build_bottom_output_corner_style_themed,
     build_bottom_output_panel_style,
+    build_bottom_output_panel_style_themed,
     build_bottom_output_tab_style,
+    build_bottom_output_tab_style_themed,
     build_session_log_document_style,
+    build_session_log_document_style_themed,
     build_session_log_style,
+    build_session_log_style_themed,
 )
 from new_gui.presentation.views.widgets.embedded_terminal import EmbeddedTerminalWidget
 
@@ -200,6 +205,19 @@ class SessionLogWidget(QWidget):
         return "".join(blocks)
 
 
+    def apply_theme(self, theme: dict) -> None:
+        """Apply the active theme to the session log widget and entries."""
+        if not isinstance(theme, dict):
+            return
+        try:
+            self.setStyleSheet(build_session_log_style_themed(theme))
+            self._view.document().setDefaultStyleSheet(
+                build_session_log_document_style_themed(theme)
+            )
+        except Exception:
+            pass
+
+
 class BottomOutputPanel(QWidget):
     """IDE-style bottom output area with Terminal and Log tabs."""
 
@@ -328,6 +346,21 @@ class BottomOutputPanel(QWidget):
         """Update tooltip text and propagate content-fill state changes."""
         self._refresh_terminal_content_fill_tooltip()
         self.terminal_content_fill_changed.emit(bool(enabled))
+
+    def apply_theme(self, theme: dict) -> None:
+        """Apply the active theme to all sub-widgets of the bottom output panel."""
+        if not isinstance(theme, dict):
+            return
+        try:
+            self.setStyleSheet(build_bottom_output_panel_style_themed(theme))
+            self._tabs.setStyleSheet(build_bottom_output_tab_style_themed(theme))
+            self._terminal_controls.setStyleSheet(
+                build_bottom_output_corner_style_themed(theme)
+            )
+            if hasattr(self, "log_widget") and hasattr(self.log_widget, "apply_theme"):
+                self.log_widget.apply_theme(theme)
+        except Exception:
+            pass
 
     def _refresh_terminal_follow_run_tooltip(self) -> None:
         """Update the tooltip for the terminal follow-run toggle."""

@@ -256,6 +256,14 @@ def apply_theme(window, theme_name, announce: bool = True) -> None:
         except Exception as exc:
             logger.warning(f"Failed to refresh notifications: {exc}")
 
+    # Refresh bottom output panel (terminal + log tabs)
+    output_panel = getattr(window, "_bottom_output_panel", None)
+    if output_panel is not None and hasattr(output_panel, "apply_theme"):
+        try:
+            output_panel.apply_theme(theme)
+        except Exception as exc:
+            logger.warning(f"Failed to refresh bottom output panel: {exc}")
+
     if announce:
         theme_info = THEMES.get(theme_name, THEMES["light"])
         window.show_notification("Theme", f"Applied {theme_info['name']} theme", "info")
