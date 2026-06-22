@@ -60,6 +60,18 @@ from new_gui.application.agent.agent_planner import (
     AgentPlanner,
     RulePlanner,
 )
+from new_gui.application.agent.agent_claude import (
+    ClaudeAgentPlanner,
+    ClaudePlannerSettings,
+)
+from new_gui.application.agent.agent_backend import (
+    BACKEND_CLAUDE,
+    BACKEND_OPENAI,
+    BACKEND_RULE,
+    SUPPORTED_BACKENDS,
+    build_planner,
+    resolve_backend,
+)
 
 __all__ = [
     "ActionParameterError",
@@ -97,4 +109,12 @@ __all__ = [
     "snapshot_session_context",
     "supports_targets_parameter",
     "validate_action_parameters",
+    "ClaudeAgentPlanner",
+    "ClaudePlannerSettings",
+    "BACKEND_CLAUDE",
+    "BACKEND_OPENAI",
+    "BACKEND_RULE",
+    "SUPPORTED_BACKENDS",
+    "build_planner",
+    "resolve_backend",
 ]

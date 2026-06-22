@@ -302,6 +302,7 @@ class AgentPanel(QWidget):
         parent: Optional[QWidget] = None,
         audit_path: Optional[str] = None,
         theme: Optional[dict] = None,
+        backend_label: Optional[str] = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("agentPanel")
@@ -309,8 +310,20 @@ class AgentPanel(QWidget):
         self._audit_path = audit_path
         self._theme = _coalesce_theme(theme)
         self._status_state = self.STATUS_IDLE
+        self._backend_label = backend_label or ""
         self._build_ui()
         self.apply_theme(self._theme)
+
+    def set_backend_label(self, label: Optional[str]) -> None:
+        """Update the backend caption shown beneath the title."""
+        self._backend_label = label or ""
+        if hasattr(self, "_subtitle_label"):
+            self._subtitle_label.setText(self._compose_subtitle())
+
+    def _compose_subtitle(self) -> str:
+        if self._backend_label:
+            return f"{self.SUBTITLE_LABEL}  ·  via {self._backend_label}"
+        return self.SUBTITLE_LABEL
 
     # ------------------------------------------------------------ Layout
 
@@ -349,7 +362,7 @@ class AgentPanel(QWidget):
         self._header_label.setObjectName("agentHeader")
         title_block.addWidget(self._header_label)
 
-        self._subtitle_label = QLabel(self.SUBTITLE_LABEL)
+        self._subtitle_label = QLabel(self._compose_subtitle())
         self._subtitle_label.setObjectName("agentSubtitle")
         title_block.addWidget(self._subtitle_label)
 

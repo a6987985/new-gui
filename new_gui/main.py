@@ -51,6 +51,8 @@ from new_gui.application.agent import (
     LLMPlanner,
     LLMPlannerSettings,
     RulePlanner,
+    build_planner,
+    resolve_backend,
     default_audit_log_path,
 )
 from new_gui.presentation.presenters.agent_controller import AgentController
@@ -88,15 +90,25 @@ class MainWindow(QMainWindow):
         # Expand tree initially
         self.expand_tree_default()
 
+    def _format_agent_backend_label(self, backend, planner):
+        """Return a short caption like 'claude' or 'rule (openai fallback)'."""
+        planner_kind = type(planner).__name__
+        if planner_kind == "RulePlanner":
+            if backend == "rule":
+                return "rule"
+            return f"rule ({backend} fallback)"
+        if planner_kind == "LLMPlanner":
+            return "openai"
+        if planner_kind == "ClaudeAgentPlanner":
+            return "claude"
+        return planner_kind
+
     def _install_agent_dock(self):
         """Mount the Executable Agent panel in a right-side dock."""
-        settings = LLMPlannerSettings.from_env()
         rule_planner = RulePlanner()
-        planner = (
-            LLMPlanner(settings=settings, fallback=rule_planner)
-            if settings.is_enabled
-            else rule_planner
-        )
+        backend = resolve_backend()
+        planner = build_planner(backend=backend, fallback=rule_planner)
+        backend_label = self._format_agent_backend_label(backend, planner)
         audit_path = default_audit_log_path()
         try:
             audit_log = AgentAuditLog(path=audit_path)
@@ -112,6 +124,7 @@ class MainWindow(QMainWindow):
             self.agent_controller,
             parent=self,
             audit_path=audit_path,
+            backend_label=backend_label,
         )
         self._agent_dock = QDockWidget("✨  Agent", self)
         self._agent_dock.setObjectName("agent_dock")
