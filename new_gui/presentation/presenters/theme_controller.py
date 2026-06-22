@@ -1,11 +1,15 @@
 """Theme application helpers for MainWindow."""
 
+import logging
 import os
 
 from PyQt5.QtGui import QColor, QPalette
-from PyQt5.QtWidgets import QApplication, QToolTip
+from PyQt5.QtWidgets import QApplication, QPushButton, QToolTip
 
-from new_gui.shared.config.settings import THEMES, logger
+from new_gui.shared.config.settings import THEMES
+from new_gui.presentation.views.builders.top_button_specs import rebuild_top_button_stylesheets
+
+logger = logging.getLogger(__name__)
 from new_gui.infrastructure.repositories import flow_background
 from new_gui.presentation.styles import style_sheets
 from new_gui.presentation.views.dialogs.xmeta_background_dialog import XMetaBackgroundDialog
@@ -61,6 +65,39 @@ def toggle_theme(window) -> None:
         window.apply_theme(new_theme)
 
 
+
+def _rebuild_top_buttons(window, theme: dict) -> None:
+    """Rebuild all top-button stylesheets and apply them to visible buttons."""
+    from new_gui.presentation.views.builders.top_button_specs import (
+        TOP_BUTTON_STYLE_SHEETS,
+        rebuild_top_button_stylesheets,
+    )
+    new_sheets = rebuild_top_button_stylesheets(theme)
+    TOP_BUTTON_STYLE_SHEETS.clear()
+    TOP_BUTTON_STYLE_SHEETS.update(new_sheets)
+
+    # Re-apply to all visible top buttons
+    for row_key in ("row1", "row2"):
+        container = getattr(window, f"_top_button_container_{row_key}", None)
+        if container is None:
+            continue
+        for i in range(container.layout().count()):
+            item = container.layout().itemAt(i)
+            if item is None:
+                continue
+            inner = getattr(item, "widget", None)
+            if inner is None:
+                inner_layout = getattr(item, "layout", None)
+                if inner_layout is not None:
+                    for j in range(inner_layout.count()):
+                        btn = inner_layout.itemAt(j).widget()
+                        if btn is not None and hasattr(btn, "setStyleSheet"):
+                            btn.setStyleSheet("")
+            continue
+        # fallback: walk recursively
+        for btn in inner.findChildren(QPushButton):
+            if isinstance(btn, QPushButton):
+                btn.setStyleSheet("")
 def apply_theme(window, theme_name, announce: bool = True) -> None:
     """Apply a theme to the application."""
     window.theme_manager.set_theme(theme_name)
@@ -205,6 +242,19 @@ def apply_theme(window, theme_name, announce: bool = True) -> None:
             agent_panel.apply_theme(theme)
         except Exception as exc:  # never let a theme refresh break the UI
             logger.warning(f"Failed to apply theme to agent panel: {exc}")
+
+    # Refresh top buttons and notifications for the new theme
+    try:
+        _rebuild_top_buttons(window, theme)
+    except Exception as exc:
+        logger.warning(f"Failed to refresh top buttons: {exc}")
+
+    _manager = getattr(window, "_notification_manager", None)
+    if _manager is not None and hasattr(_manager, "apply_theme"):
+        try:
+            _manager.apply_theme(theme)
+        except Exception as exc:
+            logger.warning(f"Failed to refresh notifications: {exc}")
 
     if announce:
         theme_info = THEMES.get(theme_name, THEMES["light"])

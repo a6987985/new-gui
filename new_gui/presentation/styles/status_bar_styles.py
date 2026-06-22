@@ -11,23 +11,24 @@ def build_status_bar_style(background_color: str, border_color: str, text_color:
         QLabel {{
             color: {text_color};
             font-size: 12px;
+            background: transparent;
         }}
     """
 
 
-def build_status_run_label_style() -> str:
+def build_status_run_label_style(accent_color: str = "#0f5fa8") -> str:
     """Return the highlighted run label style."""
-    return "color: #0f5fa8; font-weight: 600;"
+    return f"color: {accent_color}; font-weight: 600;"
 
 
-def build_status_stats_label_style() -> str:
+def build_status_stats_label_style(text_color: str = "#314154") -> str:
     """Return the task statistics label style."""
-    return "color: #314154; font-weight: 500;"
+    return f"color: {text_color}; font-weight: 500;"
 
 
-def build_status_separator_style() -> str:
+def build_status_separator_style(color: str = "#e0e0e0") -> str:
     """Return the separator frame style."""
-    return "color: #e0e0e0;"
+    return f"color: {color}; background-color: {color}; max-width: 1px;"
 
 
 def build_status_badge_style(background_color: str, text_color: str) -> str:
@@ -35,10 +36,14 @@ def build_status_badge_style(background_color: str, text_color: str) -> str:
     return f"""
         QFrame {{
             background-color: {background_color};
-            border-radius: 4px;
+            border-radius: 9px;
+        }}
+        QFrame:hover {{
+            background-color: {background_color};
         }}
         QLabel {{
             background: transparent;
             color: {text_color};
+            font-weight: 600;
         }}
     """

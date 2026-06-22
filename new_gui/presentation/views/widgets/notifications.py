@@ -24,6 +24,7 @@ from new_gui.presentation.styles.notification_styles import (
     build_notification_frame_style,
     build_notification_icon_style,
     build_notification_message_style,
+    build_notification_theme,
     build_notification_title_style,
 )
 
@@ -45,6 +46,15 @@ class NotificationWidget(QFrame):
     def _setup_ui(self):
         """Setup the notification UI."""
         config = NOTIFICATION_TYPES.get(self.notification_type, NOTIFICATION_TYPES["info"])
+        self._accent_color = config["color"]
+        self._theme_tokens = {
+            "background": "#ffffff",
+            "border": "#e0e0e0",
+            "title": "#333333",
+            "message": "#666666",
+            "close": "#999999",
+            "close_hover": "#333333",
+        }
 
         self.setFrameStyle(QFrame.StyledPanel | QFrame.Raised)
         self.setFixedWidth(350)
@@ -54,31 +64,31 @@ class NotificationWidget(QFrame):
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(10)
 
-        icon_label = QLabel(config["icon"])
-        icon_label.setStyleSheet(build_notification_icon_style(config["color"]))
-        layout.addWidget(icon_label)
+        self._icon_label = QLabel(config["icon"])
+        self._icon_label.setStyleSheet(build_notification_icon_style(config["color"]))
+        layout.addWidget(self._icon_label)
 
         text_layout = QVBoxLayout()
         text_layout.setSpacing(2)
 
-        title_label = QLabel(self.title)
-        title_label.setStyleSheet(build_notification_title_style())
-        text_layout.addWidget(title_label)
+        self._title_label = QLabel(self.title)
+        self._title_label.setStyleSheet(build_notification_title_style())
+        text_layout.addWidget(self._title_label)
 
-        message_label = QLabel(self.message)
-        message_label.setStyleSheet(build_notification_message_style())
-        message_label.setWordWrap(True)
-        text_layout.addWidget(message_label)
+        self._message_label = QLabel(self.message)
+        self._message_label.setStyleSheet(build_notification_message_style())
+        self._message_label.setWordWrap(True)
+        text_layout.addWidget(self._message_label)
 
         layout.addLayout(text_layout)
         layout.addStretch()
 
-        close_btn = QPushButton("×")
-        close_btn.setFixedSize(20, 20)
-        close_btn.setCursor(Qt.PointingHandCursor)
-        close_btn.setStyleSheet(build_notification_close_button_style())
-        close_btn.clicked.connect(self._on_close)
-        layout.addWidget(close_btn)
+        self._close_btn = QPushButton("×")
+        self._close_btn.setFixedSize(20, 20)
+        self._close_btn.setCursor(Qt.PointingHandCursor)
+        self._close_btn.setStyleSheet(build_notification_close_button_style())
+        self._close_btn.clicked.connect(self._on_close)
+        layout.addWidget(self._close_btn)
 
         self.setStyleSheet(build_notification_frame_style(config["color"]))
 
@@ -87,6 +97,33 @@ class NotificationWidget(QFrame):
         shadow.setOffset(0, 3)
         shadow.setColor(QColor(0, 0, 0, 60))
         self.setGraphicsEffect(shadow)
+
+    def apply_theme(self, theme: dict) -> None:
+        """Apply theme colors to all sub-widgets of this notification."""
+        tokens = build_notification_theme(theme or {})
+        self._theme_tokens = tokens
+
+        self.setStyleSheet(
+            build_notification_frame_style(
+                self._accent_color,
+                background_color=tokens["background"],
+                border_color=tokens["border"],
+            )
+        )
+        if hasattr(self, "_title_label"):
+            self._title_label.setStyleSheet(
+                build_notification_title_style(tokens["title"])
+            )
+        if hasattr(self, "_message_label"):
+            self._message_label.setStyleSheet(
+                build_notification_message_style(tokens["message"])
+            )
+        if hasattr(self, "_close_btn"):
+            self._close_btn.setStyleSheet(
+                build_notification_close_button_style(
+                    tokens["close"], tokens["close_hover"]
+                )
+            )
 
     def resize_to_content(self) -> None:
         """Resize the floating card to fit its text content at the fixed width."""
@@ -149,6 +186,17 @@ class NotificationManager(QObject):
         self._spacing = NOTIFICATION_SPACING
         self._margin_bottom = NOTIFICATION_MARGIN_BOTTOM
         self._margin_right = NOTIFICATION_MARGIN_RIGHT
+        self._current_theme = None
+
+    def apply_theme(self, theme: dict) -> None:
+        """Apply theme to all currently visible notifications."""
+        self._current_theme = dict(theme or {})
+        for notification in list(self._notifications):
+            if hasattr(notification, "apply_theme"):
+                try:
+                    notification.apply_theme(self._current_theme)
+                except Exception:
+                    pass
 
     def show_notification(self, title, message, notification_type="info", duration=None):
         """Show a notification."""
@@ -160,6 +208,11 @@ class NotificationManager(QObject):
             duration = config["duration"]
 
         notification = NotificationWidget(title, message, notification_type, self._parent)
+        if self._current_theme:
+            try:
+                notification.apply_theme(self._current_theme)
+            except Exception:
+                pass
         notification.dismiss_requested.connect(lambda: self._dismiss_notification(notification))
         notification.resize_to_content()
 

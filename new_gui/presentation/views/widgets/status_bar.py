@@ -13,17 +13,38 @@ from new_gui.presentation.views.widgets.labels import StatusBadgeLabel
 
 
 class StatusBar(QFrame):
-    """Custom status bar with task statistics and connection status"""
+    """Custom status bar with task statistics and connection status."""
+
     status_filter_requested = pyqtSignal(str)
+
+    DEFAULT_BACKGROUND = "rgba(255, 255, 255, 0.95)"
+    DEFAULT_BORDER = "#d8e2ec"
+    DEFAULT_TEXT = "#526071"
+    DEFAULT_ACCENT = "#0f5fa8"
+    DEFAULT_SEPARATOR = "#e0e0e0"
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._separators = []
+        self._current_theme = {
+            "background": self.DEFAULT_BACKGROUND,
+            "border": self.DEFAULT_BORDER,
+            "text": self.DEFAULT_TEXT,
+            "accent": self.DEFAULT_ACCENT,
+            "separator": self.DEFAULT_SEPARATOR,
+        }
         self._setup_ui()
 
     def _setup_ui(self):
-        """Setup the status bar UI"""
+        """Setup the status bar UI."""
         self.setFixedHeight(34)
-        self.setStyleSheet(build_status_bar_style("rgba(255, 255, 255, 0.95)", "#d8e2ec", "#526071"))
+        self.setStyleSheet(
+            build_status_bar_style(
+                self._current_theme["background"],
+                self._current_theme["border"],
+                self._current_theme["text"],
+            )
+        )
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(16, 0, 16, 0)
@@ -31,7 +52,9 @@ class StatusBar(QFrame):
 
         # Left side - Run info
         self._run_label = QLabel("Run: -")
-        self._run_label.setStyleSheet(build_status_run_label_style())
+        self._run_label.setStyleSheet(
+            build_status_run_label_style(self._current_theme["accent"])
+        )
         layout.addWidget(self._run_label)
 
         # Separator
@@ -39,7 +62,9 @@ class StatusBar(QFrame):
 
         # Task statistics
         self._stats_label = QLabel("Tasks: -")
-        self._stats_label.setStyleSheet(build_status_stats_label_style())
+        self._stats_label.setStyleSheet(
+            build_status_stats_label_style(self._current_theme["text"])
+        )
         layout.addWidget(self._stats_label)
 
         # Separator
@@ -47,6 +72,7 @@ class StatusBar(QFrame):
 
         # Status breakdown badges
         self._status_breakdown_widget = QWidget()
+        self._status_breakdown_widget.setAttribute(Qt.WA_StyledBackground, False)
         self._status_breakdown_layout = QHBoxLayout(self._status_breakdown_widget)
         self._status_breakdown_layout.setContentsMargins(0, 2, 0, 2)
         self._status_breakdown_layout.setSpacing(6)
@@ -55,21 +81,26 @@ class StatusBar(QFrame):
         layout.addStretch()
 
     def _create_separator(self):
-        """Create a vertical separator"""
+        """Create a vertical separator that is tracked for theme updates."""
         sep = QFrame()
         sep.setFrameShape(QFrame.VLine)
-        sep.setStyleSheet(build_status_separator_style())
+        sep.setFixedWidth(1)
+        sep.setStyleSheet(
+            build_status_separator_style(self._current_theme["separator"])
+        )
+        self._separators.append(sep)
         return sep
 
     def update_run(self, run_name):
-        """Update the current run name"""
+        """Update the current run name."""
         self._run_label.setText(f"Run: {run_name}")
 
     def update_stats(self, stats):
-        """Update task statistics
+        """Update task statistics.
 
         Args:
-            stats: dict with keys: total, finish, running, failed, skip, scheduled, pending
+            stats: dict with keys: total, finish, running, failed, skip,
+                scheduled, pending
         """
         total = stats.get("total", 0)
         self._stats_label.setText(f"Tasks: {total}")
@@ -87,7 +118,9 @@ class StatusBar(QFrame):
             icon_name = config.get("icon_name", "")
             bg_color = config.get("color", "#87CEEB")
             text_color = config.get("text_color", "#223041")
-            badge = StatusBadgeLabel(status, str(count), icon_name=icon_name, icon_color=text_color)
+            badge = StatusBadgeLabel(
+                status, str(count), icon_name=icon_name, icon_color=text_color
+            )
             badge.setFixedHeight(20)
             badge.setStyleSheet(build_status_badge_style(bg_color, text_color))
             badge.statusDoubleClicked.connect(self.status_filter_requested.emit)
@@ -96,13 +129,24 @@ class StatusBar(QFrame):
     def update_theme(self, theme_name):
         """Update status bar colors for the active theme."""
         theme = THEMES.get(theme_name, THEMES["light"])
-        self.setStyleSheet(
-            build_status_bar_style(
-                theme["status_bar_bg"],
-                theme["border_color"],
-                theme["text_color"],
-            )
+        background = theme.get("status_bar_bg", self.DEFAULT_BACKGROUND)
+        border = theme.get("border_color", self.DEFAULT_BORDER)
+        text = theme.get("text_color", self.DEFAULT_TEXT)
+        accent = theme.get("accent_color", self.DEFAULT_ACCENT)
+        separator = theme.get("border_color", self.DEFAULT_SEPARATOR)
+
+        self._current_theme.update(
+            {
+                "background": background,
+                "border": border,
+                "text": text,
+                "accent": accent,
+                "separator": separator,
+            }
         )
 
-
-# ========== Params Table Model (Optimized for large datasets) ==========
+        self.setStyleSheet(build_status_bar_style(background, border, text))
+        self._run_label.setStyleSheet(build_status_run_label_style(accent))
+        self._stats_label.setStyleSheet(build_status_stats_label_style(text))
+        for separator_widget in self._separators:
+            separator_widget.setStyleSheet(build_status_separator_style(separator))
